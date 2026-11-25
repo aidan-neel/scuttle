@@ -7,6 +7,7 @@ import type {
   ThreadDetail,
   ThreadStatus,
   ThreadTurn,
+  TurnOrigin,
   UpdateThreadInput,
 } from "@scuttle/contracts";
 import { type ApprovalId, ThreadId, TurnId } from "@scuttle/shared/ids";
@@ -16,7 +17,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as ServerConfig from "../config.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
-import { maybeWrapCaptainPrompt } from "./agent/agentPrompts.ts";
+import { maybeWrapAgentPrompt } from "./agent/agentPrompts.ts";
 import { readAgentIdForThread } from "./agent/agentWorkStore.ts";
 import * as EventBus from "./EventBus.ts";
 import * as GitService from "./GitService.ts";
@@ -63,6 +64,7 @@ export class ThreadService extends Context.Service<
     readonly sendTurn: (
       threadId: ThreadId,
       input: SendTurnInput,
+      options?: { readonly origin?: TurnOrigin },
     ) => Effect.Effect<ThreadTurn, ThreadServiceError>;
     readonly interrupt: (threadId: ThreadId) => Effect.Effect<void, ThreadServiceError>;
     readonly settle: (
@@ -151,6 +153,7 @@ const make = Effect.gen(function* () {
     thread: Thread,
     prompt: string,
     attachments: ReadonlyArray<ThreadAttachment> | undefined,
+    origin: TurnOrigin = "user",
   ) {
     if (activeRuns.has(thread.id)) {
       return yield* new ThreadServiceError({
@@ -179,6 +182,7 @@ const make = Effect.gen(function* () {
     const turn: ThreadTurn = {
       id: turnId,
       threadId: thread.id,
+      ...(origin === "system" ? { origin } : {}),
       userMessage: prompt,
       assistantMessage: "",
       thinkingText: "",
@@ -191,16 +195,16 @@ const make = Effect.gen(function* () {
 
     db.prepare(
       `INSERT INTO turns
-         (id, thread_id, seq, user_message, assistant_message, thinking_text, status, started_at, model_selection_json)
-       VALUES (?, ?, ?, ?, '', '', 'running', ?, ?)`,
-    ).run(turnId, thread.id, seq, prompt, startedAt, JSON.stringify(thread.modelSelection));
+         (id, thread_id, seq, origin, user_message, assistant_message, thinking_text, status, started_at, model_selection_json)
+       VALUES (?, ?, ?, ?, ?, '', '', 'running', ?, ?)`,
+    ).run(turnId, thread.id, seq, origin, prompt, startedAt, JSON.stringify(thread.modelSelection));
 
     updateThreadStatus(thread.id, { kind: "running", startedAt, phase: "thinking" });
     eventBus.publishSync({ kind: "turn.upserted", turn });
 
     const refreshed = readThreadById(db, thread.id) ?? thread;
     const apiBaseUrl = config.apiBaseUrlRef.url;
-    const wrapped = maybeWrapCaptainPrompt(db, refreshed.id, prompt, apiBaseUrl);
+    const wrapped = maybeWrapAgentPrompt(db, refreshed.id, prompt, apiBaseUrl);
     const fullPrompt = formatPromptWithAttachments(wrapped.prompt, attachments);
     const agentId = wrapped.agentId ?? readAgentIdForThread(db, refreshed.id);
     const extraEnv: Record<string, string> = {
@@ -231,7 +235,7 @@ const make = Effect.gen(function* () {
       id: threadId,
       projectId: project.id,
       projectName: project.name,
-      title: input.title.trim().slice(0, TITLE_LIMIT) || `${project.name} Captain`,
+      title: input.title.trim().slice(0, TITLE_LIMIT) || project.name,
       runtime: input.runtime,
       branch: input.branch,
       cwd: project.path,
@@ -302,6 +306,7 @@ const make = Effect.gen(function* () {
   const sendTurn = Effect.fn("ThreadService.sendTurn")(function* (
     threadId: ThreadId,
     input: SendTurnInput,
+    options?: { readonly origin?: TurnOrigin },
   ) {
     let thread = readThreadById(db, threadId);
     if (!thread) {
@@ -333,7 +338,7 @@ const make = Effect.gen(function* () {
     thread = readThreadById(db, threadId) ?? thread;
     eventBus.publishSync({ kind: "thread.upserted", thread });
 
-    return yield* startTurnInternal(thread, input.prompt, input.attachments);
+    return yield* startTurnInternal(thread, input.prompt, input.attachments, options?.origin);
   });
 
   const interrupt = (threadId: ThreadId) =>

@@ -82,10 +82,25 @@ const safeJsonParse = (raw: string): unknown => {
   }
 };
 
+const normalizeModelStack = (raw: unknown): unknown => {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return raw;
+  const entries = Object.entries(raw);
+  const hasAgent = entries.some(([key]) => key === "agent");
+  const normalized: Record<string, unknown> = {};
+  for (const [key, value] of entries) {
+    if (key === "captain") {
+      if (!hasAgent) normalized.agent = value;
+      continue;
+    }
+    normalized[key] = value;
+  }
+  return normalized;
+};
+
 const rowToAgent = (row: AgentJoinRow): Agent => {
   const runtimeOpt = decodeRuntime(row.runtime);
   const modelOpt = decodeModelSelection(safeJsonParse(row.model_selection_json));
-  const stackOpt = decodeModelStack(safeJsonParse(row.model_stack_json));
+  const stackOpt = decodeModelStack(normalizeModelStack(safeJsonParse(row.model_stack_json)));
   return {
     id: AgentId.make(row.id),
     projectId: ProjectId.make(row.project_id),

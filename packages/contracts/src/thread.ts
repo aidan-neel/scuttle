@@ -141,6 +141,9 @@ export type PendingApproval = typeof PendingApproval.Type;
 export const TurnStatus = Schema.Literals(["running", "completed", "failed", "interrupted"]);
 export type TurnStatus = typeof TurnStatus.Type;
 
+export const TurnOrigin = Schema.Literals(["user", "system"]);
+export type TurnOrigin = typeof TurnOrigin.Type;
+
 export const ThreadAttachment = Schema.Struct({
   name: Schema.String,
   path: Schema.optionalKey(Schema.String),
@@ -152,6 +155,7 @@ export type ThreadAttachment = typeof ThreadAttachment.Type;
 export const ThreadTurn = Schema.Struct({
   id: TurnId,
   threadId: ThreadId,
+  origin: Schema.optionalKey(TurnOrigin),
   userMessage: Schema.String,
   assistantMessage: Schema.String,
   thinkingText: Schema.String,

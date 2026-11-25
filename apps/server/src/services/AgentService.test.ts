@@ -39,8 +39,8 @@ const makeTempGitRepo = (rootDir: string, name: string, withCommit = true): stri
   const repo = NodePath.join(rootDir, name);
   NodeFS.mkdirSync(repo, { recursive: true });
   gitSync(repo, "init", "-q", "-b", "main");
-  gitSync(repo, "config", "user.email", "captain@example.com");
-  gitSync(repo, "config", "user.name", "Captain");
+  gitSync(repo, "config", "user.email", "agent@example.com");
+  gitSync(repo, "config", "user.name", "Agent");
   if (withCommit) {
     NodeFS.writeFileSync(NodePath.join(repo, "README.md"), `# ${name}\n`);
     gitSync(repo, "add", ".");
@@ -50,10 +50,13 @@ const makeTempGitRepo = (rootDir: string, name: string, withCommit = true): stri
   return repo;
 };
 
-const waitUntil = async (predicate: () => boolean, timeoutMs = 2_000): Promise<void> => {
+const waitUntil = async (
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs = 2_000,
+): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (predicate()) return;
+    if (await predicate()) return;
     await Bun.sleep(10);
   }
   throw new Error("Timed out waiting for condition.");
@@ -74,7 +77,7 @@ describe("AgentService", () => {
     NodeFS.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("auto-seeds a Captain agent per project, updates modelStack/instructions, and searches memories with FTS5", async () => {
+  it("auto-seeds a named Agent per project with empty purpose, updates modelStack/instructions, and searches memories with FTS5", async () => {
     const runtime = ManagedRuntime.make(makeAppLayer({ dbPath: ":memory:" }));
     try {
       const result = await runtime.runPromise(
@@ -83,12 +86,14 @@ describe("AgentService", () => {
           const agents = yield* AgentService.AgentService;
           const proj = yield* projects.create({ path: repoWithCommit, name: "widgets" });
           const seeded = yield* agents.list();
-          const captain = seeded.find((a) => a.projectId === proj.id);
-          expect(captain).toBeDefined();
-          expect(captain!.instructionsMd).toContain("Captain Skill");
+          const agent = seeded.find((a) => a.projectId === proj.id);
+          expect(agent).toBeDefined();
+          expect(agent!.name).toBe("Widgets");
+          expect(agent!.purpose).toBe("");
+          expect(agent!.instructionsMd).toContain("# Widgets");
 
-          const detail = yield* agents.getDetail(captain!.id);
-          expect(detail.primaryThread.thread.id).toBe(captain!.primaryThreadId);
+          const detail = yield* agents.getDetail(agent!.id);
+          expect(detail.primaryThread.thread.id).toBe(agent!.primaryThreadId);
           expect(detail.primaryThread.thread.status.kind).toBe("idle");
           expect(detail.primaryThread.turns).toHaveLength(0);
 
@@ -98,57 +103,59 @@ describe("AgentService", () => {
             model: "claude-sonnet-5-5",
             effort: "medium" as const,
           };
-          const updated = yield* agents.update(captain!.id, {
+          const updated = yield* agents.update(agent!.id, {
             name: "Widgets Lead",
+            purpose: "Own the widgets repository",
             instructionsMd: "# Custom Skill\nAlways run bun test.",
             modelStack: {
-              captain: captain!.modelSelection,
+              agent: agent!.modelSelection,
               workhorse: workhorseModel,
             },
             checkInIntervalMinutes: 30,
           });
           expect(updated.name).toBe("Widgets Lead");
+          expect(updated.purpose).toBe("Own the widgets repository");
           expect(updated.modelStack.workhorse?.model).toBe("claude-sonnet-5-5");
           expect(updated.checkInIntervalMinutes).toBe(30);
 
-          const m1 = yield* agents.createMemory(captain!.id, {
+          const m1 = yield* agents.createMemory(agent!.id, {
             category: "convention",
             title: "SQLite WAL mode",
             content: "Always open SQLite in WAL mode with foreign_keys ON.",
             pinned: true,
           });
-          const m2 = yield* agents.createMemory(captain!.id, {
+          const m2 = yield* agents.createMemory(agent!.id, {
             category: "decision",
             title: "Router choice",
             content: "Use TanStack Router in apps/web.",
             pinned: false,
           });
-          const m3 = yield* agents.createMemory(captain!.id, {
+          const m3 = yield* agents.createMemory(agent!.id, {
             category: "fact",
             title: "Verify command",
             content: "Run bun run check before commit.",
             pinned: false,
           });
 
-          const ftsMatches = yield* agents.searchMemories(captain!.id, "SQLite WAL");
+          const ftsMatches = yield* agents.searchMemories(agent!.id, "SQLite WAL");
           expect(ftsMatches[0]?.id).toBe(m1.id);
 
           // Special characters must fall back safely without throwing an FTS5 syntax error.
-          const specialMatches = yield* agents.searchMemories(captain!.id, "apps/web @foo:bar*");
+          const specialMatches = yield* agents.searchMemories(agent!.id, "apps/web @foo:bar*");
           expect(specialMatches.some((m) => m.id === m2.id)).toBe(true);
 
-          const updatedMem = yield* agents.updateMemory(captain!.id, m3.id, { pinned: true });
+          const updatedMem = yield* agents.updateMemory(agent!.id, m3.id, { pinned: true });
           expect(updatedMem.pinned).toBe(true);
-          yield* agents.deleteMemory(captain!.id, m2.id);
-          const remaining = yield* agents.listMemories(captain!.id);
+          yield* agents.deleteMemory(agent!.id, m2.id);
+          const remaining = yield* agents.listMemories(agent!.id);
           expect(remaining.map((m) => m.id)).not.toContain(m2.id);
 
-          const ctx = yield* agents.buildCaptainContext(captain!.id, "SQLite");
+          const ctx = yield* agents.buildAgentContext(agent!.id, "SQLite");
           expect(ctx).toContain("<scuttle_agent_context>");
           expect(ctx).toContain("Always run bun test.");
           expect(ctx).toContain("workhorse: claude/claude-sonnet-5-5");
           expect(ctx).toContain("SQLite WAL mode");
-          expect(ctx).toContain(`/api/agents/${captain!.id}/memories`);
+          expect(ctx).toContain(`/api/agents/${agent!.id}/memories`);
 
           return { updated };
         }),
@@ -250,11 +257,11 @@ describe("AgentService", () => {
           const proj = yield* projects.create({ path: repoWithCommit, name: "widgets" });
           const emptyProj = yield* projects.create({ path: emptyRepo, name: "empty-repo" });
           const allAgents = yield* agents.list();
-          const captain = allAgents.find((a) => a.projectId === proj.id)!;
-          const emptyCaptain = allAgents.find((a) => a.projectId === emptyProj.id)!;
+          const primaryAgent = allAgents.find((a) => a.projectId === proj.id)!;
+          const emptyAgent = allAgents.find((a) => a.projectId === emptyProj.id)!;
 
           // Verify worktree fallback to local on commitless repo.
-          const localFallbackDelegation = yield* agents.delegateTask(emptyCaptain.id, {
+          const localFallbackDelegation = yield* agents.delegateTask(emptyAgent.id, {
             role: "fast",
             kind: "task",
             title: "Bootstrap empty repo",
@@ -265,20 +272,20 @@ describe("AgentService", () => {
           expect(fallbackThread.thread.runtime).toBe("local");
 
           // Sync forge issues (skips PR #18, keeps issue #17).
-          const synced = yield* agents.syncIssues(captain.id);
+          const synced = yield* agents.syncIssues(primaryAgent.id);
           expect(synced).toHaveLength(1);
           expect(synced[0]!.key).toBe("GH-17");
           expect(synced[0]!.labels).toEqual(["bug"]);
 
           // Create local issue with auto-generated key.
-          const localIssue = yield* agents.createIssue(captain.id, {
+          const localIssue = yield* agents.createIssue(primaryAgent.id, {
             title: "Add telemetry check",
             description: "Verify check-in counters",
           });
           expect(localIssue.key).toBe("WIDG-1");
 
           // Assign synced issue to E2E PR worker.
-          const assigned = yield* agents.assignIssue(captain.id, synced[0]!.id, {
+          const assigned = yield* agents.assignIssue(primaryAgent.id, synced[0]!.id, {
             mode: "pr",
             role: "workhorse",
           });
@@ -300,7 +307,7 @@ describe("AgentService", () => {
             ),
           );
 
-          const detailAfter = yield* agents.getDetail(captain.id);
+          const detailAfter = yield* agents.getDetail(primaryAgent.id);
           const settledDelegation = detailAfter.delegations.find(
             (d) => d.id === assigned.delegation.id,
           );
@@ -312,32 +319,32 @@ describe("AgentService", () => {
           expect(detailAfter.agent.needsAttention).toBe(true);
           expect(detailAfter.agent.lastSummary).toContain("GH-17");
 
-          const checkIn = yield* agents.runCheckIn(captain.id, { focus: "PR readiness" });
+          const checkIn = yield* agents.runCheckIn(primaryAgent.id, { focus: "PR readiness" });
           expect(checkIn.openPrs).toBe(1);
           expect(checkIn.openIssues).toBe(2);
           expect(checkIn.summary).toContain("PR readiness");
 
-          // Verify Captain turn receives <scuttle_agent_context> + SCUTTLE_API_URL / SCUTTLE_AGENT_ID.
-          const captainTurn = yield* agents.sendTurn(captain.id, {
+          // Verify Agent turn receives <scuttle_agent_context> + SCUTTLE_API_URL / SCUTTLE_AGENT_ID.
+          const agentTurn = yield* agents.sendTurn(primaryAgent.id, {
             prompt: "Summarize open issues",
           });
-          expect(captainTurn.userMessage).toBe("Summarize open issues");
+          expect(agentTurn.userMessage).toBe("Summarize open issues");
 
           // Clean up worktree created for assigned.delegation.childThreadId.
           yield* threads.remove(assigned.delegation.childThreadId);
           unsub();
-          return { captainId: captain.id };
+          return { agentId: primaryAgent.id };
         }),
       );
 
-      const captainCall = recordedTurns.find(
+      const agentCall = recordedTurns.find(
         (t) =>
-          t.extraEnv?.SCUTTLE_AGENT_ID === outcome.captainId &&
+          t.extraEnv?.SCUTTLE_AGENT_ID === outcome.agentId &&
           t.prompt.includes("<scuttle_agent_context>"),
       );
-      expect(captainCall).toBeDefined();
-      expect(captainCall!.extraEnv?.SCUTTLE_API_URL).toContain("http://");
-      expect(captainCall!.prompt).toContain("Summarize open issues");
+      expect(agentCall).toBeDefined();
+      expect(agentCall!.extraEnv?.SCUTTLE_API_URL).toContain("http://");
+      expect(agentCall!.prompt).toContain("Summarize open issues");
     } finally {
       runSpy.mockRestore();
       await runtime.dispose();
@@ -375,16 +382,27 @@ describe("AgentService", () => {
 
       const createdRes = await req("POST", "/api/agents", {
         path: repoWithCommit,
-        name: "HTTP Captain",
-        purpose: "Drive HTTP integration",
+        name: "Atlas",
+        startOnboarding: true,
       });
       expect(createdRes.status).toBe(201);
       const created = Schema.decodeUnknownSync(Agent)(createdRes.raw);
-      expect(created.name).toBe("HTTP Captain");
+      expect(created.name).toBe("Atlas");
+      expect(created.purpose).toBe("");
 
       const detailRes = await req("GET", `/api/agents/${created.id}`);
       expect(detailRes.status).toBe(200);
-      expect(Schema.decodeUnknownSync(AgentDetail)(detailRes.raw).agent.id).toBe(created.id);
+      const createdDetail = Schema.decodeUnknownSync(AgentDetail)(detailRes.raw);
+      expect(createdDetail.agent.id).toBe(created.id);
+      expect(createdDetail.primaryThread.turns).toHaveLength(1);
+      expect(createdDetail.primaryThread.turns[0]?.origin).toBe("system");
+
+      // Wait for onboarding turn to settle before running a second setup turn below.
+      await waitUntil(async () => {
+        const res = await req("GET", `/api/agents/${created.id}`);
+        const detail = Schema.decodeUnknownSync(AgentDetail)(res.raw);
+        return detail.primaryThread.thread.status.kind === "idle";
+      });
 
       const patchedRes = await req("PATCH", `/api/agents/${created.id}`, {
         instructionsMd: "# HTTP Skill\nVerify all endpoints.",
@@ -443,9 +461,9 @@ describe("AgentService", () => {
         instructions: "Focus on tests",
       });
       expect(setupTurnRes.status).toBe(201);
-      expect(Schema.decodeUnknownSync(ThreadTurn)(setupTurnRes.raw).userMessage).toContain(
-        "Focus on tests",
-      );
+      const setupTurn = Schema.decodeUnknownSync(ThreadTurn)(setupTurnRes.raw);
+      expect(setupTurn.origin).toBe("system");
+      expect(setupTurn.userMessage).toContain("Focus on tests");
 
       expect((await req("DELETE", `/api/agents/${created.id}/issues/${issue.id}`)).status).toBe(
         204,

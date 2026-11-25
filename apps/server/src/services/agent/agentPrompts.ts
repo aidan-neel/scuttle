@@ -7,7 +7,6 @@ import type {
   AgentMemory,
   AgentModelRole,
   ModelSelection,
-  Project,
   ProviderSnapshot,
 } from "@scuttle/contracts";
 import { ProviderId } from "@scuttle/shared/ids";
@@ -46,11 +45,17 @@ export const pickDefaultModelSelection = (
   };
 };
 
-export const defaultPurpose = (project: Pick<Project, "name" | "path">): string =>
-  `Persistent Captain for ${project.name} (${project.path}). Maintains project memory, triages issues, and delegates focused tasks and PRs.`;
+export const formatAgentName = (projectName: string): string => {
+  const words = projectName
+    .trim()
+    .split(/[-_\s]+/)
+    .filter((word) => word.length > 0)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1));
+  return words.length > 0 ? words.join(" ") : "Agent";
+};
 
 const ROLES: ReadonlyArray<AgentModelRole> = [
-  "captain",
+  "agent",
   "workhorse",
   "design",
   "review",
@@ -59,23 +64,25 @@ const ROLES: ReadonlyArray<AgentModelRole> = [
 ];
 
 export const defaultInstructionsMd = (
+  agentName: string,
   projectName: string,
   projectPath: string,
-): string => `# ${projectName} Captain Skill
+): string => `# ${agentName}
 
-You are the persistent single-source Captain Agent for **${projectName}** (\`${projectPath}\`).
+You are **${agentName}**, a persistent Agent for **${projectName}** (\`${projectPath}\`).
 
 ## Responsibilities
-1. **Maintain Durable Memory**: Record important facts, architectural decisions, repo conventions, and PR/issue context so future turns start informed. Pin critical invariants.
-2. **Coordinate Work**: Triage issues, break large tasks into focused sub-tasks, and delegate execution to worker threads instead of crowding your own primary thread.
-3. **Delegation Roles**:
-   - \`captain\`: Planning, triage, architecture, synthesis
+1. **Configure Yourself Through Chat**: Whenever the user tells you your purpose, name, working rules, or preferred model roster, persist those updates immediately with \`PATCH $SCUTTLE_API_URL/api/agents/$SCUTTLE_AGENT_ID\` and save durable facts to memory.
+2. **Maintain Durable Memory**: Record important facts, architectural decisions, repo conventions, and PR/issue context so future turns start informed. Pin critical invariants.
+3. **Coordinate Work**: Triage issues, break large tasks into focused sub-tasks, and delegate execution to worker threads instead of crowding your own primary thread.
+4. **Delegation Roles**:
+   - \`agent\`: Primary conversation, planning, triage, synthesis
    - \`workhorse\`: Feature implementation, bug fixes, tests
    - \`design\`: Frontend, UI/UX, styling, layout work
    - \`review\`: Code review, verification, blast-radius checks
    - \`fast\`: Quick searches, small edits, summaries
    - \`large\`: Deep reasoning, complex refactors
-4. **E2E PR Workflow**:
+5. **E2E PR Workflow**:
    - Prefer \`worktree\` runtime so each PR task works on an isolated branch.
    - Implement cleanly, run tests/lint/typecheck, commit with clear messages, push, and open a ready-for-review PR.
    - Report the PR URL and verification results back cleanly.`;
@@ -114,7 +121,7 @@ const selectContextMemories = (
   return combined;
 };
 
-export const buildCaptainContextBlock = (input: {
+export const buildAgentContextBlock = (input: {
   readonly db: Database;
   readonly agent: Agent;
   readonly userPrompt: string;
@@ -154,14 +161,19 @@ export const buildCaptainContextBlock = (input: {
           .join("\n")
       : "(none open)";
 
+  const purposeLine =
+    agent.purpose.trim().length > 0
+      ? truncate(agent.purpose, 400)
+      : "(not set yet — once the user tells you your purpose, save it via PATCH)";
+
   const agentBase = `${apiBaseUrl}/api/agents/${agent.id}`;
   return [
     "<scuttle_agent_context>",
     `Agent: ${agent.name} (${agent.id})`,
     `Project: ${agent.projectName} (${agent.projectPath})`,
-    `Purpose: ${truncate(agent.purpose, 400)}`,
+    `Purpose: ${purposeLine}`,
     "",
-    "Setup Skill (instructionsMd):",
+    "Instructions (instructionsMd):",
     truncate(agent.instructionsMd, 4000),
     "",
     "Model Stack:",
@@ -177,8 +189,9 @@ export const buildCaptainContextBlock = (input: {
     issueLines,
     "",
     "Scuttle Agent REST Bridge (also exported as SCUTTLE_API_URL and SCUTTLE_AGENT_ID):",
+    `- Update agent profile (name, purpose, instructionsMd, modelStack): curl -sS -X PATCH "${agentBase}" -H "Content-Type: application/json" -d '{"purpose":"...","instructionsMd":"..."}'`,
+    `- List available providers and models: curl -sS "${apiBaseUrl}/api/providers"`,
     `- Save memory: curl -sS -X POST "${agentBase}/memories" -H "Content-Type: application/json" -d '{"category":"fact","title":"...","content":"...","pinned":false,"source":"agent"}'`,
-    `- Update setup skill/modelStack: curl -sS -X PATCH "${agentBase}" -H "Content-Type: application/json" -d '{"instructionsMd":"..."}'`,
     `- Delegate worker: curl -sS -X POST "${agentBase}/delegations" -H "Content-Type: application/json" -d '{"role":"workhorse","kind":"pr","title":"...","brief":"...","runtime":"worktree"}'`,
     `- Create/update issue: POST "${agentBase}/issues" or PATCH "${agentBase}/issues/<issueId>"`,
     `- Trigger check-in: POST "${agentBase}/checkins"`,
@@ -186,7 +199,7 @@ export const buildCaptainContextBlock = (input: {
   ].join("\n");
 };
 
-export const maybeWrapCaptainPrompt = (
+export const maybeWrapAgentPrompt = (
   db: Database,
   threadId: string,
   userPrompt: string,
@@ -194,7 +207,7 @@ export const maybeWrapCaptainPrompt = (
 ): { readonly prompt: string; readonly agentId?: string } => {
   const agent = readAgentByPrimaryThreadId(db, threadId);
   if (agent !== null) {
-    const context = buildCaptainContextBlock({ db, agent, userPrompt, apiBaseUrl });
+    const context = buildAgentContextBlock({ db, agent, userPrompt, apiBaseUrl });
     return { prompt: `${context}\n\n${userPrompt}`, agentId: agent.id };
   }
   const child = db
@@ -215,7 +228,7 @@ export const buildDelegationBrief = (input: {
   readonly issue?: AgentIssue | null;
 }): string => {
   const sections: string[] = [
-    `You are a delegated **${input.role}** worker for Captain **${input.agent.name}** on project **${input.agent.projectName}** (\`${input.agent.projectPath}\`).`,
+    `You are a delegated **${input.role}** worker for Agent **${input.agent.name}** on project **${input.agent.projectName}** (\`${input.agent.projectPath}\`).`,
     `Task (${input.kind}): ${input.title}`,
     "",
     "## Brief",
@@ -259,12 +272,18 @@ export const buildDelegationBrief = (input: {
 
 export const buildSetupStartPrompt = (agent: Agent, extraInstructions?: string): string => {
   const lines = [
-    `Please run initial Captain setup for **${agent.name}** in \`${agent.projectPath}\`.`,
+    `You were just created as **${agent.name}** for \`${agent.projectName}\` (\`${agent.projectPath}\`). Greet the user directly in conversation.`,
     "",
-    "1. Inspect the repository layout, README/AGENTS.md, package/build scripts, test commands, and git remotes.",
-    '2. Save 3-6 concise, high-value memories (architecture, test/check commands, key conventions) via the Scuttle Agent memories API (`POST /api/agents/$SCUTTLE_AGENT_ID/memories` with `source: "agent"` and `pinned: true` for invariants).',
-    "3. Refine your setup skill (`instructionsMd` via `PATCH /api/agents/$SCUTTLE_AGENT_ID`) if repo-specific commands or guidelines should be added.",
-    "4. Summarize what you discovered and saved.",
+    "Before replying:",
+    "1. Quickly inspect the repo (`git status`, `git log -n 5 --oneline`, top-level files, `AGENTS.md` / `README.md`, manifests/scripts) and check `GET $SCUTTLE_API_URL/api/providers` if useful.",
+    '2. If the repository already has real code or conventions, save 2-4 concise high-signal memories (`POST $SCUTTLE_API_URL/api/agents/$SCUTTLE_AGENT_ID/memories`, `source: "agent"`, `pinned: true` for invariants). Skip saving memories if the repo is empty.',
+    "",
+    "Then reply concisely in first person (no preamble, no meta commentary):",
+    `- Open with: "I'm ${agent.name}, your new Agent. I run a crew of threads for you, brief them, check what they report against their PRs and CI, and only bring you what needs your call."`,
+    `- Briefly state what you observed in \`${agent.projectName}\` (e.g. whether it is an empty repo or an existing codebase, any \`AGENTS.md\` or conventions found, and any notable setup gaps).`,
+    "- End with two direct numbered questions:",
+    "  1. **What am I for?** Is it one product, a specific area of a codebase, or general engineering help?",
+    "  2. **What should we start on first?** Tell me the first piece of work, plus any rules or model preferences you want me to follow.",
   ];
   if (extraInstructions && extraInstructions.trim().length > 0) {
     lines.push("", `Additional user guidance: ${extraInstructions.trim()}`);

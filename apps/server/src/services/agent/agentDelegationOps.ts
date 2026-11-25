@@ -10,6 +10,7 @@ import type {
   SendTurnInput,
   ThreadTurn,
   TriggerCheckInInput,
+  TurnOrigin,
 } from "@scuttle/contracts";
 import {
   AgentCheckInId,
@@ -66,12 +67,13 @@ export const makeAgentDelegationOps = (deps: {
   readonly git: GitService.GitService["Service"];
   readonly gitForge: GitForgeService.GitForgeService["Service"];
   readonly requireAgent: (agentId: AgentId) => Effect.Effect<Agent, AgentServiceError>;
-  readonly sendCaptainTurn: (
+  readonly sendAgentTurn: (
     agentId: AgentId,
     input: SendTurnInput,
+    options?: { readonly origin?: TurnOrigin },
   ) => Effect.Effect<ThreadTurn, AgentServiceError>;
 }) => {
-  const { db, eventBus, projects, threads, git, gitForge, requireAgent, sendCaptainTurn } = deps;
+  const { db, eventBus, projects, threads, git, gitForge, requireAgent, sendAgentTurn } = deps;
 
   const handleTurnSettled = (turn: ThreadTurn) => {
     if (turn.status === "running") return;
@@ -230,7 +232,7 @@ export const makeAgentDelegationOps = (deps: {
       });
     }
     const mode = input?.mode ?? "pr";
-    if (mode === "captain") {
+    if (mode === "agent") {
       const now = new Date().toISOString();
       const updatedIssue: AgentIssue = {
         ...issue,
@@ -245,11 +247,11 @@ export const makeAgentDelegationOps = (deps: {
         ...(issue.description ? ["", issue.description] : []),
         ...(input?.brief ? ["", `Guidance: ${input.brief}`] : []),
       ].join("\n");
-      const turn = yield* sendCaptainTurn(agentId, {
+      const turn = yield* sendAgentTurn(agentId, {
         prompt,
         ...(input?.modelSelection ? { modelSelection: input.modelSelection } : {}),
       });
-      return { mode: "captain", issue: updatedIssue, turn } satisfies AssignAgentIssueResult;
+      return { mode: "agent", issue: updatedIssue, turn } satisfies AssignAgentIssueResult;
     }
 
     const delegation = yield* delegateTask(agentId, {
@@ -338,8 +340,12 @@ export const makeAgentDelegationOps = (deps: {
     eventBus.publishSync({ kind: "agent.checkin.created", checkIn });
     eventBus.publishSync({ kind: "agent.upserted", agent: nextAgent });
 
-    if (input?.promptCaptain === true) {
-      yield* sendCaptainTurn(agent.id, { prompt: buildCheckInPrompt(checkIn, input.focus) });
+    if (input?.promptAgent === true) {
+      yield* sendAgentTurn(
+        agent.id,
+        { prompt: buildCheckInPrompt(checkIn, input.focus) },
+        { origin: "system" },
+      );
     }
     return checkIn;
   });
