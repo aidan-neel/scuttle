@@ -160,7 +160,7 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
                   placeholder="Search agents, threads, and projects…"
                   className="min-w-0 flex-1 bg-transparent text-body text-fg outline-none placeholder:text-fg-muted"
                 />
-                <kbd className="shrink-0 rounded-chip bg-white/6 px-1.5 py-0.5 font-mono text-[10px] text-fg-muted">
+                <kbd className="shrink-0 rounded-chip bg-white/6 px-1.5 py-0.5 font-mono text-[11px] text-fg-muted">
                   ESC
                 </kbd>
               </div>

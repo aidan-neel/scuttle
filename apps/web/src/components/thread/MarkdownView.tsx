@@ -69,7 +69,7 @@ function CodeBlock({ code, lang }: { readonly code: string; readonly lang?: stri
           {copied ? "Copied" : "Copy"}
         </button>
       </div>
-      <pre className="overflow-x-auto p-3.5 font-mono text-[12.5px] leading-[1.6] text-fg-secondary">
+      <pre className="overflow-x-auto p-3.5 font-mono text-[13.5px] leading-[1.6] text-fg-secondary">
         <code>{code}</code>
       </pre>
     </div>
@@ -107,7 +107,7 @@ const renderInline = (tokens: ReadonlyArray<Token> | undefined, keyPrefix: strin
         return (
           <code
             key={key}
-            className="rounded-[5px] bg-white/7 px-1.5 py-0.5 font-mono text-[12.5px] text-fg"
+            className="rounded-[5px] bg-white/7 px-1.5 py-0.5 font-mono text-[13.5px] text-fg"
           >
             {(token as Tokens.Codespan).text}
           </code>
@@ -150,10 +150,10 @@ const renderBlocks = (tokens: ReadonlyArray<Token>, keyPrefix: string): ReactNod
         const h = token as Tokens.Heading;
         const sizeClass =
           h.depth === 1
-            ? "mt-5 mb-2 text-[17px] font-semibold tracking-tight text-fg"
+            ? "mt-5 mb-2 text-[18px] font-semibold tracking-tight text-fg"
             : h.depth === 2
-              ? "mt-4 mb-2 text-[15px] font-semibold tracking-tight text-fg"
-              : "mt-3.5 mb-1.5 text-[14px] font-semibold text-fg";
+              ? "mt-4 mb-2 text-[16px] font-semibold tracking-tight text-fg"
+              : "mt-3.5 mb-1.5 text-[15px] font-semibold text-fg";
         return (
           <div key={key} className={sizeClass}>
             {renderInline(h.tokens, key)}
@@ -244,5 +244,5 @@ interface MarkdownViewProps {
 
 export function MarkdownView({ content, streaming = false }: MarkdownViewProps) {
   const tokens = marked.lexer(streaming ? settledStreamingText(content) : content);
-  return <div className="text-[14px] leading-[1.65] text-fg">{renderBlocks(tokens, "md")}</div>;
+  return <div className="text-[15px] leading-[1.65] text-fg">{renderBlocks(tokens, "md")}</div>;
 }

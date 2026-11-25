@@ -255,7 +255,7 @@ export function AddProjectDialog({ open, onOpenChange, onAdded }: AddProjectDial
                     pathMode && "font-mono text-label",
                   )}
                 />
-                <kbd className="shrink-0 rounded-chip bg-white/6 px-1.5 py-0.5 font-mono text-[10px] text-fg-muted">
+                <kbd className="shrink-0 rounded-chip bg-white/6 px-1.5 py-0.5 font-mono text-[11px] text-fg-muted">
                   ESC
                 </kbd>
               </div>
@@ -334,7 +334,7 @@ export function AddProjectDialog({ open, onOpenChange, onAdded }: AddProjectDial
                     <span className="min-w-0 flex-1 truncate font-mono text-label text-fg">
                       {trimmed}
                     </span>
-                    <kbd className="shrink-0 font-mono text-[10px] text-fg-faint">↵</kbd>
+                    <kbd className="shrink-0 font-mono text-[11px] text-fg-faint">↵</kbd>
                   </div>
                 ) : (
                   rows.map((entry, index) => (

@@ -74,7 +74,7 @@ export function Sidebar({
             <Button variant="ghost" size="icon" aria-label="Back" onClick={leaveSettings}>
               <Icon icon={ArrowLeft01Icon} />
             </Button>
-            <span className="flex-1 text-[14px] font-semibold tracking-tight text-fg">
+            <span className="flex-1 text-[15px] font-semibold tracking-tight text-fg">
               Settings
             </span>
             <Button variant="ghost" size="icon" aria-label="Collapse sidebar" onClick={onCollapse}>
@@ -87,7 +87,7 @@ export function Sidebar({
               to="/"
               className="flex flex-1 items-center rounded-control outline-none focus-visible:shadow-focus"
             >
-              <span className="text-[14px] font-semibold tracking-tight text-fg">Scuttle</span>
+              <span className="text-[15px] font-semibold tracking-tight text-fg">Scuttle</span>
             </Link>
             <Button
               variant="ghost"

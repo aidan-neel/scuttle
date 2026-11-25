@@ -213,6 +213,8 @@ export type SettleThreadInput = typeof SettleThreadInput.Type;
 
 export const UpdateThreadInput = Schema.Struct({
   title: Schema.optionalKey(Schema.String),
+  runtime: Schema.optionalKey(ThreadRuntime),
+  branch: Schema.optionalKey(Schema.String),
   modelSelection: Schema.optionalKey(ModelSelection),
   runtimeMode: Schema.optionalKey(RuntimeMode),
   interactionMode: Schema.optionalKey(InteractionMode),

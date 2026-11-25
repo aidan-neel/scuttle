@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { Composer, type ComposerSubmitPayload } from "@/components/home/Composer.tsx";
 import { COMPACT_PROMPT } from "@/components/home/ComposerSlashMenu.tsx";
 import { estimateContextUsage } from "@/components/home/contextUsage.ts";
+import { useThreadLocationControls } from "@/components/home/useThreadLocationControls.ts";
 import { ScrollRuler } from "@/components/thread/ScrollRuler.tsx";
 import { ScrollToEndButton } from "@/components/thread/ScrollToEndButton.tsx";
 import { ThreadTurnView } from "@/components/thread/ThreadTurnView.tsx";
@@ -56,6 +57,12 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
   const composerId = `composer-agent-${agent.id}`;
   const { isAtBottom, scrollToBottom } = useStickToBottom(scrollRef, turns);
   const contextUsage = estimateContextUsage({ turns, model: thread.modelSelection.model });
+  const status = useThreadLocationControls({
+    thread,
+    disabled: isRunning,
+    onRuntimeUpdate: (runtime) => updateAgent(agent.id, { runtime }),
+    onError: setSubmitError,
+  });
 
   const needsPurpose = !isRunning && agent.purpose.trim().length === 0 && !waitingDismissed;
 
@@ -84,7 +91,7 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
           <div className="mx-auto flex w-full max-w-composer flex-col">
             <header className="flex flex-col items-center pt-2 pb-7 text-center">
               <Identicon name={agent.name} size="xl" className="size-16 rounded-[14px]" />
-              <h2 className="mt-3 text-[22px] leading-tight font-semibold tracking-tight text-fg">
+              <h2 className="mt-3 text-[23px] leading-tight font-semibold tracking-tight text-fg">
                 {agent.name}
               </h2>
               <div className="mt-2 flex items-center justify-center gap-4 text-label">
@@ -192,11 +199,7 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
               })
             }
             filesRoot={thread.cwd}
-            status={{
-              runtime: thread.runtime,
-              branch: thread.branch,
-              state: thread.status.kind,
-            }}
+            status={status}
             contextUsage={contextUsage}
             running={isRunning}
             onSubmit={handleSubmit}

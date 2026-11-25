@@ -75,7 +75,7 @@ export function SettingsNavCompact({ active }: { readonly active: SectionId }) {
         <Link to="/" aria-label="Back" className={buttonClass("ghost", "icon-sm")}>
           <Icon icon={ArrowLeft01Icon} />
         </Link>
-        <span className="text-[14px] font-semibold tracking-tight text-fg">Settings</span>
+        <span className="text-[15px] font-semibold tracking-tight text-fg">Settings</span>
       </div>
       <nav
         aria-label="Settings"

@@ -47,7 +47,7 @@ export const pillTriggerClass = (className?: string, variant: PickerVariant = "p
 
 export function PillLabel({ children, mono }: { children: string; mono?: boolean }) {
   return (
-    <span title={children} className={cn("min-w-0 truncate leading-4", mono && "font-mono")}>
+    <span title={children} className={cn("min-w-0 truncate leading-[18px]", mono && "font-mono")}>
       {children}
     </span>
   );
@@ -70,6 +70,8 @@ interface PickerProps<Value extends string> {
   icon?: ReactNode;
   action?: PickerAction;
   variant?: PickerVariant;
+  side?: "top" | "bottom";
+  disabled?: boolean;
   className?: string;
 }
 
@@ -81,6 +83,8 @@ export function Picker<Value extends string>({
   icon,
   action,
   variant = "pill",
+  side = "bottom",
+  disabled = false,
   className,
 }: PickerProps<Value>) {
   const current = options.find((option) => option.value === value);
@@ -88,6 +92,7 @@ export function Picker<Value extends string>({
   return (
     <Menu.Root>
       <Menu.Trigger
+        disabled={disabled}
         aria-label={`${label}: ${current?.label ?? ""}`}
         className={pillTriggerClass(className, variant)}
       >
@@ -95,7 +100,7 @@ export function Picker<Value extends string>({
         {current && <PillLabel>{current.label}</PillLabel>}
         <PillChevron />
       </Menu.Trigger>
-      <MenuPopup label={label} className="max-w-72">
+      <MenuPopup label={label} side={side} className="max-w-72">
         <Menu.RadioGroup
           value={value}
           onValueChange={(next: unknown) => {
@@ -106,7 +111,7 @@ export function Picker<Value extends string>({
           {options.map((option) => (
             <MenuRadioItem key={option.value} value={option.value}>
               {option.icon}
-              <span className="min-w-0 truncate leading-4">{option.label}</span>
+              <span className="min-w-0 truncate leading-[18px]">{option.label}</span>
             </MenuRadioItem>
           ))}
         </Menu.RadioGroup>

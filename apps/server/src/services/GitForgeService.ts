@@ -273,7 +273,18 @@ export const makeGitForgeService = (options: GitForgeOptions) =>
       commit: (target, input) => withCwd((cwd) => repoOps.commit(cwd, input))(target),
       push: withCwd(repoOps.push),
       pull: withCwd(repoOps.pull),
-      checkout: (target, input) => withCwd((cwd) => repoOps.checkout(cwd, input))(target),
+      checkout: (target, input) =>
+        withCwd((cwd) => repoOps.checkout(cwd, input))(target).pipe(
+          Effect.tap((result) =>
+            target.threadId !== null &&
+            result.status.kind === "repo" &&
+            result.status.branch !== null
+              ? threads
+                  .update(target.threadId, { branch: result.status.branch })
+                  .pipe(Effect.ignore)
+              : Effect.void,
+          ),
+        ),
       listPullRequests: withCwd(repoOps.listPullRequests),
       createPullRequest: (target, input) =>
         withCwd((cwd) => repoOps.createPullRequest(cwd, input))(target),

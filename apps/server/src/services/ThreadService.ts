@@ -23,6 +23,7 @@ import * as EventBus from "./EventBus.ts";
 import * as GitService from "./GitService.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as ProviderService from "./ProviderService.ts";
+import { resolveThreadLocation } from "./threadRuntime.ts";
 import {
   deriveThreadInputTitle,
   formatPromptWithAttachments,
@@ -32,6 +33,7 @@ import {
   readTurnsForThread,
   recoverInterruptedThreads,
   TITLE_LIMIT,
+  updateThreadRow,
 } from "./threadStore.ts";
 import { type ActiveRun, launchTurnExecution, type PendingApprovalResolver } from "./turnRunner.ts";
 
@@ -385,26 +387,38 @@ const make = Effect.gen(function* () {
     if (!existing) {
       return yield* new ThreadServiceError({ detail: `Thread "${threadId}" was not found.` });
     }
+    const nextRuntime = input.runtime ?? existing.runtime;
+    if (nextRuntime !== existing.runtime && activeRuns.has(threadId)) {
+      return yield* new ThreadServiceError({
+        detail: "Stop the running turn before changing runtime.",
+      });
+    }
+    const project = yield* projects
+      .get(existing.projectId)
+      .pipe(Effect.mapError((err) => new ThreadServiceError({ detail: err.message })));
+    const location = yield* resolveThreadLocation({
+      existing,
+      project,
+      nextRuntime,
+      requestedBranch: input.branch,
+      git,
+    }).pipe(Effect.mapError((detail) => new ThreadServiceError({ detail })));
     const nextSelection = input.modelSelection ?? existing.modelSelection;
-    const providerChanged = nextSelection.providerId !== existing.modelSelection.providerId;
-    db.prepare(
-      `UPDATE threads
-       SET title = ?, provider_id = ?, provider_kind = ?, model = ?, effort = ?,
-           runtime_mode = ?, interaction_mode = ?, provider_session_id = ?, updated_at = ?
-       WHERE id = ?`,
-    ).run(
-      input.title?.trim() || existing.title,
-      nextSelection.providerId,
-      nextSelection.providerKind,
-      nextSelection.model,
-      nextSelection.effort ?? null,
-      input.runtimeMode ?? existing.runtimeMode,
-      input.interactionMode ?? existing.interactionMode,
-      providerChanged ? null : (existing.providerSessionId ?? null),
-      new Date().toISOString(),
-      threadId,
-    );
-    const updated = readThreadById(db, threadId);
+    const resetSession =
+      location.resetSession || nextSelection.providerId !== existing.modelSelection.providerId;
+    const updated = updateThreadRow(db, {
+      id: threadId,
+      title: input.title?.trim() || existing.title,
+      runtime: location.runtime,
+      branch: location.branch,
+      worktreePath: location.worktreePath,
+      cwd: location.cwd,
+      modelSelection: nextSelection,
+      runtimeMode: input.runtimeMode ?? existing.runtimeMode,
+      interactionMode: input.interactionMode ?? existing.interactionMode,
+      providerSessionId: resetSession ? null : (existing.providerSessionId ?? null),
+      now: new Date().toISOString(),
+    });
     if (!updated) {
       return yield* new ThreadServiceError({ detail: `Thread "${threadId}" was not found.` });
     }
