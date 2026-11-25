@@ -4,7 +4,10 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { ThreadGitPopover } from "@/components/git/ThreadGitPopover.tsx";
 import { Composer, type ComposerSubmitPayload } from "@/components/home/Composer.tsx";
+import { COMPACT_PROMPT } from "@/components/home/ComposerSlashMenu.tsx";
+import { estimateContextUsage } from "@/components/home/contextUsage.ts";
 import { ScrollRuler } from "@/components/thread/ScrollRuler.tsx";
+import { ScrollToEndButton } from "@/components/thread/ScrollToEndButton.tsx";
 import { ThreadTurnView } from "@/components/thread/ThreadTurnView.tsx";
 import { useStickToBottom } from "@/components/thread/useStickToBottom.ts";
 import { Button } from "@/components/ui/Button.tsx";
@@ -48,7 +51,7 @@ function ThreadPage() {
   }, [threadId]);
 
   const turns = detail?.turns ?? [];
-  useStickToBottom(scrollRef, turns);
+  const { isAtBottom, scrollToBottom } = useStickToBottom(scrollRef, turns);
 
   if (loadError) {
     return (
@@ -127,9 +130,10 @@ function ThreadPage() {
             ))}
           </div>
         </div>
+        <ScrollToEndButton visible={!isAtBottom} onClick={scrollToBottom} />
       </div>
 
-      <div className="shrink-0 px-4 pt-2 pb-4">
+      <div className="shrink-0 px-4 pt-2 pb-2">
         <div className="mx-auto w-full max-w-composer space-y-2">
           {submitError && (
             <div className="rounded-control border border-danger/30 bg-danger/10 px-3 py-1.5 text-label text-danger">
@@ -138,17 +142,29 @@ function ThreadPage() {
           )}
           <Composer
             id={`composer-${thread.id}`}
-            placeholder={
-              isRunning
-                ? "Agent is working… press Esc or click Stop to interrupt"
-                : "Reply to thread"
-            }
+            {...(isRunning
+              ? { placeholder: "Agent is working… press Esc or click Stop to interrupt" }
+              : {})}
             providers={providers}
             modelSelection={thread.modelSelection}
             onModelSelectionChange={handleModelChange}
             running={isRunning}
             onSubmit={handleSubmit}
             onStop={() => void interruptTurn(thread.id)}
+            interactionMode={thread.interactionMode}
+            onInteractionModeChange={(interactionMode) =>
+              void updateThread(thread.id, { interactionMode })
+            }
+            onCompact={() =>
+              void handleSubmit({
+                prompt: COMPACT_PROMPT,
+                modelSelection: thread.modelSelection,
+                attachments: [],
+              })
+            }
+            filesRoot={thread.cwd}
+            status={{ runtime: thread.runtime, branch: thread.branch, state: thread.status.kind }}
+            contextUsage={estimateContextUsage({ turns, model: thread.modelSelection.model })}
           />
         </div>
       </div>

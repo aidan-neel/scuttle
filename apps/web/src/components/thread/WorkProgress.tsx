@@ -1,27 +1,17 @@
-import { ArrowRight01Icon } from "@hugeicons/core-free-icons";
 import type { ActivityItem, ThreadTurn } from "@scuttle/contracts";
 import { AnimatePresence, motion } from "motion/react";
 import { type ReactNode, useEffect, useId, useState } from "react";
-import { Icon } from "@/components/ui/Icon.tsx";
-import { SwapText } from "@/components/ui/SwapText.tsx";
+import { formatElapsedSeconds } from "@/lib/format.ts";
 import { easeOut } from "@/lib/motion.ts";
 import { cn } from "@/lib/utils";
-import { RollingTime, SmoothWidth } from "./RollingTime.tsx";
 
-type TracePhase =
-  | { readonly kind: "thinking" }
-  | { readonly kind: "working"; readonly activeLabel: string }
-  | { readonly kind: "done"; readonly steps: number }
-  | { readonly kind: "stopped" }
-  | { readonly kind: "failed" };
-
-const PHASE_LEAD: Record<TracePhase["kind"], { readonly bare: string; readonly timed: string }> = {
-  thinking: { bare: "Thinking", timed: "Thinking for" },
-  working: { bare: "Working", timed: "Working for" },
-  done: { bare: "Worked", timed: "Worked for" },
-  stopped: { bare: "Stopped", timed: "Stopped after" },
-  failed: { bare: "Failed", timed: "Failed after" },
-};
+const STATUS_LEAD: Record<ThreadTurn["status"], { readonly bare: string; readonly timed: string }> =
+  {
+    running: { bare: "Working", timed: "Working for" },
+    completed: { bare: "Worked", timed: "Worked for" },
+    interrupted: { bare: "Stopped", timed: "Stopped after" },
+    failed: { bare: "Failed", timed: "Failed after" },
+  };
 
 interface Timed {
   readonly startedAt: string;
@@ -36,25 +26,8 @@ const elapsedMs = (item: Timed, live: boolean, nowMs: number): number => {
   return Math.max(0, Date.parse(item.completedAt) - Date.parse(item.startedAt));
 };
 
-const tracePhase = (
-  status: ThreadTurn["status"],
-  steps: ReadonlyArray<ActivityItem>,
-): TracePhase => {
-  switch (status) {
-    case "running": {
-      const active = steps.findLast((step) => step.status === "running");
-      return active === undefined
-        ? { kind: "thinking" }
-        : { kind: "working", activeLabel: active.activeLabel };
-    }
-    case "completed":
-      return { kind: "done", steps: steps.length };
-    case "interrupted":
-      return { kind: "stopped" };
-    case "failed":
-      return { kind: "failed" };
-  }
-};
+const formatPhaseText = (bare: string, timed: string, ms: number): string =>
+  ms >= 1000 ? `${timed} ${formatElapsedSeconds(ms)}` : bare;
 
 function useLiveNow(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
@@ -82,20 +55,20 @@ function Reveal({ id, children }: { readonly id?: string; readonly children: Rea
   );
 }
 
-function TraceStep({
-  step,
+function ThinkingRow({
+  ms,
   live,
-  nowMs,
+  thinkingText,
 }: {
-  readonly step: ActivityItem;
+  readonly ms: number;
   readonly live: boolean;
-  readonly nowMs: number;
+  readonly thinkingText: string;
 }) {
   const [open, setOpen] = useState(false);
-  const detail = step.detail?.trim() ?? "";
-  const canExpand = detail.length > 0;
-  const ms = elapsedMs(step, live, nowMs);
-  const failed = step.status === "failed" || step.kind === "error";
+  const canExpand = thinkingText.length > 0;
+  const label = live
+    ? formatPhaseText("Thinking", "Thinking for", ms)
+    : formatPhaseText("Thought", "Thought for", ms);
 
   return (
     <li>
@@ -104,7 +77,64 @@ function TraceStep({
         disabled={!canExpand}
         aria-expanded={canExpand ? open : undefined}
         onClick={() => setOpen((prev) => !prev)}
-        className="group/step inline-flex max-w-full items-baseline gap-2 py-0.5 text-left text-[12.5px] leading-[1.5] enabled:cursor-pointer"
+        className="group/step inline-flex max-w-full items-baseline py-0.5 text-left text-[13px] leading-[1.5] tabular-nums enabled:cursor-pointer"
+      >
+        <span
+          className={cn(
+            "min-w-0 truncate transition-colors",
+            live
+              ? "capy-shimmer"
+              : "text-fg-muted group-enabled/step:group-hover/step:text-fg-secondary",
+          )}
+        >
+          {label}
+        </span>
+      </button>
+      <AnimatePresence initial={false}>
+        {open && canExpand && (
+          <Reveal>
+            <p className="mt-1 mb-1.5 border-l border-line/80 pl-3 text-[13px] leading-[1.6] whitespace-pre-wrap break-words text-fg-muted">
+              {thinkingText}
+            </p>
+          </Reveal>
+        )}
+      </AnimatePresence>
+    </li>
+  );
+}
+
+function TraceStep({
+  step,
+  live,
+  nowMs,
+  thinkingText,
+}: {
+  readonly step: ActivityItem;
+  readonly live: boolean;
+  readonly nowMs: number;
+  readonly thinkingText: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ms = elapsedMs(step, live, nowMs);
+
+  if (step.kind === "thinking") {
+    return <ThinkingRow ms={ms} live={live} thinkingText={thinkingText} />;
+  }
+
+  const detail = step.detail?.trim() ?? "";
+  const canExpand = detail.length > 0;
+  const failed = step.status === "failed" || step.kind === "error";
+  const text = live ? step.activeLabel : step.label;
+  const label = ms >= 1000 ? `${text} · ${formatElapsedSeconds(ms)}` : text;
+
+  return (
+    <li>
+      <button
+        type="button"
+        disabled={!canExpand}
+        aria-expanded={canExpand ? open : undefined}
+        onClick={() => setOpen((prev) => !prev)}
+        className="group/step inline-flex max-w-full items-baseline py-0.5 text-left text-[13px] leading-[1.5] tabular-nums enabled:cursor-pointer"
       >
         <span
           className={cn(
@@ -116,9 +146,8 @@ function TraceStep({
                 : "text-fg-muted group-enabled/step:group-hover/step:text-fg-secondary",
           )}
         >
-          {live ? step.activeLabel : step.label}
+          {label}
         </span>
-        {ms >= 1000 && <RollingTime ms={ms} className="shrink-0 text-meta text-fg-faint" />}
       </button>
       <AnimatePresence initial={false}>
         {open && canExpand && (
@@ -136,93 +165,55 @@ function TraceStep({
 export function WorkProgress({ turn }: { readonly turn: ThreadTurn }) {
   const running = turn.status === "running";
   const nowMs = useLiveNow(running);
-  const [open, setOpen] = useState(false);
+  const [userExpanded, setUserExpanded] = useState<boolean | null>(null);
   const panelId = useId();
 
-  const steps = turn.activities.filter((activity) => activity.kind !== "thinking");
   const thinking = turn.thinkingText.trim();
-  const expandable = thinking.length > 0 || steps.length > 0;
+  const hasThinkingActivity = turn.activities.some((activity) => activity.kind === "thinking");
+  const showInitialThinking = running && turn.activities.length === 0;
+  const showOrphanThinking = !running && !hasThinkingActivity && thinking.length > 0;
+  const hasTrace = turn.activities.length > 0 || showInitialThinking || showOrphanThinking;
+  const open = userExpanded ?? running;
 
-  const phase = tracePhase(turn.status, steps);
   const ms = elapsedMs(turn, running, nowMs);
-  const timed = ms >= 1000;
-  const lead = timed ? PHASE_LEAD[phase.kind].timed : PHASE_LEAD[phase.kind].bare;
-  const stepHint =
-    phase.kind === "working"
-      ? phase.activeLabel
-      : phase.kind === "done" && phase.steps > 0
-        ? phase.steps === 1
-          ? "1 step"
-          : `${phase.steps} steps`
-        : undefined;
+  const lead = STATUS_LEAD[turn.status];
+  const summaryText = formatPhaseText(lead.bare, lead.timed, ms);
 
   return (
     <div className="my-2">
-      <div className="flex items-center justify-center gap-3">
-        <span aria-hidden className="h-px flex-1 bg-line/70" />
+      <div className="flex items-center justify-center">
         <button
           type="button"
-          disabled={!expandable}
-          aria-expanded={expandable ? open : undefined}
-          aria-controls={expandable ? panelId : undefined}
-          onClick={() => setOpen((prev) => !prev)}
+          disabled={!hasTrace}
+          aria-expanded={hasTrace ? open : undefined}
+          aria-controls={hasTrace ? panelId : undefined}
+          onClick={() => setUserExpanded(!open)}
           className={cn(
-            "group/trace inline-flex max-w-full items-center gap-1.5 py-0.5 text-[12.5px] leading-[1.5] transition-colors",
-            phase.kind === "failed" ? "text-danger/80" : "text-fg-faint",
-            "enabled:cursor-pointer enabled:hover:text-fg-muted",
+            "inline-flex items-center py-0.5 text-[13px] leading-[1.5] tabular-nums transition-colors",
+            turn.status === "failed" ? "text-danger/80" : "text-fg-muted",
+            "enabled:cursor-pointer enabled:hover:text-fg-secondary",
           )}
         >
-          <SmoothWidth>
-            <SwapText swapKey={lead}>
-              <span className={running ? "capy-shimmer" : undefined}>{lead}</span>
-            </SwapText>
-            {timed && (
-              <RollingTime
-                ms={ms}
-                className={cn("ml-[0.3em]", running ? "text-fg-muted" : undefined)}
-              />
-            )}
-            {stepHint !== undefined && (
-              <SwapText swapKey={stepHint} className="ml-[0.45em] text-fg-faint">
-                <span className="max-w-[16rem] truncate">· {stepHint}</span>
-              </SwapText>
-            )}
-          </SmoothWidth>
-          {expandable && (
-            <Icon
-              icon={ArrowRight01Icon}
-              className={cn(
-                "size-3 shrink-0 text-fg-faint transition-transform duration-200 ease-out-quint",
-                open && "rotate-90",
-              )}
-            />
-          )}
+          <span className={running ? "capy-shimmer" : undefined}>{summaryText}</span>
         </button>
-        <span aria-hidden className="h-px flex-1 bg-line/70" />
       </div>
 
       <AnimatePresence initial={false}>
-        {open && expandable && (
+        {open && hasTrace && (
           <Reveal id={panelId}>
-            <div className="mt-2 mb-1 ml-1 flex flex-col gap-2.5 border-l border-line/80 pl-3.5">
-              {thinking.length > 0 && (
-                <p className="text-[13px] leading-[1.6] whitespace-pre-wrap break-words text-fg-muted">
-                  {thinking}
-                </p>
-              )}
-              {steps.length > 0 && (
-                <ol className="flex flex-col gap-0.5">
-                  {steps.map((step) => (
-                    <TraceStep
-                      key={step.id}
-                      step={step}
-                      live={running && step.status === "running"}
-                      nowMs={nowMs}
-                    />
-                  ))}
-                </ol>
-              )}
-            </div>
+            <ol className="mt-3 flex flex-col gap-1">
+              {showInitialThinking && <ThinkingRow ms={ms} live thinkingText={thinking} />}
+              {showOrphanThinking && <ThinkingRow ms={0} live={false} thinkingText={thinking} />}
+              {turn.activities.map((step) => (
+                <TraceStep
+                  key={step.id}
+                  step={step}
+                  live={running && step.status === "running"}
+                  nowMs={nowMs}
+                  thinkingText={thinking}
+                />
+              ))}
+            </ol>
           </Reveal>
         )}
       </AnimatePresence>

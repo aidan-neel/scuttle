@@ -33,6 +33,7 @@ const AGENT = {
   modelSelection: MODEL,
   modelStack: { agent: MODEL },
   instructionsMd: "# Scuttle",
+  pinned: false,
   needsAttention: false,
   createdAt: "2026-11-25T00:00:00Z",
   updatedAt: "2026-11-25T00:00:00Z",

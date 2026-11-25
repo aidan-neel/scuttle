@@ -2,7 +2,10 @@ import { describeApiError } from "@scuttle/client-runtime";
 import type { Agent, ThreadDetail } from "@scuttle/contracts";
 import { useRef, useState } from "react";
 import { Composer, type ComposerSubmitPayload } from "@/components/home/Composer.tsx";
+import { COMPACT_PROMPT } from "@/components/home/ComposerSlashMenu.tsx";
+import { estimateContextUsage } from "@/components/home/contextUsage.ts";
 import { ScrollRuler } from "@/components/thread/ScrollRuler.tsx";
+import { ScrollToEndButton } from "@/components/thread/ScrollToEndButton.tsx";
 import { ThreadTurnView } from "@/components/thread/ThreadTurnView.tsx";
 import { useStickToBottom } from "@/components/thread/useStickToBottom.ts";
 import { DotSpinner } from "@/components/ui/DotSpinner.tsx";
@@ -35,8 +38,15 @@ function WaitingGlyph() {
 }
 
 export function AgentConversation({ agent, detail, onViewAgent }: AgentConversationProps) {
-  const { providers, sendAgentTurn, startAgentSetup, updateAgent, interruptTurn, respondApproval } =
-    useWorkspace();
+  const {
+    providers,
+    sendAgentTurn,
+    startAgentSetup,
+    updateAgent,
+    updateThread,
+    interruptTurn,
+    respondApproval,
+  } = useWorkspace();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [waitingDismissed, setWaitingDismissed] = useState(false);
@@ -44,7 +54,8 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
   const { thread, turns } = detail;
   const isRunning = thread.status.kind === "running" || thread.status.kind === "needs-input";
   const composerId = `composer-agent-${agent.id}`;
-  useStickToBottom(scrollRef, turns);
+  const { isAtBottom, scrollToBottom } = useStickToBottom(scrollRef, turns);
+  const contextUsage = estimateContextUsage({ turns, model: thread.modelSelection.model });
 
   const needsPurpose = !isRunning && agent.purpose.trim().length === 0 && !waitingDismissed;
 
@@ -147,6 +158,7 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
             )}
           </div>
         </div>
+        <ScrollToEndButton visible={!isAtBottom} onClick={scrollToBottom} />
       </div>
 
       <div className="shrink-0 px-4 pt-2 pb-4">
@@ -161,13 +173,31 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
             placeholder={
               isRunning
                 ? `${agent.name} is working… press Esc to interrupt`
-                : `Message ${agent.name}`
+                : `Message ${agent.name}, / for commands, @ for context`
             }
             providers={providers}
             modelSelection={thread.modelSelection}
             onModelSelectionChange={(modelSelection) =>
               void updateAgent(agent.id, { modelSelection })
             }
+            interactionMode={thread.interactionMode}
+            onInteractionModeChange={(interactionMode) =>
+              void updateThread(thread.id, { interactionMode })
+            }
+            onCompact={() =>
+              void handleSubmit({
+                prompt: COMPACT_PROMPT,
+                modelSelection: thread.modelSelection,
+                attachments: [],
+              })
+            }
+            filesRoot={thread.cwd}
+            status={{
+              runtime: thread.runtime,
+              branch: thread.branch,
+              state: thread.status.kind,
+            }}
+            contextUsage={contextUsage}
             running={isRunning}
             onSubmit={handleSubmit}
             onStop={() => void interruptTurn(thread.id)}

@@ -34,6 +34,7 @@ interface AgentJoinRow {
   readonly check_in_interval_minutes: number | null;
   readonly last_check_in_at: string | null;
   readonly last_summary: string | null;
+  readonly pinned: number;
   readonly needs_attention: number;
   readonly created_at: string;
   readonly updated_at: string;
@@ -118,6 +119,7 @@ const rowToAgent = (row: AgentJoinRow): Agent => {
       : {}),
     ...(row.last_check_in_at !== null ? { lastCheckInAt: row.last_check_in_at } : {}),
     ...(row.last_summary !== null ? { lastSummary: row.last_summary } : {}),
+    pinned: row.pinned === 1,
     needsAttention: row.needs_attention === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -158,7 +160,9 @@ const AGENT_SELECT = `
 
 export const listAgents = (db: Database): ReadonlyArray<Agent> =>
   db
-    .query<AgentJoinRow, []>(`${AGENT_SELECT} ORDER BY a.needs_attention DESC, a.updated_at DESC`)
+    .query<AgentJoinRow, []>(
+      `${AGENT_SELECT} ORDER BY a.pinned DESC, a.needs_attention DESC, a.updated_at DESC`,
+    )
     .all()
     .map(rowToAgent);
 
@@ -202,8 +206,8 @@ export const insertAgent = (db: Database, agent: Agent): void => {
   db.prepare(
     `INSERT INTO agents
        (id, project_id, name, purpose, primary_thread_id, runtime, model_selection_json, model_stack_json,
-        instructions_md, check_in_interval_minutes, last_check_in_at, last_summary, needs_attention, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        instructions_md, check_in_interval_minutes, last_check_in_at, last_summary, pinned, needs_attention, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     agent.id,
     agent.projectId,
@@ -217,6 +221,7 @@ export const insertAgent = (db: Database, agent: Agent): void => {
     agent.checkInIntervalMinutes ?? null,
     agent.lastCheckInAt ?? null,
     agent.lastSummary ?? null,
+    agent.pinned ? 1 : 0,
     agent.needsAttention ? 1 : 0,
     agent.createdAt,
     agent.updatedAt,
@@ -228,7 +233,7 @@ export const updateAgentRow = (db: Database, agent: Agent): void => {
     `UPDATE agents
      SET name = ?, purpose = ?, runtime = ?, model_selection_json = ?, model_stack_json = ?,
          instructions_md = ?, check_in_interval_minutes = ?, last_check_in_at = ?, last_summary = ?,
-         needs_attention = ?, updated_at = ?
+         pinned = ?, needs_attention = ?, updated_at = ?
      WHERE id = ?`,
   ).run(
     agent.name,
@@ -240,6 +245,7 @@ export const updateAgentRow = (db: Database, agent: Agent): void => {
     agent.checkInIntervalMinutes ?? null,
     agent.lastCheckInAt ?? null,
     agent.lastSummary ?? null,
+    agent.pinned ? 1 : 0,
     agent.needsAttention ? 1 : 0,
     agent.updatedAt,
     agent.id,

@@ -112,11 +112,13 @@ describe("AgentService", () => {
               workhorse: workhorseModel,
             },
             checkInIntervalMinutes: 30,
+            pinned: true,
           });
           expect(updated.name).toBe("Widgets Lead");
           expect(updated.purpose).toBe("Own the widgets repository");
           expect(updated.modelStack.workhorse?.model).toBe("claude-sonnet-5-5");
           expect(updated.checkInIntervalMinutes).toBe(30);
+          expect(updated.pinned).toBe(true);
 
           const m1 = yield* agents.createMemory(agent!.id, {
             category: "convention",
@@ -226,6 +228,7 @@ describe("AgentService", () => {
         await Bun.sleep(15);
         return {
           finalText: "Implemented fix, tests pass. Opened https://github.com/acme/widgets/pull/42",
+          costUsd: 1.25,
         };
       },
     );
@@ -308,6 +311,9 @@ describe("AgentService", () => {
           );
 
           const detailAfter = yield* agents.getDetail(primaryAgent.id);
+          const delegatedThread = yield* threads.getDetail(assigned.delegation.childThreadId);
+          expect(delegatedThread.thread.costUsd).toBe(1.25);
+          expect(delegatedThread.turns[0]?.costUsd).toBe(1.25);
           const settledDelegation = detailAfter.delegations.find(
             (d) => d.id === assigned.delegation.id,
           );
@@ -353,7 +359,8 @@ describe("AgentService", () => {
 
   it("serves all Agent HTTP endpoints cleanly", async () => {
     const runSpy = spyOn(claudeAdapter, "runTurn").mockImplementation(async (input) => {
-      await Bun.sleep(40);
+      const waitMs = input.prompt.includes("Quick check") ? 400 : 30;
+      await Bun.sleep(waitMs);
       if (input.signal.aborted) return { interrupted: true };
       return { finalText: "Setup complete." };
     });
