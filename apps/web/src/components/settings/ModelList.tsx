@@ -3,6 +3,8 @@ import type { ProviderModel, ProviderSnapshot } from "@scuttle/contracts";
 import { useState } from "react";
 import { Button } from "@/components/ui/Button.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
+import { Switch } from "@/components/ui/Switch.tsx";
+import { useDisabledModels } from "@/lib/disabledModels.ts";
 import { modelFavoriteKey, useFavoriteModels } from "@/lib/modelFavorites.ts";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace.tsx";
@@ -63,7 +65,7 @@ function UpstreamPills({
     <div
       role="group"
       aria-label="Filter by upstream provider"
-      className="-mx-1 flex gap-1 overflow-x-auto py-0.5 pr-8 pl-1 scrollbar-none [mask-image:linear-gradient(to_right,black_calc(100%-32px),transparent)]"
+      className="scrollbar-none -mx-1 flex gap-1 overflow-x-auto py-0.5 pr-8 pl-1 [mask-image:linear-gradient(to_right,black_calc(100%-32px),transparent)]"
     >
       <UpstreamPill
         label="All"
@@ -87,28 +89,32 @@ function UpstreamPills({
 function ModelRow({
   model,
   showUpstream,
+  enabled,
   starred,
   isDefault,
+  onToggleEnabled,
   onToggleFavorite,
   onMakeDefault,
 }: {
   readonly model: ProviderModel;
   readonly showUpstream: boolean;
+  readonly enabled: boolean;
   readonly starred: boolean;
   readonly isDefault: boolean;
+  readonly onToggleEnabled: (enabled: boolean) => void;
   readonly onToggleFavorite: () => void;
   readonly onMakeDefault: () => void;
 }) {
   const name = modelDisplayName(model);
 
   return (
-    <div className="group flex items-center gap-3 px-4 py-2">
+    <div className={cn("group flex items-center gap-2.5 px-4 py-2", !enabled && "opacity-50")}>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate text-body text-fg" title={model.slug}>
             {name}
           </span>
-          {isDefault && (
+          {isDefault && enabled && (
             <span className="shrink-0 rounded-chip bg-primary/16 px-1.5 py-0.5 text-meta text-input">
               Default
             </span>
@@ -120,7 +126,7 @@ function ModelRow({
           </div>
         )}
       </div>
-      {!isDefault && (
+      {enabled && !isDefault && (
         <Button
           variant="ghost"
           size="sm"
@@ -133,6 +139,7 @@ function ModelRow({
       <Button
         variant="ghost"
         size="icon-sm"
+        disabled={!enabled}
         aria-pressed={starred}
         aria-label={starred ? `Remove ${name} from favorites` : `Favorite ${name}`}
         onClick={onToggleFavorite}
@@ -140,6 +147,11 @@ function ModelRow({
       >
         <Icon icon={StarIcon} className={cn(starred && "fill-current")} />
       </Button>
+      <Switch
+        checked={enabled}
+        aria-label={enabled ? `Disable ${name}` : `Enable ${name}`}
+        onCheckedChange={onToggleEnabled}
+      />
     </div>
   );
 }
@@ -147,12 +159,16 @@ function ModelRow({
 export function ModelList({ provider }: { readonly provider: ProviderSnapshot }) {
   const { defaultModelSelection, setDefaultModelSelection } = useWorkspace();
   const { isFavorite, toggle } = useFavoriteModels();
+  const { isDisabled, setDisabled, setManyDisabled } = useDisabledModels();
   const [query, setQuery] = useState("");
   const [upstream, setUpstream] = useState<string>(ALL_UPSTREAMS);
   const groups = upstreamGroups(provider.models);
   const activeUpstream = groups.some((group) => group.id === upstream) ? upstream : ALL_UPSTREAMS;
   const visible = filterModels(provider.models, { query, upstream: activeUpstream });
   const showUpstream = groups.length > 0 && activeUpstream === ALL_UPSTREAMS;
+  const visibleKeys = visible.map((model) => modelFavoriteKey(provider.id, model.slug));
+  const enabledVisibleCount = visibleKeys.filter((key) => !isDisabled(key)).length;
+  const allVisibleDisabled = visible.length > 0 && enabledVisibleCount === 0;
 
   if (provider.models.length === 0) {
     return (
@@ -174,10 +190,20 @@ export function ModelList({ provider }: { readonly provider: ProviderSnapshot })
             placeholder={`Search ${provider.models.length} models`}
             className="flex-1"
           />
+          {visible.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setManyDisabled(visibleKeys, !allVisibleDisabled)}
+              className="shrink-0 text-meta text-fg-muted"
+            >
+              {allVisibleDisabled ? "Enable all" : "Disable all"}
+            </Button>
+          )}
           <span className="shrink-0 px-1 font-mono text-meta text-fg-muted" aria-live="polite">
-            {visible.length === provider.models.length
+            {enabledVisibleCount === visible.length
               ? `${visible.length}`
-              : `${visible.length} / ${provider.models.length}`}
+              : `${enabledVisibleCount}/${visible.length}`}
           </span>
         </div>
         {groups.length > 0 && (
@@ -190,27 +216,33 @@ export function ModelList({ provider }: { readonly provider: ProviderSnapshot })
         )}
       </div>
       <div className="max-h-[440px] divide-y divide-line overflow-y-auto overscroll-contain">
-        {visible.map((model) => (
-          <ModelRow
-            key={model.slug}
-            model={model}
-            showUpstream={showUpstream}
-            starred={isFavorite(modelFavoriteKey(provider.id, model.slug))}
-            isDefault={
-              defaultModelSelection.providerId === provider.id &&
-              defaultModelSelection.model === model.slug
-            }
-            onToggleFavorite={() => toggle(modelFavoriteKey(provider.id, model.slug))}
-            onMakeDefault={() =>
-              setDefaultModelSelection({
-                providerId: provider.id,
-                providerKind: provider.kind,
-                model: model.slug,
-                ...(model.defaultEffort !== undefined ? { effort: model.defaultEffort } : {}),
-              })
-            }
-          />
-        ))}
+        {visible.map((model) => {
+          const key = modelFavoriteKey(provider.id, model.slug);
+          const enabled = !isDisabled(key);
+          return (
+            <ModelRow
+              key={model.slug}
+              model={model}
+              showUpstream={showUpstream}
+              enabled={enabled}
+              starred={isFavorite(key)}
+              isDefault={
+                defaultModelSelection.providerId === provider.id &&
+                defaultModelSelection.model === model.slug
+              }
+              onToggleEnabled={(nextEnabled) => setDisabled(key, !nextEnabled)}
+              onToggleFavorite={() => toggle(key)}
+              onMakeDefault={() =>
+                setDefaultModelSelection({
+                  providerId: provider.id,
+                  providerKind: provider.kind,
+                  model: model.slug,
+                  ...(model.defaultEffort !== undefined ? { effort: model.defaultEffort } : {}),
+                })
+              }
+            />
+          );
+        })}
         {visible.length === 0 && (
           <div className="px-4 py-5 text-label text-fg-muted">
             No models match “{query.trim()}”

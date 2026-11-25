@@ -9,7 +9,7 @@ import {
   type SectionId,
   sectionById,
 } from "@/components/settings/sections.ts";
-import { SettingsNav, SettingsNavCompact } from "@/components/settings/SettingsNav.tsx";
+import { SettingsNavCompact } from "@/components/settings/SettingsNav.tsx";
 import {
   AppearanceSection,
   GeneralSection,
@@ -48,12 +48,11 @@ function SettingsPage() {
   const entry = sectionById(section);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-      <SettingsNav active={section} />
+    <div className="flex min-h-0 flex-1 flex-col">
       <SettingsNavCompact active={section} />
       <div key={section} className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-[640px] space-y-8 px-4 pt-8 pb-16 md:pt-12">
-          <SettingsHeader title={entry.label} description={entry.description} />
+        <div className="mx-auto w-full max-w-[640px] space-y-6 px-4 pt-8 pb-16 md:pt-10">
+          <SettingsHeader title={entry.label} />
           <SectionBody id={section} />
         </div>
       </div>

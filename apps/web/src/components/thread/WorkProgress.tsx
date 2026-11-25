@@ -18,7 +18,7 @@ type TracePhase =
 const PHASE_LEAD: Record<TracePhase["kind"], { readonly bare: string; readonly timed: string }> = {
   thinking: { bare: "Thinking", timed: "Thinking for" },
   working: { bare: "Working", timed: "Working for" },
-  done: { bare: "Thought", timed: "Thought for" },
+  done: { bare: "Worked", timed: "Worked for" },
   stopped: { bare: "Stopped", timed: "Stopped after" },
   failed: { bare: "Failed", timed: "Failed after" },
 };
@@ -54,14 +54,6 @@ const tracePhase = (
     case "failed":
       return { kind: "failed" };
   }
-};
-
-const phaseWhisper = (phase: TracePhase): string | undefined => {
-  if (phase.kind === "working") return phase.activeLabel;
-  if (phase.kind === "done" && phase.steps > 0) {
-    return phase.steps === 1 ? "1 step" : `${phase.steps} steps`;
-  }
-  return undefined;
 };
 
 function useLiveNow(active: boolean): number {
@@ -155,48 +147,64 @@ export function WorkProgress({ turn }: { readonly turn: ThreadTurn }) {
   const ms = elapsedMs(turn, running, nowMs);
   const timed = ms >= 1000;
   const lead = timed ? PHASE_LEAD[phase.kind].timed : PHASE_LEAD[phase.kind].bare;
-  const whisper = phaseWhisper(phase);
+  const stepHint =
+    phase.kind === "working"
+      ? phase.activeLabel
+      : phase.kind === "done" && phase.steps > 0
+        ? phase.steps === 1
+          ? "1 step"
+          : `${phase.steps} steps`
+        : undefined;
 
   return (
-    <div className="text-left">
-      <button
-        type="button"
-        disabled={!expandable}
-        aria-expanded={expandable ? open : undefined}
-        aria-controls={expandable ? panelId : undefined}
-        onClick={() => setOpen((prev) => !prev)}
-        className={cn(
-          "group/trace inline-flex max-w-full items-center gap-1.5 py-0.5 text-[13px] leading-[1.5] transition-colors",
-          phase.kind === "failed" ? "text-danger/80" : "text-fg-muted",
-          "enabled:cursor-pointer enabled:hover:text-fg-secondary",
-        )}
-      >
-        <SmoothWidth>
-          <SwapText swapKey={lead}>
-            <span className={running ? "capy-shimmer" : undefined}>{lead}</span>
-          </SwapText>
-          {timed && <RollingTime ms={ms} className="ml-[0.3em]" />}
-          {whisper !== undefined && (
-            <SwapText swapKey={whisper} className="ml-[0.45em] text-fg-faint">
-              <span className="max-w-[18rem] truncate">· {whisper}</span>
-            </SwapText>
+    <div className="my-2">
+      <div className="flex items-center justify-center gap-3">
+        <span aria-hidden className="h-px flex-1 bg-line/70" />
+        <button
+          type="button"
+          disabled={!expandable}
+          aria-expanded={expandable ? open : undefined}
+          aria-controls={expandable ? panelId : undefined}
+          onClick={() => setOpen((prev) => !prev)}
+          className={cn(
+            "group/trace inline-flex max-w-full items-center gap-1.5 py-0.5 text-[12.5px] leading-[1.5] transition-colors",
+            phase.kind === "failed" ? "text-danger/80" : "text-fg-faint",
+            "enabled:cursor-pointer enabled:hover:text-fg-muted",
           )}
-        </SmoothWidth>
-        {expandable && (
-          <Icon
-            icon={ArrowRight01Icon}
-            className={cn(
-              "size-3 shrink-0 text-fg-faint transition-transform duration-200 ease-out-quint",
-              open && "rotate-90",
+        >
+          <SmoothWidth>
+            <SwapText swapKey={lead}>
+              <span className={running ? "capy-shimmer" : undefined}>{lead}</span>
+            </SwapText>
+            {timed && (
+              <RollingTime
+                ms={ms}
+                className={cn("ml-[0.3em]", running ? "text-fg-muted" : undefined)}
+              />
             )}
-          />
-        )}
-      </button>
+            {stepHint !== undefined && (
+              <SwapText swapKey={stepHint} className="ml-[0.45em] text-fg-faint">
+                <span className="max-w-[16rem] truncate">· {stepHint}</span>
+              </SwapText>
+            )}
+          </SmoothWidth>
+          {expandable && (
+            <Icon
+              icon={ArrowRight01Icon}
+              className={cn(
+                "size-3 shrink-0 text-fg-faint transition-transform duration-200 ease-out-quint",
+                open && "rotate-90",
+              )}
+            />
+          )}
+        </button>
+        <span aria-hidden className="h-px flex-1 bg-line/70" />
+      </div>
 
       <AnimatePresence initial={false}>
         {open && expandable && (
           <Reveal id={panelId}>
-            <div className="mt-1.5 mb-1 ml-[5px] flex flex-col gap-2.5 border-l border-line/80 pl-3.5">
+            <div className="mt-2 mb-1 ml-1 flex flex-col gap-2.5 border-l border-line/80 pl-3.5">
               {thinking.length > 0 && (
                 <p className="text-[13px] leading-[1.6] whitespace-pre-wrap break-words text-fg-muted">
                   {thinking}

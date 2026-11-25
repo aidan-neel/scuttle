@@ -22,6 +22,8 @@ import type {
 import { type ProjectId, ProviderId } from "@scuttle/shared/ids";
 import { createContext, type ReactNode, use, useEffect, useReducer, useRef } from "react";
 import { getDesktopBridge } from "./desktopBridge.ts";
+import { readDisabledModels } from "./disabledModels.ts";
+import { modelFavoriteKey } from "./modelFavorites.ts";
 
 const MODEL_STORAGE_KEY = "scuttle.defaultModelSelection.v1";
 
@@ -59,13 +61,17 @@ const pickBestSelection = (
   providers: ReadonlyArray<ProviderSnapshot>,
   preferred: ModelSelection | null,
 ): ModelSelection => {
+  const disabled = readDisabledModels();
+  const isEnabled = (providerId: string, slug: string) =>
+    !disabled.has(modelFavoriteKey(providerId, slug));
   if (preferred) {
     const match = providers.find((p) => p.id === preferred.providerId && p.enabled);
     if (match && match.status === "ready") {
+      const enabledModels = match.models.filter((m) => isEnabled(match.id, m.slug));
       const model =
-        match.models.find((m) => m.slug === preferred.model) ??
-        match.models.find((m) => m.isDefault) ??
-        match.models[0];
+        enabledModels.find((m) => m.slug === preferred.model) ??
+        enabledModels.find((m) => m.isDefault) ??
+        enabledModels[0];
       if (model) {
         const effort =
           preferred.effort && model.efforts.includes(preferred.effort)
@@ -81,14 +87,17 @@ const pickBestSelection = (
     }
   }
   const ready =
-    providers.find((p) => p.enabled && p.status === "ready") ??
+    providers.find(
+      (p) => p.enabled && p.status === "ready" && p.models.some((m) => isEnabled(p.id, m.slug)),
+    ) ??
+    providers.find((p) => p.enabled && p.models.some((m) => isEnabled(p.id, m.slug))) ??
     providers.find((p) => p.enabled) ??
     providers[0];
   if (!ready) return preferred ?? FALLBACK_SELECTION;
+  const enabledModels = ready.models.filter((m) => isEnabled(ready.id, m.slug));
+  const pool = enabledModels.length > 0 ? enabledModels : ready.models;
   const model =
-    ready.models.find((m) => m.slug === ready.defaultModel) ??
-    ready.models.find((m) => m.isDefault) ??
-    ready.models[0];
+    pool.find((m) => m.slug === ready.defaultModel) ?? pool.find((m) => m.isDefault) ?? pool[0];
   if (!model) return preferred ?? FALLBACK_SELECTION;
   const effort =
     ready.defaultEffort && model.efforts.includes(ready.defaultEffort)

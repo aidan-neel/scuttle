@@ -1,8 +1,18 @@
+import { ContextMenu } from "@base-ui/react/context-menu";
+import {
+  Copy01Icon,
+  Delete02Icon,
+  Message01Icon,
+  StopIcon,
+  Tick02Icon,
+} from "@hugeicons/core-free-icons";
 import type { Thread } from "@scuttle/contracts";
 import type { ProjectId } from "@scuttle/shared/ids";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { AnimatePresence, LayoutGroup, motion } from "motion/react";
 import { useState } from "react";
+import { Icon } from "@/components/ui/Icon.tsx";
+import { ContextMenuItem, ContextMenuPopup, ContextMenuSeparator } from "@/components/ui/Menu.tsx";
 import { easeOut, spring } from "@/lib/motion";
 import { useWorkspace } from "@/lib/workspace.tsx";
 import { SectionHeader, type SectionMenuEntry } from "./SectionHeader.tsx";
@@ -37,7 +47,7 @@ export function ThreadList({
   onNewThread,
   onSettled,
 }: ThreadListProps) {
-  const { threads, selectedProjectId, settleThread } = useWorkspace();
+  const { threads, selectedProjectId, settleThread, deleteThread, interruptTurn } = useWorkspace();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const [sort, setSort] = useState<ThreadSort>("recent");
@@ -79,6 +89,14 @@ export function ThreadList({
     },
   ];
 
+  const handleDelete = (thread: Thread) => {
+    void deleteThread(thread.id).then(() => {
+      if (pathname === `/threads/${thread.id}`) {
+        void navigate({ to: "/" });
+      }
+    });
+  };
+
   return (
     <section aria-labelledby="threads-heading">
       <SectionHeader
@@ -98,6 +116,18 @@ export function ThreadList({
           <AnimatePresence mode="popLayout" initial={false}>
             {open.map((thread) => {
               const selected = pathname === `/threads/${thread.id}`;
+              const running =
+                thread.status.kind === "running" || thread.status.kind === "needs-input";
+              const openThread = () => {
+                void navigate({
+                  to: "/threads/$threadId",
+                  params: { threadId: thread.id },
+                });
+              };
+              const settle = () => {
+                void settleThread(thread.id, true);
+                onSettled({ id: thread.id, title: thread.title });
+              };
               return (
                 <motion.li
                   key={thread.id}
@@ -112,20 +142,46 @@ export function ThreadList({
                   }}
                   transition={spring.smooth}
                 >
-                  <ThreadRow
-                    thread={thread}
-                    selected={selected}
-                    onSelect={() => {
-                      void navigate({
-                        to: "/threads/$threadId",
-                        params: { threadId: thread.id },
-                      });
-                    }}
-                    onSettle={() => {
-                      void settleThread(thread.id, true);
-                      onSettled({ id: thread.id, title: thread.title });
-                    }}
-                  />
+                  <ContextMenu.Root>
+                    <ContextMenu.Trigger className="block">
+                      <ThreadRow
+                        thread={thread}
+                        selected={selected}
+                        onSelect={openThread}
+                        onSettle={settle}
+                      />
+                    </ContextMenu.Trigger>
+                    <ContextMenuPopup label={`${thread.title} actions`}>
+                      <ContextMenuItem onClick={openThread}>
+                        <Icon icon={Message01Icon} className="text-fg-muted" />
+                        Open thread
+                      </ContextMenuItem>
+                      <ContextMenuItem
+                        onClick={() => {
+                          void navigator.clipboard?.writeText(thread.title);
+                        }}
+                      >
+                        <Icon icon={Copy01Icon} className="text-fg-muted" />
+                        Copy title
+                      </ContextMenuItem>
+                      {running ? (
+                        <ContextMenuItem onClick={() => void interruptTurn(thread.id)}>
+                          <Icon icon={StopIcon} className="text-fg-muted" />
+                          Stop turn
+                        </ContextMenuItem>
+                      ) : (
+                        <ContextMenuItem onClick={settle}>
+                          <Icon icon={Tick02Icon} className="text-fg-muted" />
+                          Settle thread
+                        </ContextMenuItem>
+                      )}
+                      <ContextMenuSeparator />
+                      <ContextMenuItem danger onClick={() => handleDelete(thread)}>
+                        <Icon icon={Delete02Icon} />
+                        Delete thread
+                      </ContextMenuItem>
+                    </ContextMenuPopup>
+                  </ContextMenu.Root>
                 </motion.li>
               );
             })}

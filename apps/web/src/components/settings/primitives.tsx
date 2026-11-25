@@ -4,17 +4,10 @@ import type { ReactNode } from "react";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { cn } from "@/lib/utils";
 
-export function SettingsHeader({
-  title,
-  description,
-}: {
-  readonly title: string;
-  readonly description: string;
-}) {
+export function SettingsHeader({ title }: { readonly title: string }) {
   return (
-    <header className="space-y-1 pb-2">
+    <header className="pb-1">
       <h1 className="text-[20px] leading-7 font-semibold tracking-tight text-fg">{title}</h1>
-      <p className="text-body text-fg-muted">{description}</p>
     </header>
   );
 }

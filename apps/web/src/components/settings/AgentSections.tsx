@@ -5,7 +5,9 @@ import { BrandLogo } from "@/components/ui/BrandLogo.tsx";
 import { Button } from "@/components/ui/Button.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
+import { useDisabledModels } from "@/lib/disabledModels.ts";
 import { formatRelativeAge } from "@/lib/format.ts";
+import { modelFavoriteKey } from "@/lib/modelFavorites.ts";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace.tsx";
 import { ModelList } from "./ModelList.tsx";
@@ -13,6 +15,7 @@ import { SettingsGroup } from "./primitives.tsx";
 
 export function ModelsSection() {
   const { providers } = useWorkspace();
+  const { isDisabled } = useDisabledModels();
   const withModels = providers.filter((p) => p.models.length > 0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const active = withModels.find((p) => p.id === selectedId) ?? withModels[0] ?? null;
@@ -30,6 +33,9 @@ export function ModelsSection() {
       <div role="group" aria-label="Provider" className="flex flex-wrap gap-1">
         {withModels.map((provider) => {
           const selected = provider.id === active.id;
+          const enabledCount = provider.models.filter(
+            (model) => !isDisabled(modelFavoriteKey(provider.id, model.slug)),
+          ).length;
           return (
             <button
               key={provider.id}
@@ -45,7 +51,11 @@ export function ModelsSection() {
             >
               <BrandLogo brand={provider.kind} className="size-3.5" />
               {provider.name}
-              <span className="font-mono text-meta text-fg-faint">{provider.models.length}</span>
+              <span className="font-mono text-meta text-fg-faint">
+                {enabledCount === provider.models.length
+                  ? provider.models.length
+                  : `${enabledCount}/${provider.models.length}`}
+              </span>
             </button>
           );
         })}

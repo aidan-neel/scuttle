@@ -37,7 +37,7 @@ const TIDE_HORIZON: DitherPreset = {
   name: "Tide Horizon",
   matrix: "blue-noise",
   cell: 2,
-  speed: 1.0,
+  speed: 0.26,
   stillTime: 4.2,
   palette: ["#121213", "#171f2e", "#233654", "#375787"],
   field: `${REVEAL_HELPER}
@@ -79,7 +79,7 @@ const AURORA_CURTAINS: DitherPreset = {
   name: "Aurora Curtains",
   matrix: "blue-noise",
   cell: 2,
-  speed: 1.0,
+  speed: 0.24,
   stillTime: 4.5,
   palette: ["#121213", "#142228", "#1d404d", "#336f7d"],
   field: `${REVEAL_HELPER}
@@ -118,7 +118,7 @@ const CAUSTIC_RIPPLES: DitherPreset = {
   name: "Caustic Ripples",
   matrix: "bayer4",
   cell: 2,
-  speed: 1.0,
+  speed: 0.18,
   stillTime: 5.0,
   palette: ["#121213", "#1c1a2b", "#2f2a4c", "#4f477d"],
   field: `${REVEAL_HELPER}
@@ -164,7 +164,7 @@ const ORBITAL_DRIFT: DitherPreset = {
   name: "Orbital Drift",
   matrix: "blue-noise",
   cell: 2,
-  speed: 1.0,
+  speed: 0.26,
   stillTime: 3.8,
   palette: ["#121213", "#181f2d", "#283956", "#46628c"],
   field: `${REVEAL_HELPER}
@@ -208,7 +208,7 @@ const TOPO_CONTOURS: DitherPreset = {
   name: "Topo Contours",
   matrix: "bayer8",
   cell: 2,
-  speed: 1.0,
+  speed: 0.3,
   stillTime: 4.0,
   palette: ["#121213", "#201c19", "#3c2f23", "#6b5137"],
   field: `${REVEAL_HELPER}

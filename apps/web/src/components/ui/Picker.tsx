@@ -4,7 +4,7 @@ import type { IconSvgElement } from "@hugeicons/react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { Icon } from "./Icon.tsx";
-import { MenuPopup, MenuRadioItem, MenuSeparator } from "./Menu.tsx";
+import { MENU_ITEM_CLASS, MenuPopup, MenuRadioItem, MenuSeparator } from "./Menu.tsx";
 
 export interface PickerOption<Value extends string> {
   readonly value: Value;
@@ -18,16 +18,30 @@ export interface PickerAction {
   readonly onSelect: () => void;
 }
 
-export const pillTriggerClass = (className?: string) =>
+export type PickerVariant = "ghost" | "pill";
+
+export const pillTriggerClass = (className?: string, variant: PickerVariant = "pill") =>
   cn(
-    "group/pill inline-flex h-6.5 min-w-0 shrink-0 cursor-default items-center gap-1.5 rounded-control pr-1.5 pl-2 whitespace-nowrap select-none outline-none",
-    "bg-panel/70 text-label text-fg-secondary shadow-[inset_0_0_0_1px_var(--color-edge)] backdrop-blur-xs",
+    "group/pill inline-flex min-w-0 shrink-0 cursor-default items-center whitespace-nowrap select-none outline-none",
     "transition-[background-color,color,box-shadow] duration-(--dur-hover) ease-hover",
-    "hover:bg-raised hover:text-fg active:bg-hover active:duration-(--dur-tap)",
-    "data-popup-open:bg-raised data-popup-open:text-fg data-popup-open:shadow-[inset_0_0_0_1px_var(--color-edge-strong)]",
-    "focus-visible:shadow-[var(--shadow-focus),inset_0_0_0_1px_var(--color-edge-strong)]",
     "disabled:pointer-events-none disabled:opacity-40",
-    "[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*=size-])]:size-[13px]",
+    "[&_svg]:pointer-events-none [&_svg]:shrink-0",
+    variant === "ghost"
+      ? [
+          "h-6 gap-1 rounded-chip px-1.5 text-label text-fg-muted",
+          "hover:bg-(--wash) hover:text-fg active:bg-hover active:duration-(--dur-tap)",
+          "data-popup-open:bg-(--wash) data-popup-open:text-fg",
+          "focus-visible:shadow-focus",
+          "[&_svg:not([class*=size-])]:size-3",
+        ]
+      : [
+          "h-6.5 gap-1.5 rounded-control pr-1.5 pl-2 text-label text-fg-secondary",
+          "bg-panel/70 shadow-[inset_0_0_0_1px_var(--color-edge)] backdrop-blur-xs",
+          "hover:bg-raised hover:text-fg active:bg-hover active:duration-(--dur-tap)",
+          "data-popup-open:bg-raised data-popup-open:text-fg data-popup-open:shadow-[inset_0_0_0_1px_var(--color-edge-strong)]",
+          "focus-visible:shadow-[var(--shadow-focus),inset_0_0_0_1px_var(--color-edge-strong)]",
+          "[&_svg:not([class*=size-])]:size-[13px]",
+        ],
     className,
   );
 
@@ -48,9 +62,6 @@ export function PillChevron() {
   );
 }
 
-const ACTION_ITEM =
-  "flex h-8 cursor-default items-center gap-2 rounded-chip px-2 text-button text-fg-secondary outline-none select-none data-highlighted:bg-(--wash) data-highlighted:text-fg [&_svg]:size-3.5 [&_svg]:text-fg-muted";
-
 interface PickerProps<Value extends string> {
   label: string;
   value: Value;
@@ -58,6 +69,7 @@ interface PickerProps<Value extends string> {
   onValueChange: (value: Value) => void;
   icon?: ReactNode;
   action?: PickerAction;
+  variant?: PickerVariant;
   className?: string;
 }
 
@@ -68,6 +80,7 @@ export function Picker<Value extends string>({
   onValueChange,
   icon,
   action,
+  variant = "pill",
   className,
 }: PickerProps<Value>) {
   const current = options.find((option) => option.value === value);
@@ -76,13 +89,13 @@ export function Picker<Value extends string>({
     <Menu.Root>
       <Menu.Trigger
         aria-label={`${label}: ${current?.label ?? ""}`}
-        className={pillTriggerClass(className)}
+        className={pillTriggerClass(className, variant)}
       >
         {icon ?? current?.icon}
         {current && <PillLabel>{current.label}</PillLabel>}
         <PillChevron />
       </Menu.Trigger>
-      <MenuPopup label={label} className="max-w-80">
+      <MenuPopup label={label} className="max-w-72">
         <Menu.RadioGroup
           value={value}
           onValueChange={(next: unknown) => {
@@ -100,8 +113,8 @@ export function Picker<Value extends string>({
         {action && (
           <>
             <MenuSeparator />
-            <Menu.Item className={ACTION_ITEM} onClick={action.onSelect}>
-              <Icon icon={action.icon} />
+            <Menu.Item className={MENU_ITEM_CLASS} onClick={action.onSelect}>
+              <Icon icon={action.icon} className="size-3.5 text-fg-muted" />
               {action.label}
             </Menu.Item>
           </>

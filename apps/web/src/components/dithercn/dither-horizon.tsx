@@ -14,7 +14,7 @@ export type DitherHorizonProps = Omit<DitherShaderProps, "field" | "uniforms" | 
   readonly preset?: DitherPresetId;
 };
 
-const REVEAL_SECONDS = 1.4;
+const REVEAL_SECONDS = 1.6;
 
 export function DitherHorizon({
   intensity = 0.72,

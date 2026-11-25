@@ -1,4 +1,5 @@
 import {
+  ArrowLeft01Icon,
   PencilEdit02Icon,
   Search01Icon,
   Settings01Icon,
@@ -6,9 +7,11 @@ import {
 } from "@hugeicons/core-free-icons";
 import type { ConnectionState } from "@scuttle/client-runtime";
 import type { ProjectId } from "@scuttle/shared/ids";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { motion, type MotionValue } from "motion/react";
 import { useState } from "react";
+import type { SectionId } from "@/components/settings/sections.ts";
+import { SettingsSidebarNav } from "@/components/settings/SettingsNav.tsx";
 import { Button, buttonClass } from "@/components/ui/Button.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { easeOut } from "@/lib/motion";
@@ -24,6 +27,9 @@ interface SidebarProps {
   readonly connection: ConnectionState;
   readonly open: boolean;
   readonly contentWidth: MotionValue<number>;
+  readonly isSettings: boolean;
+  readonly settingsSection: SectionId;
+  readonly backTo: string;
   readonly onCollapse: () => void;
   readonly onExpand: () => void;
   readonly onNewThread: () => void;
@@ -33,11 +39,15 @@ export function Sidebar({
   connection,
   open,
   contentWidth,
+  isSettings,
+  settingsSection,
+  backTo,
   onCollapse,
   onExpand,
   onNewThread,
 }: SidebarProps) {
   const { projects, settleThread } = useWorkspace();
+  const navigate = useNavigate();
   const [projectFilter, setProjectFilter] = useState<ProjectId | null>(null);
   const filterProjectId = projects.some((project) => project.id === projectFilter)
     ? projectFilter
@@ -45,6 +55,10 @@ export function Sidebar({
   const [notice, setNotice] = useState<SettledNotice | null>(null);
   const [addProjectOpen, setAddProjectOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+
+  const leaveSettings = () => {
+    void navigate({ to: backTo });
+  };
 
   return (
     <>
@@ -55,45 +69,66 @@ export function Sidebar({
         style={{ width: contentWidth }}
         className="flex h-full shrink-0 flex-col px-2 py-3"
       >
-        <div className="flex h-9 items-center gap-1 pr-1 pl-2">
-          <Link
-            to="/"
-            className="flex flex-1 items-center rounded-control outline-none focus-visible:shadow-focus"
-          >
-            <span className="text-[14px] font-semibold tracking-tight text-fg">Scuttle</span>
-          </Link>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Search (Ctrl+K)"
-            onClick={() => setSearchOpen(true)}
-          >
-            <Icon icon={Search01Icon} />
-          </Button>
-          <Button variant="ghost" size="icon" aria-label="New thread" onClick={onNewThread}>
-            <Icon icon={PencilEdit02Icon} />
-          </Button>
-          <Button variant="ghost" size="icon" aria-label="Collapse sidebar" onClick={onCollapse}>
-            <Icon icon={SidebarLeftIcon} />
-          </Button>
-        </div>
+        {isSettings ? (
+          <div className="flex h-9 items-center gap-1 pr-1 pl-0.5">
+            <Button variant="ghost" size="icon" aria-label="Back" onClick={leaveSettings}>
+              <Icon icon={ArrowLeft01Icon} />
+            </Button>
+            <span className="flex-1 text-[14px] font-semibold tracking-tight text-fg">
+              Settings
+            </span>
+            <Button variant="ghost" size="icon" aria-label="Collapse sidebar" onClick={onCollapse}>
+              <Icon icon={SidebarLeftIcon} />
+            </Button>
+          </div>
+        ) : (
+          <div className="flex h-9 items-center gap-1 pr-1 pl-2">
+            <Link
+              to="/"
+              className="flex flex-1 items-center rounded-control outline-none focus-visible:shadow-focus"
+            >
+              <span className="text-[14px] font-semibold tracking-tight text-fg">Scuttle</span>
+            </Link>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Search (Ctrl+K)"
+              onClick={() => setSearchOpen(true)}
+            >
+              <Icon icon={Search01Icon} />
+            </Button>
+            <Button variant="ghost" size="icon" aria-label="New thread" onClick={onNewThread}>
+              <Icon icon={PencilEdit02Icon} />
+            </Button>
+            <Button variant="ghost" size="icon" aria-label="Collapse sidebar" onClick={onCollapse}>
+              <Icon icon={SidebarLeftIcon} />
+            </Button>
+          </div>
+        )}
 
-        <nav
-          aria-label="Workspace"
-          className="scrollbar-none mt-5 flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto mask-[linear-gradient(to_bottom,transparent,black_8px,black_calc(100%-24px),transparent)]"
-        >
-          <ProjectList
-            filterProjectId={filterProjectId}
-            onFilterChange={setProjectFilter}
-            onAddProject={() => setAddProjectOpen(true)}
-          />
-          <ThreadList
-            filterProjectId={filterProjectId}
-            onFilterChange={setProjectFilter}
-            onNewThread={onNewThread}
-            onSettled={setNotice}
-          />
-        </nav>
+        {isSettings ? (
+          <div className="mt-3 flex min-h-0 flex-1 flex-col">
+            <SettingsSidebarNav active={settingsSection} />
+          </div>
+        ) : (
+          <nav
+            aria-label="Workspace"
+            className="scrollbar-none mt-5 flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto mask-[linear-gradient(to_bottom,transparent,black_8px,black_calc(100%-24px),transparent)]"
+          >
+            <ProjectList
+              filterProjectId={filterProjectId}
+              onFilterChange={setProjectFilter}
+              onAddProject={() => setAddProjectOpen(true)}
+              onNewThread={onNewThread}
+            />
+            <ThreadList
+              filterProjectId={filterProjectId}
+              onFilterChange={setProjectFilter}
+              onNewThread={onNewThread}
+              onSettled={setNotice}
+            />
+          </nav>
+        )}
 
         <div className="relative mt-2">
           <SettleToast
@@ -111,16 +146,28 @@ export function Sidebar({
             S
           </span>
           <ConnectionStatus connection={connection} />
-          <Link
-            to="/settings"
-            aria-label="Settings"
-            className={buttonClass("ghost", "icon", "group/settings")}
-          >
-            <Icon
-              icon={Settings01Icon}
-              className="transition-transform duration-500 ease-out-quint group-hover/settings:rotate-45"
-            />
-          </Link>
+          {isSettings ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Close settings"
+              onClick={leaveSettings}
+              className="bg-white/7 text-fg"
+            >
+              <Icon icon={Settings01Icon} />
+            </Button>
+          ) : (
+            <Link
+              to="/settings"
+              aria-label="Settings"
+              className={buttonClass("ghost", "icon", "group/settings")}
+            >
+              <Icon
+                icon={Settings01Icon}
+                className="transition-transform duration-500 ease-out-quint group-hover/settings:rotate-45"
+              />
+            </Link>
+          )}
         </div>
       </motion.div>
 
@@ -134,27 +181,47 @@ export function Sidebar({
         <Button variant="ghost" size="icon" aria-label="Expand sidebar" onClick={onExpand}>
           <Icon icon={SidebarLeftIcon} />
         </Button>
-        <Button variant="ghost" size="icon" aria-label="New thread" onClick={onNewThread}>
-          <Icon icon={PencilEdit02Icon} />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Search (Ctrl+K)"
-          onClick={() => setSearchOpen(true)}
-        >
-          <Icon icon={Search01Icon} />
-        </Button>
-        <Link
-          to="/settings"
-          aria-label="Settings"
-          className={buttonClass("ghost", "icon", "group/settings mt-auto")}
-        >
-          <Icon
-            icon={Settings01Icon}
-            className="transition-transform duration-500 ease-out-quint group-hover/settings:rotate-45"
-          />
-        </Link>
+        {isSettings ? (
+          <Button variant="ghost" size="icon" aria-label="Back" onClick={leaveSettings}>
+            <Icon icon={ArrowLeft01Icon} />
+          </Button>
+        ) : (
+          <>
+            <Button variant="ghost" size="icon" aria-label="New thread" onClick={onNewThread}>
+              <Icon icon={PencilEdit02Icon} />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Search (Ctrl+K)"
+              onClick={() => setSearchOpen(true)}
+            >
+              <Icon icon={Search01Icon} />
+            </Button>
+          </>
+        )}
+        {isSettings ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Close settings"
+            onClick={leaveSettings}
+            className="mt-auto bg-white/7 text-fg"
+          >
+            <Icon icon={Settings01Icon} />
+          </Button>
+        ) : (
+          <Link
+            to="/settings"
+            aria-label="Settings"
+            className={buttonClass("ghost", "icon", "group/settings mt-auto")}
+          >
+            <Icon
+              icon={Settings01Icon}
+              className="transition-transform duration-500 ease-out-quint group-hover/settings:rotate-45"
+            />
+          </Link>
+        )}
       </motion.div>
 
       <AddProjectDialog open={addProjectOpen} onOpenChange={setAddProjectOpen} />

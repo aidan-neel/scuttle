@@ -17,11 +17,12 @@ import { Button } from "@/components/ui/Button.tsx";
 import { DotSpinner } from "@/components/ui/DotSpinner.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
-import { easeOut, spring, textSwap } from "@/lib/motion.ts";
+import { easeOut, spring } from "@/lib/motion.ts";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace.tsx";
 
 const LISTING_LIMIT = 100;
+const SPINNER_DELAY_MS = 180;
 
 interface AddProjectDialogProps {
   readonly open: boolean;
@@ -69,26 +70,21 @@ function filterEntries(entries: ReadonlyArray<DirectoryEntry>, query: string) {
     .sort((a, b) => rank(a) - rank(b));
 }
 
-const slide = {
-  enter: (direction: number) => ({ opacity: 0, x: 12 * direction }),
-  center: { opacity: 1, x: 0, transition: spring.snappy },
-  exit: (direction: number) => ({ opacity: 0, x: -12 * direction, transition: { duration: 0.1 } }),
-};
-
 const keepFocus = (event: MouseEvent) => event.preventDefault();
 
 export function AddProjectDialog({ open, onOpenChange }: AddProjectDialogProps) {
   const { addProject, listDirectory } = useWorkspace();
   const baseId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const requestRef = useRef(0);
   const [listing, setListing] = useState<DirectoryListing | null>(null);
   const [homePath, setHomePath] = useState<string | null>(null);
   const [knownRepos, setKnownRepos] = useState<Readonly<Record<string, boolean>>>({});
   const [status, setStatus] = useState<Status>(IDLE);
+  const [showSpinner, setShowSpinner] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
-  const [direction, setDirection] = useState(1);
 
   const rememberRepos = (entries: ReadonlyArray<DirectoryEntry>) =>
     setKnownRepos((known) => ({
@@ -105,16 +101,25 @@ export function AddProjectDialog({ open, onOpenChange }: AddProjectDialogProps) 
   const labelFor = (path: string | undefined) =>
     path === undefined ? "Home" : path === query.trim() ? path : basename(path);
 
+  useEffect(() => {
+    if (status.kind !== "loading") {
+      setShowSpinner(false);
+      return;
+    }
+    const timer = setTimeout(() => setShowSpinner(true), SPINNER_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [status.kind]);
+
   const browse = async (path?: string) => {
     const request = ++requestRef.current;
     setStatus({ kind: "loading" });
     try {
       const next = await listDirectory(path);
       if (request !== requestRef.current) return;
-      setDirection(next.path.length >= (listing?.path.length ?? 0) ? 1 : -1);
       setListing(next);
       if (path === undefined) setHomePath((home) => home ?? next.path);
       resetInput();
+      listRef.current?.scrollTo({ top: 0 });
       rememberRepos(next.entries);
       if (knownRepos[next.path] === undefined && next.parentPath !== null) {
         listDirectory(next.parentPath).then(
@@ -129,7 +134,11 @@ export function AddProjectDialog({ open, onOpenChange }: AddProjectDialogProps) 
   };
 
   useEffect(() => {
-    if (open) void browse(listing?.path);
+    if (open) {
+      setQuery("");
+      setActiveIndex(null);
+      void browse(listing?.path);
+    }
   }, [open]);
 
   const add = async (path: string) => {
@@ -186,8 +195,6 @@ export function AddProjectDialog({ open, onOpenChange }: AddProjectDialogProps) 
     }
   };
 
-  const busy = status.kind === "loading";
-
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <AnimatePresence onExitComplete={resetInput}>
@@ -197,8 +204,8 @@ export function AddProjectDialog({ open, onOpenChange }: AddProjectDialogProps) 
               render={
                 <motion.div
                   initial={{ opacity: 0 }}
-                  animate={{ opacity: 1, transition: { duration: 0.2, ease: easeOut } }}
-                  exit={{ opacity: 0, transition: { duration: 0.16, ease: easeOut } }}
+                  animate={{ opacity: 1, transition: { duration: 0.16, ease: easeOut } }}
+                  exit={{ opacity: 0, transition: { duration: 0.12, ease: easeOut } }}
                 />
               }
               className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px]"
@@ -207,16 +214,16 @@ export function AddProjectDialog({ open, onOpenChange }: AddProjectDialogProps) 
               initialFocus={inputRef}
               render={
                 <motion.div
-                  initial={{ opacity: 0, y: 10, scale: 0.97 }}
-                  animate={{ opacity: 1, y: 0, scale: 1, transition: spring.smooth }}
-                  exit={{ opacity: 0, y: 6, scale: 0.98, transition: { duration: 0.14 } }}
+                  initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1, transition: spring.snappy }}
+                  exit={{ opacity: 0, y: 4, scale: 0.985, transition: { duration: 0.12 } }}
                 />
               }
-              className="fixed inset-x-0 top-[14vh] z-50 mx-auto flex w-[min(560px,calc(100vw-2rem))] flex-col overflow-hidden rounded-canvas bg-menu shadow-menu outline-none"
+              className="fixed inset-x-0 top-[14vh] z-50 mx-auto flex w-[min(540px,calc(100vw-2rem))] flex-col overflow-hidden rounded-canvas bg-menu shadow-menu outline-none"
             >
               <Dialog.Title className="sr-only">Add project</Dialog.Title>
 
-              <div className="flex h-12 items-center gap-2.5 px-3.5">
+              <div className="flex h-11 shrink-0 items-center gap-2.5 px-3.5">
                 <Icon
                   icon={pathMode ? FolderOpenIcon : Search01Icon}
                   className="size-4 shrink-0 text-fg-muted"
@@ -246,14 +253,14 @@ export function AddProjectDialog({ open, onOpenChange }: AddProjectDialogProps) 
                     pathMode && "font-mono text-label",
                   )}
                 />
-                <kbd className="rounded-chip bg-white/6 px-1.5 py-0.5 font-mono text-[10px] text-fg-muted">
+                <kbd className="shrink-0 rounded-chip bg-white/6 px-1.5 py-0.5 font-mono text-[10px] text-fg-muted">
                   ESC
                 </kbd>
               </div>
 
               <nav
                 aria-label="Folder location"
-                className="flex h-9 items-center gap-1 border-y border-line px-2 text-fg-muted"
+                className="flex h-9 shrink-0 items-center gap-1 border-y border-line px-2 text-fg-muted"
               >
                 <Button
                   type="button"
@@ -266,7 +273,7 @@ export function AddProjectDialog({ open, onOpenChange }: AddProjectDialogProps) 
                 >
                   <Icon icon={ArrowUp01Icon} />
                 </Button>
-                <ol className="flex min-w-0 flex-1 items-center gap-0.5">
+                <ol className="flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden">
                   {visibleCrumbs.map((crumb, index) => {
                     const last = index === visibleCrumbs.length - 1;
                     const jump = crumb ?? hiddenCrumb;
@@ -300,113 +307,93 @@ export function AddProjectDialog({ open, onOpenChange }: AddProjectDialogProps) 
                     );
                   })}
                 </ol>
-                {busy && <DotSpinner variant="loading" label="Loading" className="mr-1.5" />}
+                <span className="flex w-5 shrink-0 items-center justify-center">
+                  {showSpinner && <DotSpinner variant="loading" label="Loading" />}
+                </span>
               </nav>
 
-              {status.kind === "error" && (
-                <p
-                  role="alert"
-                  className="flex items-center gap-2 border-b border-line bg-danger/8 px-3.5 py-2 text-label text-danger"
-                >
-                  <Icon icon={Alert02Icon} className="size-3.5 shrink-0" />
-                  <span className="min-w-0 flex-1 truncate">{status.message}</span>
-                </p>
-              )}
-
-              <div className="relative h-72 overflow-hidden">
-                <AnimatePresence initial={false} mode="popLayout" custom={direction}>
-                  <motion.div
-                    key={listing?.path ?? "loading"}
-                    id={`${baseId}-list`}
-                    role="listbox"
-                    aria-label="Folders"
-                    custom={direction}
-                    variants={slide}
-                    initial="enter"
-                    animate="center"
-                    exit="exit"
-                    className={cn(
-                      "absolute inset-0 overflow-y-auto p-1.5 transition-opacity",
-                      busy && "opacity-60",
-                    )}
+              <div
+                ref={listRef}
+                id={`${baseId}-list`}
+                role="listbox"
+                aria-label="Folders"
+                className="relative h-72 shrink-0 overflow-y-auto overscroll-contain p-1.5"
+              >
+                {pathMode ? (
+                  <div
+                    role="option"
+                    aria-selected
+                    onMouseDown={keepFocus}
+                    onClick={() => void browse(trimmed)}
+                    className="flex h-8 cursor-default items-center gap-2.5 rounded-chip bg-selected px-2"
                   >
-                    {pathMode ? (
-                      <div
-                        role="option"
-                        aria-selected
-                        onMouseDown={keepFocus}
-                        onClick={() => void browse(trimmed)}
-                        className="flex h-9 items-center gap-2.5 rounded-row bg-selected px-2"
-                      >
-                        <Icon icon={FolderOpenIcon} className="size-4 shrink-0 text-fg-muted" />
-                        <span className="shrink-0 text-body text-fg-secondary">Go to</span>
-                        <span className="min-w-0 flex-1 truncate font-mono text-label text-fg">
-                          {trimmed}
-                        </span>
-                        <kbd className="shrink-0 font-mono text-[10px] text-fg-faint">↵</kbd>
-                      </div>
-                    ) : (
-                      rows.map((entry, index) => (
-                        <FolderRow
-                          key={entry.path}
-                          id={rowId(index)}
-                          entry={entry}
-                          active={index === activeIndex}
-                          adding={status.kind === "adding"}
-                          onSelect={() => setActiveIndex(index)}
-                          onEnter={() => void browse(entry.path)}
-                          onAdd={() => void add(entry.path)}
-                        />
-                      ))
-                    )}
-                    {!pathMode && listing !== null && rows.length === 0 && (
-                      <p className="grid h-full place-items-center px-6 text-center text-label text-fg-muted">
-                        {trimmed.length > 0
-                          ? `No folders match “${trimmed}”.`
-                          : `${basename(listing.path)} has no folders inside.`}
-                      </p>
-                    )}
-                    {!pathMode && listing !== null && listing.entries.length >= LISTING_LIMIT && (
-                      <p className="px-2 pt-2 pb-1 text-meta text-fg-faint">
-                        Showing the first {LISTING_LIMIT} folders. Type a path to jump elsewhere.
-                      </p>
-                    )}
-                  </motion.div>
-                </AnimatePresence>
+                    <Icon icon={FolderOpenIcon} className="size-4 shrink-0 text-fg-muted" />
+                    <span className="shrink-0 text-body text-fg-secondary">Go to</span>
+                    <span className="min-w-0 flex-1 truncate font-mono text-label text-fg">
+                      {trimmed}
+                    </span>
+                    <kbd className="shrink-0 font-mono text-[10px] text-fg-faint">↵</kbd>
+                  </div>
+                ) : (
+                  rows.map((entry, index) => (
+                    <FolderRow
+                      key={entry.path}
+                      id={rowId(index)}
+                      entry={entry}
+                      active={index === activeIndex}
+                      adding={status.kind === "adding"}
+                      onSelect={() => setActiveIndex(index)}
+                      onEnter={() => void browse(entry.path)}
+                      onAdd={() => void add(entry.path)}
+                    />
+                  ))
+                )}
+                {!pathMode && listing !== null && rows.length === 0 && (
+                  <p className="grid h-full place-items-center px-6 text-center text-label text-fg-muted">
+                    {trimmed.length > 0
+                      ? `No folders match “${trimmed}”.`
+                      : `${basename(listing.path)} has no folders inside.`}
+                  </p>
+                )}
+                {!pathMode && listing !== null && listing.entries.length >= LISTING_LIMIT && (
+                  <p className="px-2 pt-2 pb-1 text-meta text-fg-faint">
+                    Showing the first {LISTING_LIMIT} folders. Type a path to jump elsewhere.
+                  </p>
+                )}
               </div>
 
-              <footer className="flex items-center gap-3 border-t border-line bg-black/10 px-3.5 py-3">
-                <div className="min-w-0 flex-1">
-                  <AnimatePresence mode="popLayout" initial={false}>
-                    {targetPath !== null && (
-                      <motion.div
-                        key={pathMode ? "typed" : targetPath}
-                        {...textSwap}
-                        className="flex min-w-0 items-center gap-2.5"
-                      >
-                        <Identicon name={targetName} size="md" />
-                        <span className="flex min-w-0 flex-col">
-                          <span className="truncate text-body font-medium text-fg">
-                            {targetName}
-                          </span>
-                          <span className="truncate text-meta text-fg-muted">
-                            {knownRepos[targetPath] === true ? "Git repository" : "Folder"}
-                          </span>
+              <footer className="flex h-14 shrink-0 items-center gap-3 border-t border-line bg-black/10 px-3.5">
+                <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                  {status.kind === "error" ? (
+                    <p
+                      role="alert"
+                      className="flex min-w-0 flex-1 items-center gap-2 text-label text-danger"
+                    >
+                      <Icon icon={Alert02Icon} className="size-3.5 shrink-0" />
+                      <span className="min-w-0 flex-1 truncate">{status.message}</span>
+                    </p>
+                  ) : targetPath !== null ? (
+                    <>
+                      <Identicon name={targetName} size="md" className="shrink-0" />
+                      <span className="flex min-w-0 flex-col">
+                        <span className="truncate text-body font-medium text-fg">{targetName}</span>
+                        <span className="truncate text-meta text-fg-muted">
+                          {knownRepos[targetPath] === true ? "Git repository" : "Folder"}
                         </span>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
+                      </span>
+                    </>
+                  ) : null}
                 </div>
                 <Button
                   type="button"
                   variant="primary"
-                  size="lg"
+                  size="md"
                   disabled={targetPath === null || status.kind === "adding"}
                   onClick={() => targetPath !== null && void add(targetPath)}
-                  className="max-w-[45%]"
+                  className="shrink-0"
                 >
                   {status.kind === "adding" && <DotSpinner variant="working" label="Adding" />}
-                  <span className="truncate">Add {targetName}</span>
+                  Add project
                 </Button>
               </footer>
             </Dialog.Popup>
@@ -441,7 +428,7 @@ function FolderRow({ id, entry, active, adding, onSelect, onEnter, onAdd }: Fold
       }}
       onDoubleClick={() => entry.isGitRepo && onEnter()}
       className={cn(
-        "group relative flex h-9 items-center gap-2.5 rounded-row px-2 transition-colors duration-(--dur-hover)",
+        "group relative flex h-8 cursor-default items-center gap-2.5 rounded-chip px-2 transition-colors duration-(--dur-hover)",
         active ? "bg-selected" : "hover:bg-(--wash)",
       )}
     >
@@ -459,8 +446,8 @@ function FolderRow({ id, entry, active, adding, onSelect, onEnter, onAdd }: Fold
         {entry.name}
       </span>
       {entry.isGitRepo ? (
-        <>
-          <span className="flex shrink-0 items-center gap-1 rounded-chip bg-white/6 px-1.5 py-0.5 text-meta text-fg-muted group-hover:opacity-0 group-data-[active=true]:opacity-0">
+        <div className="relative flex h-6 w-12 shrink-0 items-center justify-end">
+          <span className="flex items-center gap-1 rounded-chip bg-white/6 px-1.5 py-0.5 text-meta text-fg-muted transition-opacity duration-100 group-hover:opacity-0 group-data-[active=true]:opacity-0">
             <Icon icon={GitBranchIcon} className="size-3" />
             Git
           </span>
@@ -475,15 +462,15 @@ function FolderRow({ id, entry, active, adding, onSelect, onEnter, onAdd }: Fold
               onAdd();
             }}
             onDoubleClick={(event) => event.stopPropagation()}
-            className="absolute right-1.5 opacity-0 group-hover:opacity-100 group-data-[active=true]:opacity-100"
+            className="absolute right-0 opacity-0 transition-opacity duration-100 group-hover:opacity-100 group-data-[active=true]:opacity-100"
           >
             Add
           </Button>
-        </>
+        </div>
       ) : (
         <Icon
           icon={ArrowRight01Icon}
-          className="size-3.5 shrink-0 text-fg-faint opacity-0 transition-opacity group-hover:opacity-100 group-data-[active=true]:opacity-100"
+          className="size-3.5 shrink-0 text-fg-faint opacity-0 transition-opacity duration-100 group-hover:opacity-100 group-data-[active=true]:opacity-100"
         />
       )}
     </div>

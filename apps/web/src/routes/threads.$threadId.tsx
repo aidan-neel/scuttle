@@ -1,18 +1,10 @@
-import {
-  ComputerIcon,
-  Delete02Icon,
-  GitBranchIcon,
-  StopIcon,
-  Tick02Icon,
-  Undo02Icon,
-} from "@hugeicons/core-free-icons";
+import { StopIcon } from "@hugeicons/core-free-icons";
 import type { ModelSelection } from "@scuttle/contracts";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { Composer, type ComposerSubmitPayload } from "@/components/home/Composer.tsx";
 import { ScrollRuler } from "@/components/thread/ScrollRuler.tsx";
 import { ThreadTurnView } from "@/components/thread/ThreadTurnView.tsx";
-import { BrandLogo } from "@/components/ui/BrandLogo.tsx";
 import { Button } from "@/components/ui/Button.tsx";
 import { DotSpinner } from "@/components/ui/DotSpinner.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
@@ -32,9 +24,7 @@ function ThreadPage() {
     loadThreadDetail,
     sendTurn,
     interruptTurn,
-    settleThread,
     updateThread,
-    deleteThread,
     respondApproval,
   } = useWorkspace();
 
@@ -90,7 +80,6 @@ function ThreadPage() {
 
   const { thread } = detail;
   const isRunning = thread.status.kind === "running" || thread.status.kind === "needs-input";
-  const isSettled = Boolean(thread.settledAt);
 
   const handleModelChange = (modelSelection: ModelSelection) => {
     void updateThread(thread.id, { modelSelection });
@@ -109,55 +98,27 @@ function ThreadPage() {
     }
   };
 
-  const handleDelete = async () => {
-    await deleteThread(thread.id);
-    await navigate({ to: "/" });
-  };
-
   return (
     <section className="flex min-h-0 flex-1 flex-col">
-      <header className="flex h-12 shrink-0 items-center gap-2.5 border-b border-line px-4">
+      <header className="flex h-11 shrink-0 items-center gap-2 border-b border-line px-4">
         <Identicon name={thread.projectName} size="sm" />
         <span className="shrink-0 text-label font-medium text-fg-secondary">
           {thread.projectName}
         </span>
         <span className="text-fg-faint">/</span>
         <h1 className="min-w-0 flex-1 truncate text-body font-medium text-fg">{thread.title}</h1>
-        <span className="hidden items-center gap-1 rounded-chip bg-white/5 px-2 py-0.5 font-mono text-meta text-fg-muted sm:inline-flex">
-          <Icon
-            icon={thread.runtime === "local" ? ComputerIcon : GitBranchIcon}
-            className="size-3"
-          />
-          {thread.branch}
-        </span>
-        <span className="hidden items-center gap-1.5 rounded-chip bg-white/5 px-2 py-0.5 text-meta text-fg-muted md:inline-flex">
-          <BrandLogo brand={thread.modelSelection.providerKind} className="size-3" />
-          <span className="max-w-36 truncate">{thread.modelSelection.model}</span>
-        </span>
         {isRunning && (
           <Button variant="destructive" size="sm" onClick={() => void interruptTurn(thread.id)}>
             <Icon icon={StopIcon} />
             Stop
           </Button>
         )}
-        <Button variant="ghost" size="sm" onClick={() => void settleThread(thread.id, !isSettled)}>
-          <Icon icon={isSettled ? Undo02Icon : Tick02Icon} />
-          {isSettled ? "Unsettle" : "Settle"}
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Delete thread"
-          onClick={() => void handleDelete()}
-        >
-          <Icon icon={Delete02Icon} />
-        </Button>
       </header>
 
       <div className="relative flex min-h-0 flex-1 flex-col">
-        <ScrollRuler />
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-8 sm:pl-10">
-          <div className="mx-auto flex w-full max-w-[740px] flex-col gap-9">
+        <ScrollRuler turns={turns} scrollRef={scrollRef} />
+        <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-8">
+          <div className="mx-auto flex w-full max-w-composer flex-col gap-9">
             {turns.map((turn) => (
               <ThreadTurnView
                 key={turn.id}

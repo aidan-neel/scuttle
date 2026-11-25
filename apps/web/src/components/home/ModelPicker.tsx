@@ -18,6 +18,7 @@ import { type WheelEvent, useState } from "react";
 import { BrandLogo } from "@/components/ui/BrandLogo.tsx";
 import { buttonClass } from "@/components/ui/Button.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
+import { useDisabledModels } from "@/lib/disabledModels.ts";
 import { EFFORT_LABELS } from "@/lib/format.ts";
 import { modelFavoriteKey, useFavoriteModels } from "@/lib/modelFavorites.ts";
 import {
@@ -116,9 +117,10 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
   const [toggledGroups, setToggledGroups] = useState<ReadonlySet<string>>(new Set());
   const [inspectedKey, setInspectedKey] = useState<string | null>(null);
   const { favorites, isFavorite, toggle } = useFavoriteModels();
+  const { isDisabled } = useDisabledModels();
 
   const enabledProviders = providers.filter((p) => p.enabled);
-  const allEntries = buildModelEntries(enabledProviders);
+  const allEntries = buildModelEntries(enabledProviders).filter((entry) => !isDisabled(entry.key));
 
   const currentKey = modelFavoriteKey(selection.providerId, selection.model);
   const currentEntry =
@@ -195,7 +197,7 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
         onMouseEnter={() => setInspectedKey(entry.key)}
         onFocus={() => setInspectedKey(entry.key)}
         onClick={() => selectEntry(entry, undefined, entry.model.efforts.length === 0)}
-        className={`relative flex h-8 w-full cursor-pointer items-center gap-2 rounded-chip px-2 text-left text-button outline-none transition-colors duration-100 ${
+        className={`relative flex h-7 w-full cursor-pointer items-center gap-2 rounded-chip px-2 text-left text-label outline-none transition-colors duration-100 ${
           inspected ? "text-fg" : "text-fg-secondary hover:text-fg"
         }`}
       >
@@ -346,7 +348,7 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
                 </AnimatePresence>
 
                 <LayoutGroup id="model-picker-rows">
-                  <div className="max-h-80 overflow-y-auto p-1.5">
+                  <div className="max-h-80 overflow-y-auto p-1">
                     {favoriteEntries.length > 0 && (
                       <div className="mb-1.5">
                         <div className="px-2 pt-1 pb-1 text-meta font-medium text-fg-muted">

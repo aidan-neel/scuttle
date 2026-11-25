@@ -2,7 +2,13 @@ import { Menu } from "@base-ui/react/menu";
 import { Add01Icon, MoreHorizontalIcon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { Button, buttonClass } from "@/components/ui/Button.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
-import { MenuGroupLabel, MenuPopup, MenuRadioItem, MenuSeparator } from "@/components/ui/Menu.tsx";
+import {
+  MENU_ITEM_CLASS,
+  MenuGroupLabel,
+  MenuPopup,
+  MenuRadioItem,
+  MenuSeparator,
+} from "@/components/ui/Menu.tsx";
 
 export type SectionMenuEntry =
   | {
@@ -27,8 +33,7 @@ export type SectionMenuEntry =
     }
   | { readonly kind: "separator" };
 
-const ITEM_CLASS =
-  "flex h-8 cursor-default items-center gap-2 rounded-chip px-2 text-button text-fg-secondary outline-none select-none data-disabled:pointer-events-none data-disabled:opacity-40 data-highlighted:bg-(--wash) data-highlighted:text-fg";
+const ITEM_CLASS = MENU_ITEM_CLASS;
 
 function MenuEntry({ entry }: { readonly entry: SectionMenuEntry }) {
   switch (entry.kind) {

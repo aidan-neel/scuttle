@@ -40,30 +40,41 @@ export function ComposerContextBar({
   onBranchChange,
 }: ComposerContextBarProps) {
   return (
-    <div className="mb-2 flex h-6.5 items-center gap-1">
+    <div className="mb-1 flex h-6 items-center gap-0.5 px-1">
       {activeProject ? (
         <Picker
           label="Project"
+          variant="ghost"
           value={activeProject.id}
           options={projects.map((project) => ({
             value: project.id,
             label: project.name,
-            icon: <Identicon name={project.name} size="sm" className="size-3.5" />,
+            icon: <Identicon name={project.name} size="sm" className="size-3" />,
           }))}
           onValueChange={(id) => {
             const picked = projects.find((project) => project.id === id);
             if (picked) onSelectProject(picked);
           }}
           action={{ label: "Add project…", icon: Add01Icon, onSelect: onAddProject }}
-          className="max-w-[60%] shrink"
+          className="max-w-[56%] shrink"
         />
       ) : (
-        <button type="button" onClick={onAddProject} className={pillTriggerClass()}>
+        <button
+          type="button"
+          onClick={onAddProject}
+          className={pillTriggerClass(undefined, "ghost")}
+        >
           <Icon icon={Add01Icon} />
           <PillLabel>Add project</PillLabel>
         </button>
       )}
-      <Picker label="Runtime" value={runtime} options={RUNTIMES} onValueChange={onRuntimeChange} />
+      <Picker
+        label="Runtime"
+        variant="ghost"
+        value={runtime}
+        options={RUNTIMES}
+        onValueChange={onRuntimeChange}
+      />
       <span className="min-w-2 flex-1" />
       {activeProject && (
         <BranchPicker branches={branches} value={branch} onValueChange={onBranchChange} />
@@ -92,19 +103,19 @@ function BranchPicker({ branches, value, onValueChange }: BranchPickerProps) {
     >
       <Combobox.Trigger
         aria-label={`Branch: ${value}`}
-        className={pillTriggerClass("max-w-[50%] shrink")}
+        className={pillTriggerClass("max-w-[46%] shrink", "ghost")}
       >
         <Icon icon={GitBranchIcon} className="size-3 text-fg-muted" />
         <PillLabel mono>{value}</PillLabel>
         <PillChevron />
       </Combobox.Trigger>
       <Combobox.Portal>
-        <Combobox.Positioner sideOffset={6} align="end" className="z-50 outline-none">
+        <Combobox.Positioner sideOffset={4} align="end" className="z-50 outline-none">
           <Combobox.Popup
             aria-label="Branch"
-            className="flex max-h-[min(22rem,var(--available-height))] w-max min-w-60 max-w-[min(26rem,var(--available-width))] origin-(--transform-origin) flex-col rounded-card bg-menu shadow-menu outline-none transition-[opacity,scale,translate] duration-200 ease-out-quint data-ending-style:scale-98 data-ending-style:opacity-0 data-ending-style:duration-120 data-starting-style:-translate-y-1 data-starting-style:scale-96 data-starting-style:opacity-0"
+            className="flex max-h-[min(20rem,var(--available-height))] w-max min-w-52 max-w-[min(24rem,var(--available-width))] origin-(--transform-origin) flex-col rounded-card bg-menu shadow-menu outline-none transition-[opacity,scale,translate] duration-180 ease-out-quint data-ending-style:scale-98 data-ending-style:opacity-0 data-ending-style:duration-110 data-starting-style:-translate-y-1 data-starting-style:scale-97 data-starting-style:opacity-0"
           >
-            <div className="flex h-9 shrink-0 items-center gap-2 border-b border-edge px-3 text-fg-muted">
+            <div className="flex h-8 shrink-0 items-center gap-1.5 border-b border-edge px-2.5 text-fg-muted">
               <Icon icon={Search01Icon} className="size-3.5" />
               <Combobox.Input
                 placeholder={
@@ -114,14 +125,14 @@ function BranchPicker({ branches, value, onValueChange }: BranchPickerProps) {
               />
             </div>
             <Combobox.Empty>
-              <div className="px-3 py-3 text-label text-fg-muted">No matching branches</div>
+              <div className="px-2.5 py-2.5 text-label text-fg-muted">No matching branches</div>
             </Combobox.Empty>
             <Combobox.List className="min-h-0 flex-1 scroll-py-1 overflow-y-auto overscroll-contain p-1 empty:hidden">
               {(name: string) => (
                 <Combobox.Item
                   key={name}
                   value={name}
-                  className="flex h-8 cursor-default items-center gap-2 rounded-chip px-2 text-fg-secondary outline-none select-none data-highlighted:bg-(--wash) data-highlighted:text-fg data-selected:text-fg"
+                  className="flex h-7 cursor-default items-center gap-2 rounded-chip px-2 text-fg-secondary outline-none select-none data-highlighted:bg-(--wash) data-highlighted:text-fg data-selected:text-fg"
                 >
                   <span
                     title={name}
