@@ -67,6 +67,7 @@ export function Composer({
   const navigate = useNavigate();
   const [prompt, setPrompt] = useState("");
   const [caret, setCaret] = useState(0);
+  const [focused, setFocused] = useState(false);
   const [attachments, setAttachments] = useState<ReadonlyArray<ThreadAttachment>>([]);
   const [submitting, setSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -88,6 +89,7 @@ export function Composer({
     caret,
     applyEdit,
     filesRoot,
+    focused,
     slash: {
       providers,
       modelSelection,
@@ -223,6 +225,8 @@ export function Composer({
             setCaret(event.target.selectionStart);
           }}
           onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
           onKeyDown={onKeyDown}
           placeholder={placeholder}
           rows={1}

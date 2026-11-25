@@ -53,7 +53,10 @@ export function ComposerPalette({
   const hasItems = content.sections.some((section) => section.items.length > 0);
 
   return (
-    <div className="absolute bottom-full left-0 z-40 mb-2 flex max-h-[min(26rem,60vh)] w-[min(24rem,100%)] flex-col rounded-card bg-menu shadow-menu transition-[opacity,translate] duration-150 ease-out-quint starting:translate-y-1 starting:opacity-0">
+    <div
+      onMouseDown={(event) => event.preventDefault()}
+      className="absolute bottom-full left-0 z-40 mb-2 flex max-h-[min(26rem,60vh)] w-[min(24rem,100%)] flex-col rounded-card bg-menu shadow-menu transition-[opacity,translate] duration-150 ease-out-quint starting:translate-y-1 starting:opacity-0"
+    >
       {content.title !== undefined && (
         <div className="flex h-8 shrink-0 items-center gap-1 border-b border-edge px-1.5">
           {content.onBack && (
@@ -61,7 +64,6 @@ export function ComposerPalette({
               type="button"
               tabIndex={-1}
               aria-label="Back"
-              onMouseDown={(event) => event.preventDefault()}
               onClick={content.onBack}
               className="flex size-5 cursor-pointer items-center justify-center rounded-chip text-fg-muted outline-none hover:bg-(--wash) hover:text-fg"
             >
@@ -124,7 +126,6 @@ function PaletteRow({ id, item, active, onHover }: PaletteRowProps) {
       ref={(node) => {
         if (active) node?.scrollIntoView({ block: "nearest" });
       }}
-      onMouseDown={(event) => event.preventDefault()}
       onMouseMove={active ? undefined : onHover}
       onClick={item.onSelect}
       className={cn(

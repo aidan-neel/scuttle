@@ -25,7 +25,7 @@ export function ComposerContextPopover({ usage }: { readonly usage: ComposerCont
         openOnHover
         delay={120}
         aria-label={`Context window: ${summary}`}
-        className="flex size-6 cursor-default items-center justify-center rounded-chip outline-none transition-colors duration-(--dur-hover) hover:bg-(--wash) focus-visible:shadow-focus data-popup-open:bg-(--wash)"
+        className="flex size-5 cursor-default items-center justify-center rounded-chip outline-none transition-colors duration-(--dur-hover) hover:bg-(--wash) focus-visible:shadow-focus data-popup-open:bg-(--wash)"
       >
         <svg viewBox="0 0 20 20" className="size-4 -rotate-90" aria-hidden>
           <circle

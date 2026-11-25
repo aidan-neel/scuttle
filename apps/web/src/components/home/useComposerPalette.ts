@@ -23,6 +23,7 @@ interface UseComposerPaletteOptions {
   readonly caret: number;
   readonly applyEdit: (edit: TextEdit) => void;
   readonly filesRoot: string | undefined;
+  readonly focused: boolean;
   readonly slash: SlashOptions;
 }
 
@@ -37,6 +38,7 @@ export interface ComposerPaletteState {
 
 const MENTION_ROOT: MentionView = { kind: "root" };
 const SLASH_ROOT: SlashView = { kind: "root" };
+const INITIAL_NAV: NavState = { key: "", mention: MENTION_ROOT, slash: SLASH_ROOT };
 
 const viewId = (view: MentionView | SlashView) =>
   view.kind === "files" ? `files:${view.dir}` : view.kind;
@@ -46,14 +48,23 @@ export function useComposerPalette({
   caret,
   applyEdit,
   filesRoot,
+  focused,
   slash,
 }: UseComposerPaletteOptions): ComposerPaletteState {
   const listboxId = useId();
   const trigger = detectTrigger(prompt, caret);
   const key = trigger ? triggerKey(trigger) : "";
-  const [nav, setNav] = useState<NavState>({ key: "", mention: MENTION_ROOT, slash: SLASH_ROOT });
+  const [nav, setNav] = useState<NavState>(INITIAL_NAV);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [indexState, setIndexState] = useState({ key: "", index: 0 });
+  const [previousKey, setPreviousKey] = useState(key);
+  if (previousKey !== key) {
+    setPreviousKey(key);
+    if (key === "") {
+      setNav(INITIAL_NAV);
+      setDismissed(null);
+    }
+  }
 
   const current = nav.key === key ? nav : { key, mention: MENTION_ROOT, slash: SLASH_ROOT };
   const query = trigger?.query ?? "";
@@ -101,7 +112,8 @@ export function useComposerPalette({
   const items = flattenSections(content.sections);
   const dismissKey = `${key}|${query}`;
   const atRoot = activeView.kind === "root";
-  const open = trigger !== null && dismissed !== dismissKey && (items.length > 0 || !atRoot);
+  const open =
+    focused && trigger !== null && dismissed !== dismissKey && (items.length > 0 || !atRoot);
 
   const indexKey = `${key}|${viewId(activeView)}|${query}`;
   const activeIndex =
@@ -129,9 +141,8 @@ export function useComposerPalette({
       }
       case "Enter":
       case "Tab": {
-        const item = items[activeIndex];
-        if (!item || event.shiftKey) return false;
-        return consume(item.onSelect);
+        if (event.shiftKey) return false;
+        return consume(() => items[activeIndex]?.onSelect());
       }
       default:
         return false;
