@@ -1,4 +1,4 @@
-import type { GitBranchInfo, ThreadRuntime } from "@scuttle/contracts";
+import type { GitBranchInfo, InteractionMode, ThreadRuntime } from "@scuttle/contracts";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { DitherHorizon } from "@/components/dithercn/dither-horizon.tsx";
@@ -28,6 +28,7 @@ function HomePage() {
 
   const ditherBackground = useDitherBackground();
   const [runtime, setRuntime] = useState<ThreadRuntime>("local");
+  const [interactionMode, setInteractionMode] = useState<InteractionMode>("default");
   const [branch, setBranch] = useState<string>("main");
   const [addProjectOpen, setAddProjectOpen] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -85,7 +86,7 @@ function HomePage() {
         branch: effectiveBranch,
         modelSelection: payload.modelSelection,
         runtimeMode: "auto",
-        interactionMode: "default",
+        interactionMode,
         ...(payload.attachments.length > 0 ? { attachments: [...payload.attachments] } : {}),
       });
       await navigate({ to: "/threads/$threadId", params: { threadId: detail.thread.id } });
@@ -125,6 +126,9 @@ function HomePage() {
           onModelSelectionChange={setDefaultModelSelection}
           disabled={!activeProject}
           onSubmit={handleSubmit}
+          interactionMode={interactionMode}
+          onInteractionModeChange={setInteractionMode}
+          {...(activeProject ? { filesRoot: activeProject.path } : {})}
         />
       </div>
       <AddProjectDialog open={addProjectOpen} onOpenChange={setAddProjectOpen} />
