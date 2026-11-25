@@ -168,7 +168,8 @@ describe("thread-scoped git targets", () => {
   const getJson = async (path: string, init?: RequestInit) => {
     const request = new Request(`http://scuttle.test${path}`, init);
     const response = await runtime.runPromise(handleApiRequest(request, new URL(request.url)));
-    return { status: response?.status ?? 0, json: await response?.json() };
+    const text = (await response?.text()) ?? "";
+    return { status: response?.status ?? 0, json: text.length > 0 ? JSON.parse(text) : null };
   };
 
   const insertThread = (id: string, projectId: string, cwd: string) =>
