@@ -12,6 +12,7 @@ import { getHarnessAdapter } from "../providers/registry.ts";
 import type { ApprovalDecision, HarnessEvent } from "../providers/types.ts";
 import type * as EventBus from "./EventBus.ts";
 import { readThreadById, readTurnsForThread } from "./threadStore.ts";
+import { deriveThreadTitle, shouldRefreshThreadTitle } from "./threadTitle.ts";
 
 export interface ActiveRun {
   readonly turnId: TurnId;
@@ -335,6 +336,28 @@ export const launchTurnExecution = (
     }
   };
 
+  const refreshThreadTitle = () => {
+    try {
+      const current = readThreadById(db, thread.id);
+      if (!current) return;
+      const completedTurns = readTurnsForThread(db, current).filter(
+        (t) => t.status === "completed",
+      );
+      if (!shouldRefreshThreadTitle(completedTurns.length)) return;
+      const nextTitle = deriveThreadTitle(completedTurns);
+      if (nextTitle.length === 0 || nextTitle === current.title) return;
+      db.prepare("UPDATE threads SET title = ?, updated_at = ? WHERE id = ?").run(
+        nextTitle,
+        new Date().toISOString(),
+        thread.id,
+      );
+      const refreshed = readThreadById(db, thread.id);
+      if (refreshed) eventBus.publishSync({ kind: "thread.upserted", thread: refreshed });
+    } catch {
+      return;
+    }
+  };
+
   const adapter = getHarnessAdapter(thread.modelSelection.providerKind);
   void adapter
     .runTurn({
@@ -367,6 +390,7 @@ export const launchTurnExecution = (
         activities,
         approvals,
       });
+      if (!result.interrupted) refreshThreadTitle();
       updateThreadStatus(thread.id, { kind: "idle" });
       onProjectActivity(thread, finalMessage.trim() || turn.userMessage);
     })
