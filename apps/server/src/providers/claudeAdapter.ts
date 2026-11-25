@@ -134,6 +134,11 @@ export const claudeAdapter: HarnessAdapter = {
     for (const [k, v] of Object.entries(process.env)) {
       if (v !== undefined && k !== "CLAUDECODE") env[k] = v;
     }
+    if (input.extraEnv) {
+      for (const [k, v] of Object.entries(input.extraEnv)) {
+        env[k] = v;
+      }
+    }
 
     const proc = Bun.spawn([executable, ...args], {
       cwd: input.cwd,

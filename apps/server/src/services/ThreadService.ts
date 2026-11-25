@@ -14,16 +14,23 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as ServerConfig from "../config.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
+import { maybeWrapCaptainPrompt } from "./agent/agentPrompts.ts";
+import { readAgentIdForThread } from "./agent/agentWorkStore.ts";
 import * as EventBus from "./EventBus.ts";
 import * as GitService from "./GitService.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as ProviderService from "./ProviderService.ts";
 import {
+  deriveThreadInputTitle,
+  formatPromptWithAttachments,
+  insertThreadRow,
   listAllThreads,
   readThreadById,
   readTurnsForThread,
   recoverInterruptedThreads,
+  TITLE_LIMIT,
 } from "./threadStore.ts";
 import { type ActiveRun, launchTurnExecution, type PendingApprovalResolver } from "./turnRunner.ts";
 
@@ -38,36 +45,21 @@ export class ThreadServiceError extends Schema.TaggedError<ThreadServiceError>()
   }
 }
 
-const TITLE_LIMIT = 72;
-
-const deriveTitle = (prompt: string, explicit?: string): string => {
-  const candidate = explicit?.trim() || prompt.trim().split(/\r?\n/)[0]?.trim() || "New thread";
-  return candidate.slice(0, TITLE_LIMIT);
-};
-
-const formatPromptWithAttachments = (
-  prompt: string,
-  attachments: ReadonlyArray<ThreadAttachment> | undefined,
-): string => {
-  if (!attachments || attachments.length === 0) return prompt;
-  const sections = attachments.map((att) => {
-    if (att.content && att.content.length > 0) {
-      return `\n\n<attached_file name="${att.name}">\n${att.content.slice(0, 64_000)}\n</attached_file>`;
-    }
-    if (att.path) {
-      return `\n\nAttached file "${att.name}": ${att.path}`;
-    }
-    return `\n\nAttached file: ${att.name}`;
-  });
-  return `${prompt}${sections.join("")}`;
-};
-
 export class ThreadService extends Context.Service<
   ThreadService,
   {
     readonly list: () => Effect.Effect<ReadonlyArray<Thread>>;
     readonly getDetail: (threadId: ThreadId) => Effect.Effect<ThreadDetail, ThreadServiceError>;
     readonly create: (input: CreateThreadInput) => Effect.Effect<ThreadDetail, ThreadServiceError>;
+    readonly createIdle: (input: {
+      readonly projectId: CreateThreadInput["projectId"];
+      readonly title: string;
+      readonly runtime: CreateThreadInput["runtime"];
+      readonly branch: string;
+      readonly modelSelection: CreateThreadInput["modelSelection"];
+      readonly runtimeMode?: CreateThreadInput["runtimeMode"];
+      readonly interactionMode?: CreateThreadInput["interactionMode"];
+    }) => Effect.Effect<Thread, ThreadServiceError>;
     readonly sendTurn: (
       threadId: ThreadId,
       input: SendTurnInput,
@@ -92,6 +84,7 @@ export class ThreadService extends Context.Service<
 
 const make = Effect.gen(function* () {
   const { db } = yield* Sqlite.SqliteDatabase;
+  const config = yield* ServerConfig.ServerConfig;
   const eventBus = yield* EventBus.EventBus;
   const git = yield* GitService.GitService;
   const projects = yield* ProjectService.ProjectService;
@@ -101,8 +94,21 @@ const make = Effect.gen(function* () {
 
   const activeRuns = new Map<string, ActiveRun>();
   const pendingApprovals = new Map<string, PendingApprovalResolver>();
+  let disposed = false;
+
+  yield* Effect.acquireRelease(Effect.void, () =>
+    Effect.sync(() => {
+      disposed = true;
+      for (const active of activeRuns.values()) {
+        active.controller.abort();
+      }
+      activeRuns.clear();
+      pendingApprovals.clear();
+    }),
+  );
 
   const updateThreadStatus = (threadId: ThreadId, status: ThreadStatus): Thread | null => {
+    if (disposed) return null;
     const now = new Date().toISOString();
     db.prepare("UPDATE threads SET status_json = ?, updated_at = ? WHERE id = ?").run(
       JSON.stringify(status),
@@ -123,8 +129,11 @@ const make = Effect.gen(function* () {
     pendingApprovals,
     updateThreadStatus,
     onProjectActivity: (thread: Thread, summary: string) => {
-      void Effect.runPromise(projects.touchActivity(thread.projectId, summary));
+      if (!disposed) {
+        void Effect.runPromise(projects.touchActivity(thread.projectId, summary));
+      }
     },
+    isDisposed: () => disposed,
   };
 
   const list = () => Effect.sync(() => listAllThreads(db));
@@ -190,10 +199,53 @@ const make = Effect.gen(function* () {
     eventBus.publishSync({ kind: "turn.upserted", turn });
 
     const refreshed = readThreadById(db, thread.id) ?? thread;
-    const fullPrompt = formatPromptWithAttachments(prompt, attachments);
-    launchTurnExecution(runnerDeps, refreshed, turn, fullPrompt, providerConfig);
+    const apiBaseUrl = config.apiBaseUrlRef.url;
+    const wrapped = maybeWrapCaptainPrompt(db, refreshed.id, prompt, apiBaseUrl);
+    const fullPrompt = formatPromptWithAttachments(wrapped.prompt, attachments);
+    const agentId = wrapped.agentId ?? readAgentIdForThread(db, refreshed.id);
+    const extraEnv: Record<string, string> = {
+      SCUTTLE_API_URL: apiBaseUrl,
+      ...(agentId ? { SCUTTLE_AGENT_ID: agentId } : {}),
+    };
+    launchTurnExecution(runnerDeps, refreshed, turn, fullPrompt, providerConfig, extraEnv);
 
     return turn;
+  });
+
+  const createIdle = Effect.fn("ThreadService.createIdle")(function* (input: {
+    readonly projectId: CreateThreadInput["projectId"];
+    readonly title: string;
+    readonly runtime: CreateThreadInput["runtime"];
+    readonly branch: string;
+    readonly modelSelection: CreateThreadInput["modelSelection"];
+    readonly runtimeMode?: CreateThreadInput["runtimeMode"];
+    readonly interactionMode?: CreateThreadInput["interactionMode"];
+  }) {
+    const project = yield* projects
+      .get(input.projectId)
+      .pipe(Effect.mapError((err) => new ThreadServiceError({ detail: err.message })));
+
+    const threadId = ThreadId.make(crypto.randomUUID());
+    const now = new Date().toISOString();
+    const thread = insertThreadRow(db, {
+      id: threadId,
+      projectId: project.id,
+      projectName: project.name,
+      title: input.title.trim().slice(0, TITLE_LIMIT) || `${project.name} Captain`,
+      runtime: input.runtime,
+      branch: input.branch,
+      cwd: project.path,
+      modelSelection: input.modelSelection,
+      runtimeMode: input.runtimeMode ?? "auto",
+      interactionMode: input.interactionMode ?? "default",
+      status: { kind: "idle" },
+      now,
+    });
+    if (!thread) {
+      return yield* new ThreadServiceError({ detail: "Failed to persist thread." });
+    }
+    eventBus.publishSync({ kind: "thread.upserted", thread });
+    return thread;
   });
 
   const create = Effect.fn("ThreadService.create")(function* (input: CreateThreadInput) {
@@ -202,7 +254,7 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError((err) => new ThreadServiceError({ detail: err.message })));
 
     const threadId = ThreadId.make(crypto.randomUUID());
-    const title = deriveTitle(input.prompt, input.title);
+    const title = deriveThreadInputTitle(input.prompt, input.title);
     let cwd = project.path;
     let branch = input.branch;
     let worktreePath: string | undefined;
@@ -222,35 +274,21 @@ const make = Effect.gen(function* () {
     }
 
     const now = new Date().toISOString();
-    const runtimeMode = input.runtimeMode ?? "auto";
-    const interactionMode = input.interactionMode ?? "default";
-    const initialStatus: ThreadStatus = { kind: "running", startedAt: now, phase: "thinking" };
-
-    db.prepare(
-      `INSERT INTO threads
-         (id, project_id, project_name, title, runtime, branch, worktree_path, cwd, provider_id, provider_kind, model, effort, runtime_mode, interaction_mode, status_json, settled_at, provider_session_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
-    ).run(
-      threadId,
-      project.id,
-      project.name,
+    const thread = insertThreadRow(db, {
+      id: threadId,
+      projectId: project.id,
+      projectName: project.name,
       title,
-      input.runtime,
+      runtime: input.runtime,
       branch,
-      worktreePath ?? null,
+      ...(worktreePath ? { worktreePath } : {}),
       cwd,
-      input.modelSelection.providerId,
-      input.modelSelection.providerKind,
-      input.modelSelection.model,
-      input.modelSelection.effort ?? null,
-      runtimeMode,
-      interactionMode,
-      JSON.stringify(initialStatus),
+      modelSelection: input.modelSelection,
+      runtimeMode: input.runtimeMode ?? "auto",
+      interactionMode: input.interactionMode ?? "default",
+      status: { kind: "running", startedAt: now, phase: "thinking" },
       now,
-      now,
-    );
-
-    const thread = readThreadById(db, threadId);
+    });
     if (!thread) {
       return yield* new ThreadServiceError({ detail: "Failed to persist thread." });
     }
@@ -427,6 +465,7 @@ const make = Effect.gen(function* () {
     list,
     getDetail,
     create,
+    createIdle,
     sendTurn,
     interrupt,
     settle,

@@ -26,6 +26,21 @@ export type ApprovalId = typeof ApprovalId.Type;
 export const ProviderId = NonEmptyString.pipe(Schema.brand("ProviderId"));
 export type ProviderId = typeof ProviderId.Type;
 
+export const AgentId = NonEmptyString.pipe(Schema.brand("AgentId"));
+export type AgentId = typeof AgentId.Type;
+
+export const AgentMemoryId = NonEmptyString.pipe(Schema.brand("AgentMemoryId"));
+export type AgentMemoryId = typeof AgentMemoryId.Type;
+
+export const AgentIssueId = NonEmptyString.pipe(Schema.brand("AgentIssueId"));
+export type AgentIssueId = typeof AgentIssueId.Type;
+
+export const AgentDelegationId = NonEmptyString.pipe(Schema.brand("AgentDelegationId"));
+export type AgentDelegationId = typeof AgentDelegationId.Type;
+
+export const AgentCheckInId = NonEmptyString.pipe(Schema.brand("AgentCheckInId"));
+export type AgentCheckInId = typeof AgentCheckInId.Type;
+
 export const isWorkspaceId = Schema.is(WorkspaceId);
 export const isSessionId = Schema.is(SessionId);
 export const isProjectId = Schema.is(ProjectId);
@@ -34,3 +49,8 @@ export const isTurnId = Schema.is(TurnId);
 export const isActivityId = Schema.is(ActivityId);
 export const isApprovalId = Schema.is(ApprovalId);
 export const isProviderId = Schema.is(ProviderId);
+export const isAgentId = Schema.is(AgentId);
+export const isAgentMemoryId = Schema.is(AgentMemoryId);
+export const isAgentIssueId = Schema.is(AgentIssueId);
+export const isAgentDelegationId = Schema.is(AgentDelegationId);
+export const isAgentCheckInId = Schema.is(AgentCheckInId);

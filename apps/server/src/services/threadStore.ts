@@ -11,6 +11,7 @@ import {
   ProviderKind,
   RuntimeMode,
   type Thread,
+  type ThreadAttachment,
   ThreadRuntime,
   ThreadStatus,
   type ThreadTurn,
@@ -260,4 +261,72 @@ export const recoverInterruptedThreads = (db: Database): void => {
      SET status_json = ?
      WHERE status_json LIKE '%"running"%' OR status_json LIKE '%"needs-input"%'`,
   ).run(JSON.stringify({ kind: "idle" }));
+};
+
+export const TITLE_LIMIT = 72;
+
+export const deriveThreadInputTitle = (prompt: string, explicit?: string): string => {
+  const candidate = explicit?.trim() || prompt.trim().split(/\r?\n/)[0]?.trim() || "New thread";
+  return candidate.slice(0, TITLE_LIMIT);
+};
+
+export const formatPromptWithAttachments = (
+  prompt: string,
+  attachments: ReadonlyArray<ThreadAttachment> | undefined,
+): string => {
+  if (!attachments || attachments.length === 0) return prompt;
+  const sections = attachments.map((att) => {
+    if (att.content && att.content.length > 0) {
+      return `\n\n<attached_file name="${att.name}">\n${att.content.slice(0, 64_000)}\n</attached_file>`;
+    }
+    if (att.path) {
+      return `\n\nAttached file "${att.name}": ${att.path}`;
+    }
+    return `\n\nAttached file: ${att.name}`;
+  });
+  return `${prompt}${sections.join("")}`;
+};
+
+export const insertThreadRow = (
+  db: Database,
+  input: {
+    readonly id: ThreadId;
+    readonly projectId: ProjectId;
+    readonly projectName: string;
+    readonly title: string;
+    readonly runtime: Thread["runtime"];
+    readonly branch: string;
+    readonly worktreePath?: string;
+    readonly cwd: string;
+    readonly modelSelection: Thread["modelSelection"];
+    readonly runtimeMode: Thread["runtimeMode"];
+    readonly interactionMode: Thread["interactionMode"];
+    readonly status: Thread["status"];
+    readonly now: string;
+  },
+): Thread | null => {
+  db.prepare(
+    `INSERT INTO threads
+       (id, project_id, project_name, title, runtime, branch, worktree_path, cwd, provider_id, provider_kind, model, effort, runtime_mode, interaction_mode, status_json, settled_at, provider_session_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
+  ).run(
+    input.id,
+    input.projectId,
+    input.projectName,
+    input.title,
+    input.runtime,
+    input.branch,
+    input.worktreePath ?? null,
+    input.cwd,
+    input.modelSelection.providerId,
+    input.modelSelection.providerKind,
+    input.modelSelection.model,
+    input.modelSelection.effort ?? null,
+    input.runtimeMode,
+    input.interactionMode,
+    JSON.stringify(input.status),
+    input.now,
+    input.now,
+  );
+  return readThreadById(db, input.id);
 };

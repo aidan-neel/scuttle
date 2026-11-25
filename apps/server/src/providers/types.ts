@@ -57,6 +57,7 @@ export interface HarnessTurnInput {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: InteractionMode;
   readonly providerSessionId?: string;
+  readonly extraEnv?: Readonly<Record<string, string>>;
   readonly signal: AbortSignal;
   readonly emit: (event: HarnessEvent) => void;
 }

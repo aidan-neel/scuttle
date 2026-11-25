@@ -264,6 +264,7 @@ export const createAcpAdapter = (kind: AcpProviderKind): HarnessAdapter => ({
       command: executable,
       args: [...ACP_BASE_ARGS[kind], ...tokenizeLaunchArgs(input.config.launchArgs)],
       cwd: input.cwd,
+      ...(input.extraEnv ? { env: input.extraEnv } : {}),
       onNotification: ({ method, params }) => {
         if (method !== "session/update" || !isObject(params) || !isObject(params.update)) return;
         const update = params.update;

@@ -1,5 +1,13 @@
-import { ProjectId, ThreadId, TurnId } from "@scuttle/shared/ids";
+import {
+  AgentId,
+  AgentIssueId,
+  AgentMemoryId,
+  ProjectId,
+  ThreadId,
+  TurnId,
+} from "@scuttle/shared/ids";
 import * as Schema from "effect/Schema";
+import { Agent, AgentCheckIn, AgentDelegation, AgentIssue, AgentMemory } from "./agent.ts";
 import { ProviderSnapshot } from "./provider.ts";
 import { ActivityItem, PendingApproval, Project, Thread, ThreadTurn } from "./workspace.ts";
 
@@ -104,6 +112,48 @@ export const ProviderUpdatedEvent = Schema.Struct({
   provider: ProviderSnapshot,
 });
 
+export const AgentUpsertedEvent = Schema.Struct({
+  kind: Schema.Literals(["agent.upserted"]),
+  agent: Agent,
+});
+
+export const AgentDeletedEvent = Schema.Struct({
+  kind: Schema.Literals(["agent.deleted"]),
+  agentId: AgentId,
+});
+
+export const AgentMemoryUpsertedEvent = Schema.Struct({
+  kind: Schema.Literals(["agent.memory.upserted"]),
+  memory: AgentMemory,
+});
+
+export const AgentMemoryDeletedEvent = Schema.Struct({
+  kind: Schema.Literals(["agent.memory.deleted"]),
+  agentId: AgentId,
+  memoryId: AgentMemoryId,
+});
+
+export const AgentIssueUpsertedEvent = Schema.Struct({
+  kind: Schema.Literals(["agent.issue.upserted"]),
+  issue: AgentIssue,
+});
+
+export const AgentIssueDeletedEvent = Schema.Struct({
+  kind: Schema.Literals(["agent.issue.deleted"]),
+  agentId: AgentId,
+  issueId: AgentIssueId,
+});
+
+export const AgentDelegationUpsertedEvent = Schema.Struct({
+  kind: Schema.Literals(["agent.delegation.upserted"]),
+  delegation: AgentDelegation,
+});
+
+export const AgentCheckInCreatedEvent = Schema.Struct({
+  kind: Schema.Literals(["agent.checkin.created"]),
+  checkIn: AgentCheckIn,
+});
+
 export const ServerPushEvent = Schema.Union([
   ProjectUpsertedEvent,
   ProjectDeletedEvent,
@@ -114,6 +164,14 @@ export const ServerPushEvent = Schema.Union([
   TurnActivityEvent,
   ApprovalUpdatedEvent,
   ProviderUpdatedEvent,
+  AgentUpsertedEvent,
+  AgentDeletedEvent,
+  AgentMemoryUpsertedEvent,
+  AgentMemoryDeletedEvent,
+  AgentIssueUpsertedEvent,
+  AgentIssueDeletedEvent,
+  AgentDelegationUpsertedEvent,
+  AgentCheckInCreatedEvent,
 ]);
 export type ServerPushEvent = typeof ServerPushEvent.Type;
 
@@ -130,5 +188,13 @@ export const ServerWsMessage = Schema.Union([
   TurnActivityEvent,
   ApprovalUpdatedEvent,
   ProviderUpdatedEvent,
+  AgentUpsertedEvent,
+  AgentDeletedEvent,
+  AgentMemoryUpsertedEvent,
+  AgentMemoryDeletedEvent,
+  AgentIssueUpsertedEvent,
+  AgentIssueDeletedEvent,
+  AgentDelegationUpsertedEvent,
+  AgentCheckInCreatedEvent,
 ]);
 export type ServerWsMessage = typeof ServerWsMessage.Type;

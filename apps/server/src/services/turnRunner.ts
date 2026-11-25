@@ -11,6 +11,7 @@ import { ActivityId, ApprovalId, type ThreadId, type TurnId } from "@scuttle/sha
 import { getHarnessAdapter } from "../providers/registry.ts";
 import type { ApprovalDecision, HarnessEvent } from "../providers/types.ts";
 import type * as EventBus from "./EventBus.ts";
+import { readAgentByPrimaryThreadId } from "./agent/agentStore.ts";
 import { readThreadById, readTurnsForThread } from "./threadStore.ts";
 import { deriveThreadTitle, shouldRefreshThreadTitle } from "./threadTitle.ts";
 
@@ -32,6 +33,7 @@ export interface TurnRunnerDeps {
   readonly pendingApprovals: Map<string, PendingApprovalResolver>;
   readonly updateThreadStatus: (threadId: ThreadId, status: ThreadStatus) => Thread | null;
   readonly onProjectActivity: (thread: Thread, summary: string) => void;
+  readonly isDisposed?: () => boolean;
 }
 
 export const launchTurnExecution = (
@@ -40,9 +42,18 @@ export const launchTurnExecution = (
   turn: ThreadTurn,
   fullPrompt: string,
   providerConfig: ProviderConfig,
+  extraEnv?: Readonly<Record<string, string>>,
 ): void => {
-  const { db, eventBus, activeRuns, pendingApprovals, updateThreadStatus, onProjectActivity } =
-    deps;
+  const {
+    db,
+    eventBus,
+    activeRuns,
+    pendingApprovals,
+    updateThreadStatus,
+    onProjectActivity,
+    isDisposed,
+  } = deps;
+  const isClosed = () => isDisposed?.() === true;
   const controller = new AbortController();
   activeRuns.set(thread.id, { turnId: turn.id, controller });
 
@@ -128,6 +139,7 @@ export const launchTurnExecution = (
   };
 
   const handleEvent = (event: HarnessEvent) => {
+    if (isClosed()) return;
     switch (event.kind) {
       case "session": {
         db.prepare("UPDATE threads SET provider_session_id = ?, updated_at = ? WHERE id = ?").run(
@@ -338,6 +350,7 @@ export const launchTurnExecution = (
 
   const refreshThreadTitle = () => {
     try {
+      if (readAgentByPrimaryThreadId(db, thread.id) !== null) return;
       const current = readThreadById(db, thread.id);
       if (!current) return;
       const completedTurns = readTurnsForThread(db, current).filter(
@@ -369,10 +382,12 @@ export const launchTurnExecution = (
       runtimeMode: thread.runtimeMode,
       interactionMode: thread.interactionMode,
       ...(thread.providerSessionId ? { providerSessionId: thread.providerSessionId } : {}),
+      ...(extraEnv ? { extraEnv } : {}),
       signal: controller.signal,
       emit: handleEvent,
     })
     .then((result) => {
+      if (isClosed()) return;
       closeThinkingIfOpen();
       const completedAt = new Date().toISOString();
       const durationMs = Math.max(0, Date.parse(completedAt) - startedMs);
@@ -395,6 +410,7 @@ export const launchTurnExecution = (
       onProjectActivity(thread, finalMessage.trim() || turn.userMessage);
     })
     .catch((error: unknown) => {
+      if (isClosed()) return;
       closeThinkingIfOpen();
       const completedAt = new Date().toISOString();
       const durationMs = Math.max(0, Date.parse(completedAt) - startedMs);

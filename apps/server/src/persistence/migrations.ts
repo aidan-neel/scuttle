@@ -141,4 +141,129 @@ export const applyScuttleMigrations = (db: Database): void => {
       updated_at TEXT NOT NULL
     );
   `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS agents (
+      id TEXT PRIMARY KEY NOT NULL,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      purpose TEXT NOT NULL DEFAULT '',
+      primary_thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+      runtime TEXT NOT NULL DEFAULT 'local',
+      model_selection_json TEXT NOT NULL,
+      model_stack_json TEXT NOT NULL DEFAULT '{}',
+      instructions_md TEXT NOT NULL DEFAULT '',
+      check_in_interval_minutes INTEGER,
+      last_check_in_at TEXT,
+      last_summary TEXT,
+      needs_attention INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_agents_project_id ON agents(project_id);
+  `);
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_agents_primary_thread_id ON agents(primary_thread_id);
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS agent_memories (
+      id TEXT PRIMARY KEY NOT NULL,
+      agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      category TEXT NOT NULL,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      pinned INTEGER NOT NULL DEFAULT 0,
+      source TEXT NOT NULL DEFAULT 'user',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_agent_memories_agent_id
+    ON agent_memories(agent_id, pinned DESC, updated_at DESC);
+  `);
+
+  db.run(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS agent_memories_fts USING fts5(
+      id UNINDEXED,
+      agent_id UNINDEXED,
+      title,
+      content
+    );
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS agent_issues (
+      id TEXT PRIMARY KEY NOT NULL,
+      agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      key TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      state TEXT NOT NULL DEFAULT 'backlog',
+      labels_json TEXT NOT NULL DEFAULT '[]',
+      external_url TEXT,
+      assigned_thread_id TEXT REFERENCES threads(id) ON DELETE SET NULL,
+      pr_number INTEGER,
+      pr_url TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(agent_id, key)
+    );
+  `);
+
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_agent_issues_agent_id
+    ON agent_issues(agent_id, updated_at DESC);
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS agent_delegations (
+      id TEXT PRIMARY KEY NOT NULL,
+      agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      parent_thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+      child_thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+      role TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      brief TEXT NOT NULL,
+      model_selection_json TEXT NOT NULL,
+      status TEXT NOT NULL,
+      issue_id TEXT REFERENCES agent_issues(id) ON DELETE SET NULL,
+      pr_url TEXT,
+      result_summary TEXT,
+      created_at TEXT NOT NULL,
+      completed_at TEXT
+    );
+  `);
+
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_agent_delegations_agent_id
+    ON agent_delegations(agent_id, created_at DESC);
+  `);
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_agent_delegations_child_thread_id
+    ON agent_delegations(child_thread_id);
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS agent_checkins (
+      id TEXT PRIMARY KEY NOT NULL,
+      agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      summary TEXT NOT NULL,
+      active_delegations INTEGER NOT NULL DEFAULT 0,
+      open_prs INTEGER NOT NULL DEFAULT 0,
+      open_issues INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+  `);
+
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_agent_checkins_agent_id
+    ON agent_checkins(agent_id, created_at DESC);
+  `);
 };

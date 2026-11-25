@@ -8,6 +8,7 @@ import * as ServerConfig from "./config.ts";
 import { handleApiRequest } from "./httpRoutes.ts";
 import * as Sqlite from "./persistence/Sqlite.ts";
 import { handleRpcMessage } from "./rpc.ts";
+import * as AgentService from "./services/AgentService.ts";
 import * as EventBus from "./services/EventBus.ts";
 import * as GitForgeService from "./services/GitForgeService.ts";
 import * as GitService from "./services/GitService.ts";
@@ -45,6 +46,7 @@ export const makeAppLayer = (
     Layer.provide(eventBusLayer),
   );
   const threadLayer = ThreadService.layer.pipe(
+    Layer.provide(configLayer),
     Layer.provide(sqliteLayer),
     Layer.provide(eventBusLayer),
     Layer.provide(gitLayer),
@@ -57,6 +59,19 @@ export const makeAppLayer = (
     Layer.provide(projectLayer),
     Layer.provide(threadLayer),
   );
+  const agentLayer = AgentService.layer({
+    runner: forgeOptions.runner,
+    fetch: forgeOptions.fetch,
+  }).pipe(
+    Layer.provide(configLayer),
+    Layer.provide(sqliteLayer),
+    Layer.provide(eventBusLayer),
+    Layer.provide(projectLayer),
+    Layer.provide(providerLayer),
+    Layer.provide(threadLayer),
+    Layer.provide(gitLayer),
+    Layer.provide(gitForgeLayer),
+  );
 
   return Layer.mergeAll(
     configLayer,
@@ -68,6 +83,7 @@ export const makeAppLayer = (
     projectLayer,
     threadLayer,
     gitForgeLayer,
+    agentLayer,
   );
 };
 
@@ -195,6 +211,7 @@ export const startScuttleServer = async (
 
   const boundPort = server.port ?? config.port;
   const boundUrl = `http://${config.host}:${boundPort}`;
+  config.apiBaseUrlRef.url = boundUrl;
 
   return {
     host: config.host,

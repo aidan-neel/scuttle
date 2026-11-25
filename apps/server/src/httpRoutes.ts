@@ -9,8 +9,10 @@ import {
 } from "@scuttle/contracts";
 import { ApprovalId, ProjectId, ProviderId, ThreadId } from "@scuttle/shared/ids";
 import * as Effect from "effect/Effect";
+import { handleAgentApiRequest } from "./agentRoutes.ts";
 import { handleGitApiRequest } from "./gitRoutes.ts";
 import { jsonError, matchRoute, readAndDecode } from "./httpHelpers.ts";
+import * as AgentService from "./services/AgentService.ts";
 import type * as GitForgeService from "./services/GitForgeService.ts";
 import * as HealthService from "./services/HealthService.ts";
 import * as ProjectService from "./services/ProjectService.ts";
@@ -18,6 +20,7 @@ import * as ProviderService from "./services/ProviderService.ts";
 import * as ThreadService from "./services/ThreadService.ts";
 
 export type ApiServices =
+  | AgentService.AgentService
   | GitForgeService.GitForgeService
   | HealthService.HealthService
   | ProjectService.ProjectService
@@ -32,6 +35,9 @@ export const handleApiRequest = (
     const method = request.method.toUpperCase();
     const pathname = url.pathname;
 
+    const agentResponse = yield* handleAgentApiRequest(request, url);
+    if (agentResponse !== null) return agentResponse;
+
     const gitResponse = yield* handleGitApiRequest(request, url);
     if (gitResponse !== null) return gitResponse;
 
@@ -44,12 +50,14 @@ export const handleApiRequest = (
       const projectService = yield* ProjectService.ProjectService;
       const threadService = yield* ThreadService.ThreadService;
       const providerService = yield* ProviderService.ProviderService;
-      const [projects, threads, providers] = yield* Effect.all([
+      const agentService = yield* AgentService.AgentService;
+      const [projects, threads, providers, agents] = yield* Effect.all([
         projectService.list(),
         threadService.list(),
         providerService.listSnapshots(),
+        agentService.list(),
       ]);
-      return Response.json({ projects, threads, providers });
+      return Response.json({ projects, threads, providers, agents });
     }
 
     if (method === "GET" && pathname === "/api/fs/list") {

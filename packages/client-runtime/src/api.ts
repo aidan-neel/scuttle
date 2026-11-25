@@ -1,5 +1,17 @@
 import {
+  Agent,
+  AgentCheckIn,
+  AgentDelegation,
+  AgentDetail,
+  AgentIssue,
+  AgentMemory,
+  type AssignAgentIssueInput,
+  AssignAgentIssueResult,
+  type CreateAgentInput,
+  type CreateIssueInput,
+  type CreateMemoryInput,
   type CreatePullRequestInput,
+  type DelegateAgentTaskInput,
   DeviceFlowPoll,
   DeviceFlowStart,
   type ForgeKind,
@@ -11,6 +23,11 @@ import {
   GitStatus,
   PullRequest,
   PullRequestList,
+  type SetupAgentStartInput,
+  type TriggerCheckInInput,
+  type UpdateAgentInput,
+  type UpdateIssueInput,
+  type UpdateMemoryInput,
   type CreateProjectInput,
   type CreateThreadInput,
   DirectoryListing,
@@ -32,6 +49,16 @@ import * as Schema from "effect/Schema";
 import { resolveBaseHttpUrl, ServerFetchError } from "./connection.ts";
 
 const decodeWorkspace = Schema.decodeUnknownEffect(WorkspaceSnapshot);
+const decodeAgents = Schema.decodeUnknownEffect(Schema.Array(Agent));
+const decodeAgent = Schema.decodeUnknownEffect(Agent);
+const decodeAgentDetail = Schema.decodeUnknownEffect(AgentDetail);
+const decodeAgentMemories = Schema.decodeUnknownEffect(Schema.Array(AgentMemory));
+const decodeAgentMemory = Schema.decodeUnknownEffect(AgentMemory);
+const decodeAgentIssues = Schema.decodeUnknownEffect(Schema.Array(AgentIssue));
+const decodeAgentIssue = Schema.decodeUnknownEffect(AgentIssue);
+const decodeAgentDelegation = Schema.decodeUnknownEffect(AgentDelegation);
+const decodeAssignIssueResult = Schema.decodeUnknownEffect(AssignAgentIssueResult);
+const decodeAgentCheckIn = Schema.decodeUnknownEffect(AgentCheckIn);
 const decodeProject = Schema.decodeUnknownEffect(Project);
 const decodeBranches = Schema.decodeUnknownEffect(Schema.Array(GitBranchInfo));
 const decodeDirectory = Schema.decodeUnknownEffect(DirectoryListing);
@@ -215,113 +242,157 @@ export interface ScuttleApiClient {
     approvalId: string,
     input: RespondApprovalInput,
   ) => Promise<void>;
+  readonly listAgents: () => Promise<ReadonlyArray<Agent>>;
+  readonly createAgent: (input: CreateAgentInput) => Promise<Agent>;
+  readonly getAgentDetail: (agentId: string) => Promise<AgentDetail>;
+  readonly updateAgent: (agentId: string, input: UpdateAgentInput) => Promise<Agent>;
+  readonly deleteAgent: (agentId: string) => Promise<void>;
+  readonly sendAgentTurn: (agentId: string, input: SendTurnInput) => Promise<ThreadTurn>;
+  readonly startAgentSetup: (agentId: string, input?: SetupAgentStartInput) => Promise<ThreadTurn>;
+  readonly listAgentMemories: (
+    agentId: string,
+    query?: string,
+  ) => Promise<ReadonlyArray<AgentMemory>>;
+  readonly createAgentMemory: (agentId: string, input: CreateMemoryInput) => Promise<AgentMemory>;
+  readonly updateAgentMemory: (
+    agentId: string,
+    memoryId: string,
+    input: UpdateMemoryInput,
+  ) => Promise<AgentMemory>;
+  readonly deleteAgentMemory: (agentId: string, memoryId: string) => Promise<void>;
+  readonly listAgentIssues: (agentId: string) => Promise<ReadonlyArray<AgentIssue>>;
+  readonly createAgentIssue: (agentId: string, input: CreateIssueInput) => Promise<AgentIssue>;
+  readonly updateAgentIssue: (
+    agentId: string,
+    issueId: string,
+    input: UpdateIssueInput,
+  ) => Promise<AgentIssue>;
+  readonly deleteAgentIssue: (agentId: string, issueId: string) => Promise<void>;
+  readonly syncAgentIssues: (agentId: string) => Promise<ReadonlyArray<AgentIssue>>;
+  readonly assignAgentIssue: (
+    agentId: string,
+    issueId: string,
+    input?: AssignAgentIssueInput,
+  ) => Promise<AssignAgentIssueResult>;
+  readonly delegateAgentTask: (
+    agentId: string,
+    input: DelegateAgentTaskInput,
+  ) => Promise<AgentDelegation>;
+  readonly cancelAgentDelegation: (
+    agentId: string,
+    delegationId: string,
+  ) => Promise<AgentDelegation>;
+  readonly triggerAgentCheckIn: (
+    agentId: string,
+    input?: TriggerCheckInInput,
+  ) => Promise<AgentCheckIn>;
 }
 
-export const createScuttleApiClient = (baseUrl?: string): ScuttleApiClient => ({
-  getWorkspace: () =>
-    Effect.runPromise(requestJson(baseUrl, "/api/workspace", undefined, decodeWorkspace)),
-  createProject: (input) =>
-    Effect.runPromise(
-      requestJson(
-        baseUrl,
-        "/api/projects",
-        { method: "POST", body: JSON.stringify(input) },
-        decodeProject,
-      ),
-    ),
-  deleteProject: (projectId) =>
-    Effect.runPromise(
-      requestVoid(baseUrl, `/api/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" }),
-    ),
-  listBranches: (projectId) =>
-    Effect.runPromise(
-      requestJson(
-        baseUrl,
-        `/api/projects/${encodeURIComponent(projectId)}/branches`,
-        undefined,
-        decodeBranches,
-      ),
-    ),
-  listDirectory: (dirPath) => {
-    const query = dirPath ? `?path=${encodeURIComponent(dirPath)}` : "";
-    return Effect.runPromise(
-      requestJson(baseUrl, `/api/fs/list${query}`, undefined, decodeDirectory),
-    );
-  },
-  refreshProviders: () =>
-    Effect.runPromise(
-      requestJson(baseUrl, "/api/providers/refresh", { method: "POST" }, decodeProviders),
-    ),
-  updateProvider: (providerId, patch) =>
-    Effect.runPromise(
-      requestJson(
-        baseUrl,
+export const createScuttleApiClient = (baseUrl?: string): ScuttleApiClient => {
+  const json = <A>(
+    path: string,
+    init: RequestInit | undefined,
+    decode: (input: unknown) => Effect.Effect<A, unknown>,
+  ) => Effect.runPromise(requestJson(baseUrl, path, init, decode));
+  const empty = (path: string, init: RequestInit | undefined) =>
+    Effect.runPromise(requestVoid(baseUrl, path, init));
+  const agentPath = (agentId: string, suffix = "") =>
+    `/api/agents/${encodeURIComponent(agentId)}${suffix}`;
+
+  return {
+    getWorkspace: () => json("/api/workspace", undefined, decodeWorkspace),
+    createProject: (input) => json("/api/projects", postJson(input), decodeProject),
+    deleteProject: (projectId) =>
+      empty(`/api/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" }),
+    listBranches: (projectId) =>
+      json(`/api/projects/${encodeURIComponent(projectId)}/branches`, undefined, decodeBranches),
+    listDirectory: (dirPath) => {
+      const query = dirPath ? `?path=${encodeURIComponent(dirPath)}` : "";
+      return json(`/api/fs/list${query}`, undefined, decodeDirectory);
+    },
+    refreshProviders: () => json("/api/providers/refresh", postJson(), decodeProviders),
+    updateProvider: (providerId, patch) =>
+      json(
         `/api/providers/${encodeURIComponent(providerId)}`,
         { method: "PATCH", body: JSON.stringify(patch) },
         decodeProvider,
       ),
-    ),
-  getThreadDetail: (threadId) =>
-    Effect.runPromise(
-      requestJson(
-        baseUrl,
-        `/api/threads/${encodeURIComponent(threadId)}`,
-        undefined,
-        decodeThreadDetail,
-      ),
-    ),
-  createThread: (input) =>
-    Effect.runPromise(
-      requestJson(
-        baseUrl,
-        "/api/threads",
-        { method: "POST", body: JSON.stringify(input) },
-        decodeThreadDetail,
-      ),
-    ),
-  sendTurn: (threadId, input) =>
-    Effect.runPromise(
-      requestJson(
-        baseUrl,
-        `/api/threads/${encodeURIComponent(threadId)}/turns`,
-        { method: "POST", body: JSON.stringify(input) },
-        decodeTurn,
-      ),
-    ),
-  interruptTurn: (threadId) =>
-    Effect.runPromise(
-      requestVoid(baseUrl, `/api/threads/${encodeURIComponent(threadId)}/interrupt`, {
-        method: "POST",
-      }),
-    ),
-  settleThread: (threadId, input) =>
-    Effect.runPromise(
-      requestJson(
-        baseUrl,
-        `/api/threads/${encodeURIComponent(threadId)}/settle`,
-        { method: "POST", body: JSON.stringify(input) },
-        decodeThread,
-      ),
-    ),
-  updateThread: (threadId, input) =>
-    Effect.runPromise(
-      requestJson(
-        baseUrl,
+    getThreadDetail: (threadId) =>
+      json(`/api/threads/${encodeURIComponent(threadId)}`, undefined, decodeThreadDetail),
+    createThread: (input) => json("/api/threads", postJson(input), decodeThreadDetail),
+    sendTurn: (threadId, input) =>
+      json(`/api/threads/${encodeURIComponent(threadId)}/turns`, postJson(input), decodeTurn),
+    interruptTurn: (threadId) =>
+      empty(`/api/threads/${encodeURIComponent(threadId)}/interrupt`, postJson()),
+    settleThread: (threadId, input) =>
+      json(`/api/threads/${encodeURIComponent(threadId)}/settle`, postJson(input), decodeThread),
+    updateThread: (threadId, input) =>
+      json(
         `/api/threads/${encodeURIComponent(threadId)}`,
         { method: "PATCH", body: JSON.stringify(input) },
         decodeThread,
       ),
-    ),
-  deleteThread: (threadId) =>
-    Effect.runPromise(
-      requestVoid(baseUrl, `/api/threads/${encodeURIComponent(threadId)}`, { method: "DELETE" }),
-    ),
-  respondApproval: (threadId, approvalId, input) =>
-    Effect.runPromise(
-      requestVoid(
-        baseUrl,
+    deleteThread: (threadId) =>
+      empty(`/api/threads/${encodeURIComponent(threadId)}`, { method: "DELETE" }),
+    respondApproval: (threadId, approvalId, input) =>
+      empty(
         `/api/threads/${encodeURIComponent(threadId)}/approvals/${encodeURIComponent(approvalId)}`,
-        { method: "POST", body: JSON.stringify(input) },
+        postJson(input),
       ),
-    ),
-});
+    listAgents: () => json("/api/agents", undefined, decodeAgents),
+    createAgent: (input) => json("/api/agents", postJson(input), decodeAgent),
+    getAgentDetail: (agentId) => json(agentPath(agentId), undefined, decodeAgentDetail),
+    updateAgent: (agentId, input) =>
+      json(agentPath(agentId), { method: "PATCH", body: JSON.stringify(input) }, decodeAgent),
+    deleteAgent: (agentId) => empty(agentPath(agentId), { method: "DELETE" }),
+    sendAgentTurn: (agentId, input) =>
+      json(agentPath(agentId, "/turns"), postJson(input), decodeTurn),
+    startAgentSetup: (agentId, input) =>
+      json(agentPath(agentId, "/setup/start"), postJson(input ?? {}), decodeTurn),
+    listAgentMemories: (agentId, query) => {
+      const qs = query && query.trim().length > 0 ? `?q=${encodeURIComponent(query)}` : "";
+      return json(agentPath(agentId, `/memories${qs}`), undefined, decodeAgentMemories);
+    },
+    createAgentMemory: (agentId, input) =>
+      json(agentPath(agentId, "/memories"), postJson(input), decodeAgentMemory),
+    updateAgentMemory: (agentId, memoryId, input) =>
+      json(
+        agentPath(agentId, `/memories/${encodeURIComponent(memoryId)}`),
+        { method: "PATCH", body: JSON.stringify(input) },
+        decodeAgentMemory,
+      ),
+    deleteAgentMemory: (agentId, memoryId) =>
+      empty(agentPath(agentId, `/memories/${encodeURIComponent(memoryId)}`), {
+        method: "DELETE",
+      }),
+    listAgentIssues: (agentId) => json(agentPath(agentId, "/issues"), undefined, decodeAgentIssues),
+    createAgentIssue: (agentId, input) =>
+      json(agentPath(agentId, "/issues"), postJson(input), decodeAgentIssue),
+    updateAgentIssue: (agentId, issueId, input) =>
+      json(
+        agentPath(agentId, `/issues/${encodeURIComponent(issueId)}`),
+        { method: "PATCH", body: JSON.stringify(input) },
+        decodeAgentIssue,
+      ),
+    deleteAgentIssue: (agentId, issueId) =>
+      empty(agentPath(agentId, `/issues/${encodeURIComponent(issueId)}`), { method: "DELETE" }),
+    syncAgentIssues: (agentId) =>
+      json(agentPath(agentId, "/issues/sync"), postJson(), decodeAgentIssues),
+    assignAgentIssue: (agentId, issueId, input) =>
+      json(
+        agentPath(agentId, `/issues/${encodeURIComponent(issueId)}/assign`),
+        postJson(input ?? {}),
+        decodeAssignIssueResult,
+      ),
+    delegateAgentTask: (agentId, input) =>
+      json(agentPath(agentId, "/delegations"), postJson(input), decodeAgentDelegation),
+    cancelAgentDelegation: (agentId, delegationId) =>
+      json(
+        agentPath(agentId, `/delegations/${encodeURIComponent(delegationId)}/cancel`),
+        postJson(),
+        decodeAgentDelegation,
+      ),
+    triggerAgentCheckIn: (agentId, input) =>
+      json(agentPath(agentId, "/checkins"), postJson(input ?? {}), decodeAgentCheckIn),
+  };
+};

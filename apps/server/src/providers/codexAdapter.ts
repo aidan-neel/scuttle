@@ -232,6 +232,7 @@ export const codexAdapter: HarnessAdapter = {
         ...tokenizeLaunchArgs(input.config.launchArgs),
       ],
       cwd: input.cwd,
+      ...(input.extraEnv ? { env: input.extraEnv } : {}),
       onNotification: ({ method, params }) => {
         if (!isObject(params)) return;
 
