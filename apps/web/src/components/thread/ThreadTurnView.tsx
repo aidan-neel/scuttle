@@ -18,7 +18,7 @@ export function ThreadTurnView({ turn, onRespondApproval }: ThreadTurnViewProps)
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.22, ease: easeOut }}
-      className="space-y-2"
+      className="space-y-3"
     >
       <div className="flex justify-end">
         <div className="max-w-[78%] rounded-[14px] bg-raised px-4 py-2.5 text-[14px] leading-[1.55] text-fg shadow-raised whitespace-pre-wrap break-words">
