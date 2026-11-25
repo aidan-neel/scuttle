@@ -1,7 +1,7 @@
 import type { EffortLevel } from "@scuttle/contracts";
 import { AnimatePresence, motion } from "motion/react";
 import { type KeyboardEvent, type PointerEvent, useRef, useState } from "react";
-import { ditherMaskStyle } from "@/lib/dither";
+import { DitherShader } from "@/lib/dither";
 import { EFFORT_LABELS } from "@/lib/format.ts";
 import { easeOut, spring } from "@/lib/motion.ts";
 
@@ -19,7 +19,21 @@ const SHORT_LABELS: Record<EffortLevel, string> = {
   max: "Max",
 };
 
-const DITHER_OVERLAY = ditherMaskStyle(0.72, { matrix: "bayer4", cell: 2 });
+const SLIDER_PALETTE = ["#0d0d10", "#172d62", "#3570f1", "#9ec4ff"] as const;
+
+const SLIDER_FIELD = `
+float field(vec2 uv, vec2 res, float t) {
+  float x = clamp(uv.x, 0.0, 1.0);
+  float curve = 0.22 + 0.72 * pow(x, 0.78);
+  float sheen = 1.0 - abs(uv.y - 0.38) * 0.45;
+  return clamp(curve * sheen, 0.0, 1.0);
+}
+`;
+
+const THUMB_HALF_PX = 5;
+
+const stopPercent = (idx: number, count: number): number =>
+  count <= 1 ? 100 : (idx / (count - 1)) * 100;
 
 export function ReasoningSlider({ efforts, value, onChange }: ReasoningSliderProps) {
   const trackRef = useRef<HTMLDivElement | null>(null);
@@ -27,13 +41,14 @@ export function ReasoningSlider({ efforts, value, onChange }: ReasoningSliderPro
 
   const count = efforts.length;
   const activeIndex = Math.max(0, efforts.indexOf(value));
-  const fillPct = count <= 1 ? 100 : ((activeIndex + 1) / count) * 100;
+  const activePct = stopPercent(activeIndex, count);
 
   const indexFromClientX = (clientX: number): number => {
     const rect = trackRef.current?.getBoundingClientRect();
-    if (!rect || rect.width <= 0 || count <= 1) return 0;
-    const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-    return Math.min(count - 1, Math.floor(ratio * count));
+    if (!rect || count <= 1) return 0;
+    const usableWidth = Math.max(1, rect.width - THUMB_HALF_PX * 2);
+    const ratio = Math.min(1, Math.max(0, (clientX - rect.left - THUMB_HALF_PX) / usableWidth));
+    return Math.round(ratio * (count - 1));
   };
 
   const commitAtClientX = (clientX: number) => {
@@ -119,49 +134,58 @@ export function ReasoningSlider({ efforts, value, onChange }: ReasoningSliderPro
         className="group/slider relative h-7 w-full cursor-pointer touch-none overflow-visible outline-none select-none"
       >
         <div className="pointer-events-none absolute inset-x-0 top-1 h-5 overflow-hidden rounded-[7px] bg-[#0d0d10] shadow-[inset_0_0_0_1px_rgb(255_255_255/10%),inset_0_1px_2px_rgb(0_0_0/55%)] group-focus-visible/slider:shadow-focus">
-          <div aria-hidden className="absolute inset-0 flex items-center justify-evenly px-2">
+          <div aria-hidden className="absolute inset-y-0 inset-x-[5px]">
             {efforts.map((effort, idx) => (
               <span
                 key={effort}
-                className={`h-1.5 w-px rounded-full transition-opacity duration-150 ${
-                  idx <= activeIndex ? "bg-white/25" : "bg-white/10"
+                style={{ left: `${stopPercent(idx, count)}%` }}
+                className={`absolute top-1/2 h-1.5 w-px -translate-x-1/2 -translate-y-1/2 rounded-full transition-colors duration-150 ${
+                  idx <= activeIndex ? "bg-white/30" : "bg-white/12"
                 }`}
               />
             ))}
           </div>
 
-          <div aria-hidden className="absolute inset-[2px]">
+          <div aria-hidden className="absolute inset-[2px] overflow-hidden rounded-[5px]">
             <motion.div
               initial={false}
-              animate={{ width: `${fillPct}%` }}
+              animate={{
+                clipPath:
+                  count <= 1
+                    ? "inset(0 0% 0 0)"
+                    : `inset(0 calc(${100 - activePct}% - ${THUMB_HALF_PX - 2}px) 0 0)`,
+              }}
               transition={spring.snappy}
-              className="absolute inset-y-0 left-0 overflow-hidden rounded-[5px]"
+              className="absolute inset-0"
             >
-              <div
+              <DitherShader
+                field={SLIDER_FIELD}
+                palette={SLIDER_PALETTE}
+                matrix="blue-noise"
+                cell={1}
+                animate={false}
+                stillTime={0}
                 className="absolute inset-0"
-                style={{
-                  background:
-                    "linear-gradient(90deg, rgb(42 84 196 / 26%) 0%, rgb(68 124 255 / 54%) 100%)",
-                }}
-              />
-              <div
-                className="absolute inset-0"
-                style={{
-                  ...DITHER_OVERLAY,
-                  background:
-                    "linear-gradient(90deg, rgb(84 138 255 / 55%) 0%, rgb(156 196 255 / 95%) 100%)",
-                }}
+                fallback={
+                  <div
+                    className="absolute inset-0"
+                    style={{
+                      background:
+                        "linear-gradient(90deg, rgb(42 84 196 / 35%) 0%, rgb(126 166 255 / 90%) 100%)",
+                    }}
+                  />
+                }
               />
             </motion.div>
           </div>
         </div>
 
-        <div aria-hidden className="pointer-events-none absolute inset-y-0 right-[3px] left-px">
+        <div aria-hidden className="pointer-events-none absolute inset-y-0 inset-x-[5px]">
           <motion.div
             initial={false}
-            animate={{ left: `${fillPct}%`, scale: dragging ? 1.08 : 1 }}
+            animate={{ left: `${activePct}%`, scale: dragging ? 1.06 : 1 }}
             transition={spring.snappy}
-            className="absolute inset-y-0 -ml-2.5 flex h-7 w-2.5 items-center justify-center gap-px rounded-[4px] bg-[linear-gradient(180deg,#ffffff_0%,#e4e7ee_100%)] shadow-[0_0_0_0.5px_rgb(0_0_0/55%),0_1px_2px_rgb(0_0_0/70%),0_3px_8px_rgb(0_0_0/45%),0_0_10px_rgb(126_166_255/35%),inset_0_1px_0_rgb(255_255_255),inset_0_-1px_0_rgb(0_0_0/12%)] transition-shadow duration-150 group-hover/slider:shadow-[0_0_0_0.5px_rgb(0_0_0/55%),0_1px_2px_rgb(0_0_0/70%),0_3px_8px_rgb(0_0_0/45%),0_0_14px_rgb(126_166_255/55%),inset_0_1px_0_rgb(255_255_255),inset_0_-1px_0_rgb(0_0_0/12%)]"
+            className="absolute inset-y-0 flex h-7 w-2.5 -translate-x-1/2 items-center justify-center gap-px rounded-[4px] bg-[linear-gradient(180deg,#ffffff_0%,#e4e7ee_100%)] shadow-[0_0_0_0.5px_rgb(0_0_0/55%),0_1px_2px_rgb(0_0_0/70%),0_3px_8px_rgb(0_0_0/45%),0_0_10px_rgb(126_166_255/35%),inset_0_1px_0_rgb(255_255_255),inset_0_-1px_0_rgb(0_0_0/12%)] transition-shadow duration-150 group-hover/slider:shadow-[0_0_0_0.5px_rgb(0_0_0/55%),0_1px_2px_rgb(0_0_0/70%),0_3px_8px_rgb(0_0_0/45%),0_0_14px_rgb(126_166_255/55%),inset_0_1px_0_rgb(255_255_255),inset_0_-1px_0_rgb(0_0_0/12%)]"
           >
             <span className="h-3 w-px rounded-full bg-black/20" />
             <span className="h-3 w-px rounded-full bg-black/20" />
@@ -169,15 +193,23 @@ export function ReasoningSlider({ efforts, value, onChange }: ReasoningSliderPro
         </div>
       </div>
 
-      <div className="flex items-center justify-between gap-1">
+      <div className="relative mx-[5px] h-4">
         {efforts.map((effort, idx) => {
           const active = idx === activeIndex;
+          const pct = stopPercent(idx, count);
+          const alignClass =
+            idx === 0
+              ? "left-0 text-left"
+              : idx === count - 1
+                ? "right-0 text-right"
+                : "-translate-x-1/2 text-center";
           return (
             <button
               key={effort}
               type="button"
+              style={idx === 0 || idx === count - 1 ? undefined : { left: `${pct}%` }}
               onClick={() => onChange(effort)}
-              className={`flex-1 cursor-pointer rounded-[4px] py-0.5 text-center text-[10.5px] leading-none transition-colors duration-100 outline-none ${
+              className={`absolute top-0 cursor-pointer rounded-[4px] py-0.5 text-[10.5px] leading-none whitespace-nowrap transition-colors duration-100 outline-none ${alignClass} ${
                 active ? "font-medium text-fg" : "text-fg-faint hover:text-fg-muted"
               }`}
             >

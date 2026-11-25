@@ -17,6 +17,25 @@ export default defineConfig({
   ],
   resolve: {
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
+    dedupe: ["react", "react-dom"],
+  },
+  optimizeDeps: {
+    include: [
+      "react",
+      "react-dom",
+      "react-dom/client",
+      "react/jsx-runtime",
+      "react/jsx-dev-runtime",
+      "react/compiler-runtime",
+      "motion/react",
+      "@base-ui/react/button",
+      "@base-ui/react/combobox",
+      "@base-ui/react/context-menu",
+      "@base-ui/react/dialog",
+      "@base-ui/react/menu",
+      "@base-ui/react/popover",
+      "@base-ui/react/switch",
+    ],
   },
   server: {
     host: "127.0.0.1",

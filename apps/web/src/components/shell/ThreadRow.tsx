@@ -6,14 +6,12 @@ import {
   Tick02Icon,
 } from "@hugeicons/core-free-icons";
 import type { Thread, ThreadStatus } from "@scuttle/contracts";
-import { motion } from "motion/react";
 import { BrandLogo } from "@/components/ui/BrandLogo.tsx";
 import { Button } from "@/components/ui/Button.tsx";
 import { DotSpinner } from "@/components/ui/DotSpinner.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
 import { formatRelativeAge } from "@/lib/format.ts";
-import { spring } from "@/lib/motion";
 
 const TITLE_TONE: Record<ThreadStatus["kind"], string> = {
   "needs-input": "font-medium text-fg",
@@ -33,7 +31,7 @@ function StatusLabel({
     case "needs-input":
       return (
         <span className="flex items-center gap-1 text-label text-input">
-          <Icon icon={HelpCircleIcon} className="size-[13px]" />
+          <Icon icon={HelpCircleIcon} className="size-3.5" />
           Input
         </span>
       );
@@ -47,7 +45,7 @@ function StatusLabel({
     case "error":
       return (
         <span className="flex items-center gap-1 text-label text-danger">
-          <Icon icon={AlertCircleIcon} className="size-[13px]" />
+          <Icon icon={AlertCircleIcon} className="size-3.5" />
           Error
         </span>
       );
@@ -74,16 +72,11 @@ export function ThreadRow({ thread, selected, onSelect, onSettle }: ThreadRowPro
         type="button"
         aria-current={selected}
         onClick={onSelect}
-        className="relative flex w-full flex-col gap-[5px] rounded-row px-2 py-[9px] text-left outline-none transition-colors duration-100 ease-out group-hover/row:bg-white/4 focus-visible:shadow-focus"
+        className={`flex w-full flex-col gap-[5px] rounded-row px-2 py-[9px] text-left outline-none transition-colors duration-100 ease-out focus-visible:shadow-focus ${
+          selected ? "bg-white/7" : "group-hover/row:bg-white/4"
+        }`}
       >
-        {selected && (
-          <motion.span
-            layoutId="thread-selection"
-            transition={spring.layout}
-            className="absolute inset-0 rounded-row bg-white/7"
-          />
-        )}
-        <span className="relative flex h-5 items-center gap-2">
+        <span className="flex h-5 items-center gap-2">
           <span className={`min-w-0 flex-1 truncate text-body ${TITLE_TONE[thread.status.kind]}`}>
             {thread.title}
           </span>
@@ -91,7 +84,7 @@ export function ThreadRow({ thread, selected, onSelect, onSettle }: ThreadRowPro
             <StatusLabel status={thread.status} updatedAt={thread.updatedAt} />
           </span>
         </span>
-        <span className="relative flex h-4 items-center gap-1.5">
+        <span className="flex h-4 items-center gap-1.5">
           <Identicon name={thread.projectName} size="sm" />
           <span className="min-w-0 flex-1 truncate text-label text-fg-muted">
             {thread.projectName}
@@ -100,7 +93,7 @@ export function ThreadRow({ thread, selected, onSelect, onSettle }: ThreadRowPro
           <Icon
             icon={local ? ComputerIcon : GitBranchIcon}
             label={local ? "Runs locally" : "Runs in a worktree"}
-            className="size-[13px] text-fg-muted"
+            className="size-3.5 text-fg-muted"
           />
         </span>
       </button>

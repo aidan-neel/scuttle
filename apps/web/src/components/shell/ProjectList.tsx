@@ -3,13 +3,11 @@ import { Copy01Icon, Delete02Icon, FilterIcon, PencilEdit02Icon } from "@hugeico
 import type { Project } from "@scuttle/contracts";
 import type { ProjectId } from "@scuttle/shared/ids";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { LayoutGroup, motion } from "motion/react";
 import { useState } from "react";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
 import { ContextMenuItem, ContextMenuPopup, ContextMenuSeparator } from "@/components/ui/Menu.tsx";
 import { formatRelativeAge } from "@/lib/format.ts";
-import { spring } from "@/lib/motion";
 import { useWorkspace } from "@/lib/workspace.tsx";
 import { SectionHeader, type SectionMenuEntry } from "./SectionHeader.tsx";
 
@@ -72,98 +70,91 @@ export function ProjectList({
         onAdd={onAddProject}
         menu={menu}
       />
-      <LayoutGroup id="projects">
-        <ul className="mt-0.5 flex flex-col gap-px">
-          {sortProjects(projects, sort).map((project) => {
-            const isSelected =
-              filterProjectId === null
-                ? isHome && project.id === selectedProjectId
-                : project.id === filterProjectId;
-            const isFiltered = filterProjectId === project.id;
-            const subtitle =
-              project.lastMessage ?? (project.isGitRepo ? project.defaultBranch : "Ready");
-            return (
-              <li key={project.id}>
-                <ContextMenu.Root>
-                  <ContextMenu.Trigger
-                    render={
-                      <button
-                        type="button"
-                        aria-current={isSelected}
-                        onClick={() => {
-                          selectProject(project.id);
-                          if (filterProjectId !== null) onFilterChange(project.id);
-                          void navigate({ to: "/" });
-                        }}
-                        className="relative flex w-full items-center gap-2.5 rounded-row p-2 text-left outline-none transition-colors duration-100 ease-out hover:bg-white/4 focus-visible:shadow-focus"
-                      />
-                    }
-                  >
-                    {isSelected && (
-                      <motion.span
-                        layoutId="project-selection"
-                        transition={spring.layout}
-                        className="absolute inset-0 rounded-row bg-white/7"
-                      />
-                    )}
-                    <Identicon name={project.name} size="lg" className="relative" />
-                    <span className="relative flex min-w-0 flex-1 flex-col">
-                      <span className="flex items-baseline gap-2">
-                        <span className="flex-1 truncate text-body font-medium text-fg">
-                          {project.name}
-                        </span>
-                        <span className="text-meta text-fg-muted tabular-nums">
-                          {formatRelativeAge(project.lastActivityAt ?? project.updatedAt)}
-                        </span>
-                      </span>
-                      <span className="truncate text-label text-fg-muted">{subtitle}</span>
-                    </span>
-                  </ContextMenu.Trigger>
-                  <ContextMenuPopup label={`${project.name} actions`}>
-                    <ContextMenuItem
+      <ul className="mt-0.5 flex flex-col gap-px">
+        {sortProjects(projects, sort).map((project) => {
+          const isSelected =
+            filterProjectId === null
+              ? isHome && project.id === selectedProjectId
+              : project.id === filterProjectId;
+          const isFiltered = filterProjectId === project.id;
+          const subtitle =
+            project.lastMessage ?? (project.isGitRepo ? project.defaultBranch : "Ready");
+          return (
+            <li key={project.id}>
+              <ContextMenu.Root>
+                <ContextMenu.Trigger
+                  render={
+                    <button
+                      type="button"
+                      aria-current={isSelected}
                       onClick={() => {
                         selectProject(project.id);
-                        onNewThread();
+                        if (filterProjectId !== null) onFilterChange(project.id);
+                        void navigate({ to: "/" });
                       }}
-                    >
-                      <Icon icon={PencilEdit02Icon} className="text-fg-muted" />
-                      New thread
-                    </ContextMenuItem>
-                    <ContextMenuItem onClick={() => onFilterChange(isFiltered ? null : project.id)}>
-                      <Icon icon={FilterIcon} className="text-fg-muted" />
-                      {isFiltered ? "Clear thread filter" : "Filter threads"}
-                    </ContextMenuItem>
-                    <ContextMenuItem
-                      onClick={() => {
-                        void navigator.clipboard?.writeText(project.path);
-                      }}
-                    >
-                      <Icon icon={Copy01Icon} className="text-fg-muted" />
-                      Copy path
-                    </ContextMenuItem>
-                    <ContextMenuSeparator />
-                    <ContextMenuItem
-                      danger
-                      onClick={() => {
-                        if (filterProjectId === project.id) onFilterChange(null);
-                        void deleteProject(project.id);
-                      }}
-                    >
-                      <Icon icon={Delete02Icon} />
-                      Remove project
-                    </ContextMenuItem>
-                  </ContextMenuPopup>
-                </ContextMenu.Root>
-              </li>
-            );
-          })}
-          {projects.length === 0 && (
-            <li className="px-2 py-2 text-label text-fg-muted">
-              No projects yet. Press + to add one.
+                      className={`flex w-full items-center gap-2.5 rounded-row p-2 text-left outline-none transition-colors duration-100 ease-out focus-visible:shadow-focus ${
+                        isSelected ? "bg-white/7" : "hover:bg-white/4"
+                      }`}
+                    />
+                  }
+                >
+                  <Identicon name={project.name} size="lg" />
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="flex items-baseline gap-2">
+                      <span className="flex-1 truncate text-body font-medium text-fg">
+                        {project.name}
+                      </span>
+                      <span className="text-meta text-fg-muted tabular-nums">
+                        {formatRelativeAge(project.lastActivityAt ?? project.updatedAt)}
+                      </span>
+                    </span>
+                    <span className="truncate text-label text-fg-muted">{subtitle}</span>
+                  </span>
+                </ContextMenu.Trigger>
+                <ContextMenuPopup label={`${project.name} actions`}>
+                  <ContextMenuItem
+                    onClick={() => {
+                      selectProject(project.id);
+                      onNewThread();
+                    }}
+                  >
+                    <Icon icon={PencilEdit02Icon} className="text-fg-muted" />
+                    New thread
+                  </ContextMenuItem>
+                  <ContextMenuItem onClick={() => onFilterChange(isFiltered ? null : project.id)}>
+                    <Icon icon={FilterIcon} className="text-fg-muted" />
+                    {isFiltered ? "Clear thread filter" : "Filter threads"}
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(project.path);
+                    }}
+                  >
+                    <Icon icon={Copy01Icon} className="text-fg-muted" />
+                    Copy path
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem
+                    danger
+                    onClick={() => {
+                      if (filterProjectId === project.id) onFilterChange(null);
+                      void deleteProject(project.id);
+                    }}
+                  >
+                    <Icon icon={Delete02Icon} />
+                    Remove project
+                  </ContextMenuItem>
+                </ContextMenuPopup>
+              </ContextMenu.Root>
             </li>
-          )}
-        </ul>
-      </LayoutGroup>
+          );
+        })}
+        {projects.length === 0 && (
+          <li className="px-2 py-2 text-label text-fg-muted">
+            No projects yet. Press + to add one.
+          </li>
+        )}
+      </ul>
     </section>
   );
 }

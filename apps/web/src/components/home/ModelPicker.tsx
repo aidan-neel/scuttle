@@ -13,7 +13,7 @@ import type {
   ProviderSnapshot,
   ProviderStatusKind,
 } from "@scuttle/contracts";
-import { AnimatePresence, LayoutGroup, motion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { type WheelEvent, useState } from "react";
 import { BrandLogo } from "@/components/ui/BrandLogo.tsx";
 import { buttonClass } from "@/components/ui/Button.tsx";
@@ -61,51 +61,42 @@ const scrollChipsWithWheel = (event: WheelEvent<HTMLDivElement>) => {
 };
 
 function FilterChips({
-  id,
   items,
   active,
   onSelect,
 }: {
-  readonly id: string;
   readonly items: ReadonlyArray<ChipItem>;
   readonly active: string;
   readonly onSelect: (key: string) => void;
 }) {
   return (
-    <LayoutGroup id={id}>
-      <div
-        onWheel={scrollChipsWithWheel}
-        className="flex items-center gap-0.5 overflow-x-auto px-1.5 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-      >
-        {items.map((item) => {
-          const selected = item.key === active;
-          return (
-            <button
-              key={item.key}
-              type="button"
-              aria-pressed={selected}
-              onClick={() => onSelect(item.key)}
-              className={`relative flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-chip px-2 text-meta whitespace-nowrap outline-none transition-colors duration-100 focus-visible:shadow-focus ${
-                selected ? "text-fg" : "text-fg-muted hover:text-fg-secondary"
-              }`}
-            >
-              {selected && (
-                <motion.span
-                  layoutId={`${id}-active`}
-                  transition={spring.layout}
-                  className="pointer-events-none absolute inset-0 rounded-chip bg-white/[0.09] shadow-[inset_0_0_0_1px_rgb(255_255_255/6%)]"
-                />
-              )}
-              {item.brand && <BrandLogo brand={item.brand} className="relative size-3 shrink-0" />}
-              <span className="relative">{item.label}</span>
-              {item.count !== undefined && (
-                <span className="relative font-mono text-[10px] text-fg-faint">{item.count}</span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-    </LayoutGroup>
+    <div
+      onWheel={scrollChipsWithWheel}
+      className="flex items-center gap-0.5 overflow-x-auto px-1.5 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+    >
+      {items.map((item) => {
+        const selected = item.key === active;
+        return (
+          <button
+            key={item.key}
+            type="button"
+            aria-pressed={selected}
+            onClick={() => onSelect(item.key)}
+            className={`flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-chip px-2 text-meta whitespace-nowrap outline-none transition-colors duration-100 focus-visible:shadow-focus ${
+              selected
+                ? "bg-white/[0.09] text-fg shadow-[inset_0_0_0_1px_rgb(255_255_255/6%)]"
+                : "text-fg-muted hover:bg-(--wash) hover:text-fg-secondary"
+            }`}
+          >
+            {item.brand && <BrandLogo brand={item.brand} className="size-3 shrink-0" />}
+            <span>{item.label}</span>
+            {item.count !== undefined && (
+              <span className="font-mono text-[10px] text-fg-faint">{item.count}</span>
+            )}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -119,7 +110,9 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
   const { favorites, isFavorite, toggle } = useFavoriteModels();
   const { isDisabled } = useDisabledModels();
 
-  const enabledProviders = providers.filter((p) => p.enabled);
+  const enabledProviders = providers.filter(
+    (p) => p.enabled && p.status === "ready" && p.models.length > 0,
+  );
   const allEntries = buildModelEntries(enabledProviders).filter((entry) => !isDisabled(entry.key));
 
   const currentKey = modelFavoriteKey(selection.providerId, selection.model);
@@ -197,23 +190,18 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
         onMouseEnter={() => setInspectedKey(entry.key)}
         onFocus={() => setInspectedKey(entry.key)}
         onClick={() => selectEntry(entry, undefined, entry.model.efforts.length === 0)}
-        className={`relative flex h-7 w-full cursor-pointer items-center gap-2 rounded-chip px-2 text-left text-label outline-none transition-colors duration-100 ${
-          inspected ? "text-fg" : "text-fg-secondary hover:text-fg"
+        className={`flex h-7 w-full cursor-pointer items-center gap-2 rounded-chip px-2 text-left text-label outline-none transition-colors duration-100 ${
+          inspected
+            ? "bg-white/[0.08] text-fg"
+            : "text-fg-secondary hover:bg-(--wash) hover:text-fg"
         }`}
       >
-        {inspected && (
-          <motion.span
-            layoutId="model-picker-highlight"
-            transition={spring.layout}
-            className="pointer-events-none absolute inset-0 rounded-chip bg-white/[0.08]"
-          />
-        )}
-        <BrandLogo brand={entry.provider.kind} className="relative size-3.5 shrink-0" />
-        <span className="relative min-w-0 flex-1 truncate">{entry.displayName}</span>
+        <BrandLogo brand={entry.provider.kind} className="size-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{entry.displayName}</span>
         {showUpstream && entry.upstream && (
-          <span className="relative shrink-0 text-meta text-fg-faint">{entry.upstream.label}</span>
+          <span className="shrink-0 text-meta text-fg-faint">{entry.upstream.label}</span>
         )}
-        {selected && <Icon icon={Tick02Icon} className="relative size-3.5 shrink-0 text-fg" />}
+        {selected && <Icon icon={Tick02Icon} className="size-3.5 shrink-0 text-fg" />}
       </button>
     );
   };
@@ -313,7 +301,6 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
                 {enabledProviders.length > 1 && (
                   <div className="border-b border-edge">
                     <FilterChips
-                      id="model-picker-harness"
                       items={chips.harness}
                       active={focusedProvider ? focusedProvider.id : ALL}
                       onSelect={(key) => {
@@ -335,7 +322,6 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
                       className="overflow-hidden border-b border-edge"
                     >
                       <FilterChips
-                        id="model-picker-upstream"
                         items={chips.upstream}
                         active={activeUpstream}
                         onSelect={(key) => {
@@ -347,50 +333,48 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
                   )}
                 </AnimatePresence>
 
-                <LayoutGroup id="model-picker-rows">
-                  <div className="max-h-80 overflow-y-auto p-1">
-                    {favoriteEntries.length > 0 && (
-                      <div className="mb-1.5">
-                        <div className="px-2 pt-1 pb-1 text-meta font-medium text-fg-muted">
-                          Favorites
+                <div className="max-h-80 overflow-y-auto p-1">
+                  {favoriteEntries.length > 0 && (
+                    <div className="mb-1.5">
+                      <div className="px-2 pt-1 pb-1 text-meta font-medium text-fg-muted">
+                        Favorites
+                      </div>
+                      {favoriteEntries.map((entry) => renderRow(entry, true))}
+                    </div>
+                  )}
+
+                  {sections.map((section, idx) => (
+                    <div
+                      key={section.provider.id}
+                      className={idx > 0 ? "mt-1.5 border-t border-edge pt-1.5" : ""}
+                    >
+                      {(!focusedProvider || section.provider.status !== "ready") && (
+                        <div className="flex items-center justify-between gap-2 px-2 py-1 text-meta font-medium text-fg-muted">
+                          <span className="truncate">{section.provider.name}</span>
+                          {section.provider.status !== "ready" && (
+                            <span className="text-[10px] font-normal text-warning">
+                              {STATUS_LABEL[section.provider.status]}
+                            </span>
+                          )}
                         </div>
-                        {favoriteEntries.map((entry) => renderRow(entry, true))}
-                      </div>
-                    )}
+                      )}
+                      {section.kind === "flat" ? (
+                        section.entries.map((entry) => renderRow(entry, false))
+                      ) : (
+                        <>
+                          {section.loose.map((entry) => renderRow(entry, false))}
+                          {section.groups.map(renderGroup)}
+                        </>
+                      )}
+                    </div>
+                  ))}
 
-                    {sections.map((section, idx) => (
-                      <div
-                        key={section.provider.id}
-                        className={idx > 0 ? "mt-1.5 border-t border-edge pt-1.5" : ""}
-                      >
-                        {(!focusedProvider || section.provider.status !== "ready") && (
-                          <div className="flex items-center justify-between gap-2 px-2 py-1 text-meta font-medium text-fg-muted">
-                            <span className="truncate">{section.provider.name}</span>
-                            {section.provider.status !== "ready" && (
-                              <span className="text-[10px] font-normal text-warning">
-                                {STATUS_LABEL[section.provider.status]}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                        {section.kind === "flat" ? (
-                          section.entries.map((entry) => renderRow(entry, false))
-                        ) : (
-                          <>
-                            {section.loose.map((entry) => renderRow(entry, false))}
-                            {section.groups.map(renderGroup)}
-                          </>
-                        )}
-                      </div>
-                    ))}
-
-                    {sections.length === 0 && favoriteEntries.length === 0 && (
-                      <div className="px-2 py-5 text-center text-label text-fg-muted">
-                        No matching models.
-                      </div>
-                    )}
-                  </div>
-                </LayoutGroup>
+                  {sections.length === 0 && favoriteEntries.length === 0 && (
+                    <div className="px-2 py-5 text-center text-label text-fg-muted">
+                      No matching models.
+                    </div>
+                  )}
+                </div>
               </div>
 
               {detailEntry && (

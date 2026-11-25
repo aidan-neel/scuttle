@@ -46,7 +46,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const toggle = (next: boolean) => {
     setOpen(next);
-    void animate(frameWidth, next ? width : RAIL_WIDTH, spring.smooth);
+    void animate(frameWidth, next ? width : RAIL_WIDTH, spring.snappy);
   };
 
   const resize = (next: number) => {

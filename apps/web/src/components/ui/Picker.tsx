@@ -40,7 +40,7 @@ export const pillTriggerClass = (className?: string, variant: PickerVariant = "p
           "hover:bg-raised hover:text-fg active:bg-hover active:duration-(--dur-tap)",
           "data-popup-open:bg-raised data-popup-open:text-fg data-popup-open:shadow-[inset_0_0_0_1px_var(--color-edge-strong)]",
           "focus-visible:shadow-[var(--shadow-focus),inset_0_0_0_1px_var(--color-edge-strong)]",
-          "[&_svg:not([class*=size-])]:size-[13px]",
+          "[&_svg:not([class*=size-])]:size-3.5",
         ],
     className,
   );

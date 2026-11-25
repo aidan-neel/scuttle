@@ -64,8 +64,8 @@ export function Sidebar({
     <>
       <motion.div
         inert={!open}
-        animate={{ opacity: open ? 1 : 0, x: open ? 0 : -12 }}
-        transition={{ duration: open ? 0.25 : 0.15, ease: easeOut }}
+        animate={{ opacity: open ? 1 : 0, x: open ? 0 : -8 }}
+        transition={{ duration: open ? 0.14 : 0.09, ease: easeOut }}
         style={{ width: contentWidth }}
         className="flex h-full shrink-0 flex-col px-2 py-3"
       >
@@ -175,7 +175,7 @@ export function Sidebar({
         inert={open}
         initial={false}
         animate={{ opacity: open ? 0 : 1 }}
-        transition={{ duration: 0.18, ease: easeOut, delay: open ? 0 : 0.1 }}
+        transition={{ duration: 0.12, ease: easeOut, delay: open ? 0 : 0.04 }}
         className={`absolute inset-y-0 left-0 z-30 flex w-11 flex-col items-center gap-1 py-4 ${open ? "pointer-events-none" : ""}`}
       >
         <Button variant="ghost" size="icon" aria-label="Expand sidebar" onClick={onExpand}>

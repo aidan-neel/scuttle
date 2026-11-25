@@ -97,8 +97,8 @@ function HomePage() {
   return (
     <section className="group/home flex flex-1 flex-col items-center justify-center px-4 pb-24">
       {ditherBackground && (
-        <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden rounded-canvas opacity-85 transition-opacity duration-300 ease-out [clip-path:inset(0_round_var(--radius-canvas))] group-has-[textarea:focus]/home:opacity-100">
-          <DitherHorizon intensity={0.72} className="absolute inset-0 rounded-[inherit]" />
+        <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden rounded-canvas opacity-55 transition-opacity duration-300 ease-out [clip-path:inset(0_round_var(--radius-canvas))] group-has-[textarea:focus]/home:opacity-70">
+          <DitherHorizon intensity={0.48} className="absolute inset-0 rounded-[inherit]" />
         </div>
       )}
       <h1 className="sr-only">New thread</h1>
