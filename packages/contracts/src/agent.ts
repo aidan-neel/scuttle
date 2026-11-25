@@ -14,7 +14,7 @@ import { ThreadDetail, ThreadRuntime, ThreadTurn } from "./thread.ts";
 const NonEmpty = Schema.String.check(Schema.isMinLength(1));
 
 export const AgentModelRole = Schema.Literals([
-  "captain",
+  "agent",
   "workhorse",
   "design",
   "review",
@@ -24,7 +24,7 @@ export const AgentModelRole = Schema.Literals([
 export type AgentModelRole = typeof AgentModelRole.Type;
 
 export const AgentModelStack = Schema.Struct({
-  captain: Schema.optionalKey(ModelSelection),
+  agent: Schema.optionalKey(ModelSelection),
   workhorse: Schema.optionalKey(ModelSelection),
   design: Schema.optionalKey(ModelSelection),
   review: Schema.optionalKey(ModelSelection),
@@ -167,6 +167,7 @@ export const CreateAgentInput = Schema.Struct({
   modelStack: Schema.optionalKey(AgentModelStack),
   instructionsMd: Schema.optionalKey(Schema.String),
   checkInIntervalMinutes: Schema.optionalKey(Schema.Number),
+  startOnboarding: Schema.optionalKey(Schema.Boolean),
 });
 export type CreateAgentInput = typeof CreateAgentInput.Type;
 
@@ -235,7 +236,7 @@ export const DelegateAgentTaskInput = Schema.Struct({
 export type DelegateAgentTaskInput = typeof DelegateAgentTaskInput.Type;
 
 export const AssignAgentIssueInput = Schema.Struct({
-  mode: Schema.optionalKey(Schema.Literals(["pr", "captain"])),
+  mode: Schema.optionalKey(Schema.Literals(["pr", "agent"])),
   role: Schema.optionalKey(AgentModelRole),
   runtime: Schema.optionalKey(ThreadRuntime),
   brief: Schema.optionalKey(Schema.String),
@@ -250,7 +251,7 @@ export const AssignAgentIssueResult = Schema.Union([
     delegation: AgentDelegation,
   }),
   Schema.Struct({
-    mode: Schema.Literals(["captain"]),
+    mode: Schema.Literals(["agent"]),
     issue: AgentIssue,
     turn: ThreadTurn,
   }),
@@ -259,7 +260,7 @@ export type AssignAgentIssueResult = typeof AssignAgentIssueResult.Type;
 
 export const TriggerCheckInInput = Schema.Struct({
   focus: Schema.optionalKey(Schema.String),
-  promptCaptain: Schema.optionalKey(Schema.Boolean),
+  promptAgent: Schema.optionalKey(Schema.Boolean),
 });
 export type TriggerCheckInInput = typeof TriggerCheckInInput.Type;
 

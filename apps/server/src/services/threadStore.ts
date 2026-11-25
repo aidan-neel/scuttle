@@ -15,6 +15,7 @@ import {
   ThreadRuntime,
   ThreadStatus,
   type ThreadTurn,
+  TurnOrigin,
   TurnStatus,
 } from "@scuttle/contracts";
 import {
@@ -53,6 +54,7 @@ export interface TurnRow {
   readonly id: string;
   readonly thread_id: string;
   readonly seq: number;
+  readonly origin: string;
   readonly user_message: string;
   readonly assistant_message: string;
   readonly thinking_text: string;
@@ -99,6 +101,7 @@ const decodeEffort = Schema.decodeUnknownOption(EffortLevel);
 const decodeRuntimeMode = Schema.decodeUnknownOption(RuntimeMode);
 const decodeInteractionMode = Schema.decodeUnknownOption(InteractionMode);
 const decodeThreadStatus = Schema.decodeUnknownOption(ThreadStatus);
+const decodeTurnOrigin = Schema.decodeUnknownOption(TurnOrigin);
 const decodeTurnStatus = Schema.decodeUnknownOption(TurnStatus);
 const decodeModelSelection = Schema.decodeUnknownOption(ModelSelection);
 const decodeActivityKind = Schema.decodeUnknownOption(ActivityKind);
@@ -219,11 +222,13 @@ export const readTurnsForThread = (db: Database, thread: Thread): ReadonlyArray<
   }
 
   return turnRows.map((row): ThreadTurn => {
+    const originOpt = decodeTurnOrigin(row.origin);
     const statusOpt = decodeTurnStatus(row.status);
     const msOpt = decodeModelSelection(safeJsonParse(row.model_selection_json));
     return {
       id: TurnId.make(row.id),
       threadId: ThreadId.make(row.thread_id),
+      ...(originOpt._tag === "Some" && originOpt.value === "system" ? { origin: "system" } : {}),
       userMessage: row.user_message,
       assistantMessage: row.assistant_message,
       thinkingText: row.thinking_text,

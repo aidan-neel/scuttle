@@ -73,6 +73,7 @@ export const applyScuttleMigrations = (db: Database): void => {
       id TEXT PRIMARY KEY NOT NULL,
       thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
       seq INTEGER NOT NULL,
+      origin TEXT NOT NULL DEFAULT 'user',
       user_message TEXT NOT NULL,
       assistant_message TEXT NOT NULL DEFAULT '',
       thinking_text TEXT NOT NULL DEFAULT '',
@@ -84,6 +85,11 @@ export const applyScuttleMigrations = (db: Database): void => {
       model_selection_json TEXT NOT NULL
     );
   `);
+
+  const turnColumns = db.query<{ readonly name: string }, []>("PRAGMA table_info(turns)").all();
+  if (!turnColumns.some((col) => col.name === "origin")) {
+    db.run("ALTER TABLE turns ADD COLUMN origin TEXT NOT NULL DEFAULT 'user';");
+  }
 
   db.run(`
     CREATE INDEX IF NOT EXISTS idx_turns_thread_id ON turns(thread_id, seq);

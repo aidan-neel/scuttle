@@ -17,6 +17,7 @@ import type {
   SetupAgentStartInput,
   ThreadTurn,
   TriggerCheckInInput,
+  TurnOrigin,
   UpdateAgentInput,
   UpdateIssueInput,
   UpdateMemoryInput,
@@ -43,10 +44,10 @@ import { makeAgentDelegationOps } from "./agent/agentDelegationOps.ts";
 import { makeAgentIssueOps } from "./agent/agentIssueOps.ts";
 import { makeAgentMemoryOps } from "./agent/agentMemoryOps.ts";
 import {
-  buildCaptainContextBlock,
+  buildAgentContextBlock,
   buildSetupStartPrompt,
   defaultInstructionsMd,
-  defaultPurpose,
+  formatAgentName,
   pickDefaultModelSelection,
 } from "./agent/agentPrompts.ts";
 import {
@@ -90,12 +91,13 @@ export class AgentService extends Context.Service<
     readonly sendTurn: (
       agentId: AgentId,
       input: SendTurnInput,
+      options?: { readonly origin?: TurnOrigin },
     ) => Effect.Effect<ThreadTurn, AgentServiceError>;
     readonly startSetup: (
       agentId: AgentId,
       input?: SetupAgentStartInput,
     ) => Effect.Effect<ThreadTurn, AgentServiceError>;
-    readonly buildCaptainContext: (
+    readonly buildAgentContext: (
       agentId: AgentId,
       query?: string,
     ) => Effect.Effect<string, AgentServiceError>;
@@ -222,15 +224,15 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
           projectName: input.project.name,
           projectPath: input.project.path,
           name: input.name,
-          purpose: input.purpose?.trim() || defaultPurpose(input.project),
+          purpose: input.purpose?.trim() ?? "",
           primaryThreadId: primaryThread.id,
           runtime,
           modelSelection,
-          modelStack: input.modelStack ?? { captain: modelSelection },
+          modelStack: input.modelStack ?? { agent: modelSelection },
           instructionsMd:
             input.instructionsMd !== undefined
               ? input.instructionsMd
-              : defaultInstructionsMd(input.project.name, input.project.path),
+              : defaultInstructionsMd(input.name, input.project.name, input.project.path),
           ...(input.checkInIntervalMinutes !== undefined
             ? { checkInIntervalMinutes: input.checkInIntervalMinutes }
             : {}),
@@ -251,7 +253,7 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
         if (project._tag !== "Some") continue;
         yield* createAgentForProject({
           project: project.value,
-          name: `${project.value.name} Captain`,
+          name: formatAgentName(project.value.name),
         }).pipe(Effect.ignore);
       }
     });
@@ -259,10 +261,11 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
     const sendTurn = Effect.fn("AgentService.sendTurn")(function* (
       agentId: AgentId,
       input: SendTurnInput,
+      options?: { readonly origin?: TurnOrigin },
     ) {
       const agent = yield* requireAgent(agentId);
       return yield* threads
-        .sendTurn(agent.primaryThreadId, input)
+        .sendTurn(agent.primaryThreadId, input, options)
         .pipe(
           Effect.mapError(
             (err) => new AgentServiceError({ reason: "rejected", detail: err.message }),
@@ -287,7 +290,7 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
       git,
       gitForge,
       requireAgent,
-      sendCaptainTurn: sendTurn,
+      sendAgentTurn: sendTurn,
     });
 
     yield* Effect.acquireRelease(
@@ -348,7 +351,7 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
                 (err) => new AgentServiceError({ reason: "invalid", detail: err.message }),
               ),
             );
-      return yield* createAgentForProject({
+      const created = yield* createAgentForProject({
         project,
         name: input.name.trim(),
         ...(input.purpose !== undefined ? { purpose: input.purpose } : {}),
@@ -360,6 +363,10 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
           ? { checkInIntervalMinutes: input.checkInIntervalMinutes }
           : {}),
       });
+      if (input.startOnboarding === true) {
+        yield* startSetup(created.id).pipe(Effect.ignore);
+      }
+      return created;
     });
 
     const update = Effect.fn("AgentService.update")(function* (
@@ -418,15 +425,15 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
     ) {
       const agent = yield* requireAgent(agentId);
       const prompt = buildSetupStartPrompt(agent, input?.instructions);
-      return yield* sendTurn(agentId, { prompt });
+      return yield* sendTurn(agentId, { prompt }, { origin: "system" });
     });
 
-    const buildCaptainContext = Effect.fn("AgentService.buildCaptainContext")(function* (
+    const buildAgentContext = Effect.fn("AgentService.buildAgentContext")(function* (
       agentId: AgentId,
       query = "",
     ) {
       const agent = yield* requireAgent(agentId);
-      return buildCaptainContextBlock({
+      return buildAgentContextBlock({
         db,
         agent,
         userPrompt: query,
@@ -442,7 +449,7 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
       remove,
       sendTurn,
       startSetup,
-      buildCaptainContext,
+      buildAgentContext,
       listMemories: memoryOps.list,
       searchMemories: memoryOps.search,
       createMemory: memoryOps.create,
