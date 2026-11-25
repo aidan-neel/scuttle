@@ -1,0 +1,10 @@
+[package]
+name = "scuttle-native"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true

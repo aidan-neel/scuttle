@@ -1,0 +1,32 @@
+{
+  "name": "scuttle",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "bun run scripts/dev.ts",
+    "dev:server": "bun --filter @scuttle/server dev",
+    "dev:web": "bun --filter @scuttle/web dev",
+    "dev:desktop": "bun run scripts/dev-desktop.ts",
+    "desktop:prepare": "bun --filter @scuttle/desktop prepare",
+    "build": "bun --filter @scuttle/web build && bun --filter @scuttle/server build",
+    "build:desktop": "bun --filter @scuttle/web build && bun --filter @scuttle/desktop build",
+    "typecheck": "bun run scripts/typecheck.ts",
+    "lint": "oxlint",
+    "fmt": "oxfmt --write .",
+    "fmt:check": "oxfmt --check .",
+    "test": "bun test packages apps/server",
+    "rust:check": "cargo fmt --all --check && cargo clippy --workspace --all-targets --locked -- -D warnings && cargo test --workspace --locked",
+    "check:file-length": "sh scripts/check-file-length.sh",
+    "check": "bun run fmt:check && bun run lint && bun run typecheck && bun run test && bun run rust:check && bun run check:file-length"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.5",
+    "oxfmt": "^0.80.0",
+    "oxlint": "^1.95.0",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "@scuttle/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./server": {
+      "types": "./src/server.ts",
+      "default": "./src/server.ts"
+    }
+  },
+  "scripts": {
+    "dev": "bun --watch src/main.ts",
+    "start": "bun src/main.ts",
+    "build": "bun build src/main.ts --target=bun --outdir=dist"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "^4.1.5",
+    "@scuttle/contracts": "workspace:*",
+    "@scuttle/shared": "workspace:*",
+    "effect": "^4.1.5"
+  }
+}

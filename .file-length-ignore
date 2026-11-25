@@ -1,0 +1,2 @@
+# Vendored dithercn registry code, reinstalled with `bunx shadcn add`. Splitting it would break updates.
+apps/web/src/lib/dither/shader.tsx

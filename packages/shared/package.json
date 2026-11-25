@@ -1,0 +1,20 @@
+{
+  "name": "@scuttle/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./ids": {
+      "types": "./src/ids.ts",
+      "default": "./src/ids.ts"
+    },
+    "./identicon": {
+      "types": "./src/identicon.ts",
+      "default": "./src/identicon.ts"
+    }
+  },
+  "dependencies": {
+    "@noble/hashes": "^2.4.0",
+    "effect": "^4.1.5"
+  }
+}

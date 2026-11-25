@@ -1,0 +1,12 @@
+{
+  "ignorePatterns": [
+    "node_modules/**",
+    "dist/**",
+    "build/**",
+    "target/**",
+    "**/.hutch/**",
+    "apps/web/src/routeTree.gen.ts",
+    "Cargo.lock",
+    "bun.lock"
+  ]
+}
