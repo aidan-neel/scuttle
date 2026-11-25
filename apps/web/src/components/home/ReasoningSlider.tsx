@@ -27,7 +27,6 @@ export function ReasoningSlider({ efforts, value, onChange }: ReasoningSliderPro
 
   const count = efforts.length;
   const activeIndex = Math.max(0, efforts.indexOf(value));
-  const fraction = count <= 1 ? 1 : (activeIndex + 0.5) / count;
   const fillPct = count <= 1 ? 100 : ((activeIndex + 1) / count) * 100;
 
   const indexFromClientX = (clientX: number): number => {
@@ -117,64 +116,57 @@ export function ReasoningSlider({ efforts, value, onChange }: ReasoningSliderPro
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
         onKeyDown={onKeyDown}
-        className="group/slider relative h-7 w-full cursor-pointer touch-none overflow-hidden rounded-[8px] bg-[#0d0d10] shadow-[inset_0_0_0_1px_rgb(255_255_255/10%),inset_0_1px_2px_rgb(0_0_0/55%)] outline-none select-none focus-visible:shadow-focus"
+        className="group/slider relative h-7 w-full cursor-pointer touch-none overflow-visible outline-none select-none"
       >
-        {/* Subtle tick marks for each effort level */}
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0 flex items-center justify-evenly px-2"
-        >
-          {efforts.map((effort, idx) => (
-            <span
-              key={effort}
-              className={`h-2 w-px rounded-full transition-opacity duration-150 ${
-                idx <= activeIndex ? "bg-white/25" : "bg-white/10"
-              }`}
-            />
-          ))}
+        <div className="pointer-events-none absolute inset-x-0 top-1 h-5 overflow-hidden rounded-[7px] bg-[#0d0d10] shadow-[inset_0_0_0_1px_rgb(255_255_255/10%),inset_0_1px_2px_rgb(0_0_0/55%)] group-focus-visible/slider:shadow-focus">
+          <div aria-hidden className="absolute inset-0 flex items-center justify-evenly px-2">
+            {efforts.map((effort, idx) => (
+              <span
+                key={effort}
+                className={`h-1.5 w-px rounded-full transition-opacity duration-150 ${
+                  idx <= activeIndex ? "bg-white/25" : "bg-white/10"
+                }`}
+              />
+            ))}
+          </div>
+
+          <div aria-hidden className="absolute inset-[2px]">
+            <motion.div
+              initial={false}
+              animate={{ width: `${fillPct}%` }}
+              transition={spring.snappy}
+              className="absolute inset-y-0 left-0 overflow-hidden rounded-[5px]"
+            >
+              <div
+                className="absolute inset-0"
+                style={{
+                  background:
+                    "linear-gradient(90deg, rgb(42 84 196 / 26%) 0%, rgb(68 124 255 / 54%) 100%)",
+                }}
+              />
+              <div
+                className="absolute inset-0"
+                style={{
+                  ...DITHER_OVERLAY,
+                  background:
+                    "linear-gradient(90deg, rgb(84 138 255 / 55%) 0%, rgb(156 196 255 / 95%) 100%)",
+                }}
+              />
+            </motion.div>
+          </div>
         </div>
 
-        {/* Dithered luminous blue fill */}
-        <motion.div
-          aria-hidden
-          initial={false}
-          animate={{ width: `${fillPct}%` }}
-          transition={spring.snappy}
-          className="pointer-events-none absolute inset-y-[2px] left-[2px] overflow-hidden rounded-[6px]"
-          style={{ maxWidth: "calc(100% - 4px)" }}
-        >
-          <div
-            className="absolute inset-0"
-            style={{
-              background:
-                "linear-gradient(90deg, rgb(42 84 196 / 26%) 0%, rgb(68 124 255 / 54%) 100%)",
-            }}
-          />
-          <div
-            className="absolute inset-0"
-            style={{
-              ...DITHER_OVERLAY,
-              background:
-                "linear-gradient(90deg, rgb(84 138 255 / 55%) 0%, rgb(156 196 255 / 95%) 100%)",
-            }}
-          />
-        </motion.div>
-
-        {/* Tactile thumb handle */}
-        <motion.div
-          aria-hidden
-          initial={false}
-          animate={{
-            left: `calc(${fillPct}% - 10px)`,
-            scale: dragging ? 1.08 : 1,
-          }}
-          transition={spring.snappy}
-          className="pointer-events-none absolute top-1/2 h-[18px] w-[7px] -translate-y-1/2 rounded-[3px] bg-white shadow-[0_1px_4px_rgb(0_0_0/65%),0_0_8px_rgb(126_166_255/45%)]"
-          style={{
-            // Keep thumb strictly inside the track bounds even at step 0.
-            marginLeft: fraction < 0.15 ? 4 : 0,
-          }}
-        />
+        <div aria-hidden className="pointer-events-none absolute inset-y-0 right-[3px] left-px">
+          <motion.div
+            initial={false}
+            animate={{ left: `${fillPct}%`, scale: dragging ? 1.08 : 1 }}
+            transition={spring.snappy}
+            className="absolute inset-y-0 -ml-2.5 flex h-7 w-2.5 items-center justify-center gap-px rounded-[4px] bg-[linear-gradient(180deg,#ffffff_0%,#e4e7ee_100%)] shadow-[0_0_0_0.5px_rgb(0_0_0/55%),0_1px_2px_rgb(0_0_0/70%),0_3px_8px_rgb(0_0_0/45%),0_0_10px_rgb(126_166_255/35%),inset_0_1px_0_rgb(255_255_255),inset_0_-1px_0_rgb(0_0_0/12%)] transition-shadow duration-150 group-hover/slider:shadow-[0_0_0_0.5px_rgb(0_0_0/55%),0_1px_2px_rgb(0_0_0/70%),0_3px_8px_rgb(0_0_0/45%),0_0_14px_rgb(126_166_255/55%),inset_0_1px_0_rgb(255_255_255),inset_0_-1px_0_rgb(0_0_0/12%)]"
+          >
+            <span className="h-3 w-px rounded-full bg-black/20" />
+            <span className="h-3 w-px rounded-full bg-black/20" />
+          </motion.div>
+        </div>
       </div>
 
       <div className="flex items-center justify-between gap-1">
