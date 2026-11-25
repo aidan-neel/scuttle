@@ -16,7 +16,7 @@ import { Icon } from "@/components/ui/Icon.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
 import { ContextMenuItem, ContextMenuPopup, ContextMenuSeparator } from "@/components/ui/Menu.tsx";
 import { SwapText } from "@/components/ui/SwapText.tsx";
-import { isCaptainThread } from "@/lib/agentState.ts";
+import { isAgentThread } from "@/lib/agentState.ts";
 import { easeOut, spring } from "@/lib/motion";
 import { useWorkspace } from "@/lib/workspace.tsx";
 
@@ -29,7 +29,7 @@ export function SettledSection({ projectId }: { readonly projectId: ProjectId | 
   const done = threads.filter(
     (thread) =>
       thread.settledAt !== undefined &&
-      !isCaptainThread(agents, thread.id) &&
+      !isAgentThread(agents, thread.id) &&
       (projectId === null || thread.projectId === projectId),
   );
 

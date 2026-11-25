@@ -8,15 +8,13 @@ import { cn } from "@/lib/utils";
 import { AgentIssuesTab } from "./AgentIssuesTab.tsx";
 import { AgentMemoryTab } from "./AgentMemoryTab.tsx";
 import { AgentOverviewTab } from "./AgentOverviewTab.tsx";
-import { AgentSetupTab } from "./AgentSetupTab.tsx";
 
-export type InspectorTab = "overview" | "issues" | "memory" | "setup";
+export type InspectorTab = "overview" | "issues" | "memory";
 
 const TABS: ReadonlyArray<{ readonly value: InspectorTab; readonly label: string }> = [
   { value: "overview", label: "Overview" },
   { value: "issues", label: "Issues" },
   { value: "memory", label: "Memory" },
-  { value: "setup", label: "Setup" },
 ];
 
 const TAB_CLASS =
@@ -80,7 +78,7 @@ export function AgentInspector({
               size="icon"
               aria-label="Close inspector"
               onClick={onClose}
-              className="ml-auto lg:hidden"
+              className="ml-auto"
             >
               <Icon icon={Cancel01Icon} />
             </Button>
@@ -99,9 +97,6 @@ export function AgentInspector({
         </Tabs.Panel>
         <Tabs.Panel value="memory" className={PANEL_CLASS}>
           <AgentMemoryTab agent={agent} memories={work.memories} />
-        </Tabs.Panel>
-        <Tabs.Panel value="setup" className={PANEL_CLASS}>
-          <AgentSetupTab agent={agent} />
         </Tabs.Panel>
       </Tabs.Root>
     </aside>

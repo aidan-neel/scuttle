@@ -50,7 +50,7 @@ interface IssueRowProps {
   readonly issue: AgentIssue;
   readonly busy: boolean;
   readonly onStateChange: (state: AgentIssueState) => void;
-  readonly onAssign: (mode: "pr" | "captain") => void;
+  readonly onAssign: (mode: "pr" | "agent") => void;
   readonly onDelete: () => void;
 }
 
@@ -158,7 +158,7 @@ export function IssueRow({ agent, issue, busy, onStateChange, onAssign, onDelete
             <Icon icon={Rocket01Icon} className="text-fg-muted" />
             Start a PR agent
           </Menu.Item>
-          <Menu.Item className={MENU_ITEM_CLASS} onClick={() => onAssign("captain")}>
+          <Menu.Item className={MENU_ITEM_CLASS} onClick={() => onAssign("agent")}>
             <Icon icon={Message01Icon} className="text-fg-muted" />
             Ask {agent.name}
           </Menu.Item>

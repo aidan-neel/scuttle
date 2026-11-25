@@ -13,6 +13,7 @@ import { DotSpinner } from "@/components/ui/DotSpinner.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
 import { PillLabel, Picker, pillTriggerClass } from "@/components/ui/Picker.tsx";
+import { formatAgentName } from "@/lib/format.ts";
 import { easeOut, spring } from "@/lib/motion.ts";
 import { useWorkspace } from "@/lib/workspace.tsx";
 import { AddProjectDialog } from "./AddProjectDialog.tsx";
@@ -22,10 +23,24 @@ interface CreateAgentDialogProps {
   readonly onOpenChange: (open: boolean) => void;
 }
 
-function FieldRow({ label, children }: { readonly label: string; readonly children: ReactNode }) {
+function SettingRow({
+  label,
+  divider = true,
+  children,
+}: {
+  readonly label: string;
+  readonly divider?: boolean;
+  readonly children: ReactNode;
+}) {
   return (
-    <div className="flex min-h-9 items-center gap-3 rounded-chip px-2.5 transition-colors duration-100 hover:bg-white/3">
-      <span className="w-20 shrink-0 text-label font-medium text-fg-secondary">{label}</span>
+    <div
+      className={
+        divider
+          ? "flex min-h-12 items-center gap-3 border-b border-line px-1"
+          : "flex min-h-12 items-center gap-3 px-1"
+      }
+    >
+      <span className="w-24 shrink-0 text-body font-medium text-fg">{label}</span>
       <div className="flex min-w-0 flex-1 justify-end">{children}</div>
     </div>
   );
@@ -37,7 +52,6 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
   const navigate = useNavigate();
   const nameRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
-  const [purpose, setPurpose] = useState("");
   const [projectChoice, setProjectChoice] = useState<ProjectId | null>(null);
   const [runtime, setRuntime] = useState<ThreadRuntime>("local");
   const [modelChoice, setModelChoice] = useState<ModelSelection | null>(null);
@@ -51,12 +65,11 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
     projects[0] ??
     null;
   const modelSelection = modelChoice ?? defaultModelSelection;
-  const fallbackName = project === null ? "Captain" : `${project.name} Captain`;
+  const fallbackName = project === null ? "Agent" : formatAgentName(project.name);
   const finalName = name.trim().length > 0 ? name.trim() : fallbackName;
 
   const reset = () => {
     setName("");
-    setPurpose("");
     setProjectChoice(null);
     setRuntime("local");
     setModelChoice(null);
@@ -73,13 +86,12 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
     setCreating(true);
     setError(null);
     try {
-      const trimmedPurpose = purpose.trim();
       const agent = await createAgent({
         projectId: project.id,
         name: finalName,
         runtime,
         modelSelection,
-        ...(trimmedPurpose.length > 0 ? { purpose: trimmedPurpose } : {}),
+        startOnboarding: true,
       });
       onOpenChange(false);
       void navigate({ to: "/agents/$agentId", params: { agentId: agent.id } });
@@ -114,7 +126,7 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
                   exit={{ opacity: 0, y: 4, scale: 0.985, transition: { duration: 0.12 } }}
                 />
               }
-              className="fixed inset-x-0 top-[16vh] z-50 mx-auto flex w-[min(440px,calc(100vw-2rem))] flex-col overflow-hidden rounded-canvas bg-menu shadow-menu outline-none"
+              className="fixed inset-x-0 top-[15vh] z-50 mx-auto flex w-[min(460px,calc(100vw-2rem))] flex-col overflow-hidden rounded-canvas bg-menu shadow-menu outline-none"
             >
               <form
                 onSubmit={(event) => {
@@ -122,9 +134,9 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
                   void create();
                 }}
               >
-                <header className="flex h-11 items-center gap-2 pr-2 pl-4">
-                  <Dialog.Title className="flex-1 text-body font-medium text-fg">
-                    New agent
+                <header className="flex h-12 items-center gap-2 pr-3 pl-5">
+                  <Dialog.Title className="flex-1 text-title font-semibold text-fg">
+                    New Agent
                   </Dialog.Title>
                   <Dialog.Close
                     aria-label="Close"
@@ -134,21 +146,21 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
                   </Dialog.Close>
                 </header>
 
-                <div className="flex flex-col items-center gap-2 px-4 pt-2 pb-3">
-                  <Identicon name={finalName} size="xl" />
+                <div className="flex flex-col items-center gap-3 px-6 pt-3 pb-5">
+                  <Identicon name={finalName} size="xl" className="size-18 rounded-[14px]" />
                   <input
                     ref={nameRef}
                     value={name}
                     onChange={(event) => setName(event.target.value)}
-                    placeholder={fallbackName}
+                    placeholder="Agent"
                     aria-label="Agent name"
                     spellCheck={false}
-                    className="w-full bg-transparent text-center text-title font-medium text-fg outline-none placeholder:text-fg-faint"
+                    className="w-full bg-transparent text-center text-[22px] leading-tight font-medium tracking-tight text-fg caret-fg outline-none placeholder:text-fg-faint"
                   />
                 </div>
 
-                <div className="flex flex-col gap-px border-t border-line p-1.5">
-                  <FieldRow label="Project">
+                <div className="flex flex-col px-5 pb-3">
+                  <SettingRow label="Project">
                     {project === null ? (
                       <button
                         type="button"
@@ -176,35 +188,25 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
                         className="max-w-60"
                       />
                     )}
-                  </FieldRow>
-                  <FieldRow label="Runtime">
+                  </SettingRow>
+                  <SettingRow label="Runtime">
                     <Picker
                       label="Runtime"
                       value={runtime}
                       options={RUNTIMES}
                       onValueChange={setRuntime}
                     />
-                  </FieldRow>
-                  <FieldRow label="Model">
+                  </SettingRow>
+                  <SettingRow label="Model" divider={false}>
                     <ModelPicker
                       providers={providers}
                       selection={modelSelection}
                       onChange={setModelChoice}
                     />
-                  </FieldRow>
-                  <label className="flex flex-col gap-1 rounded-chip px-2.5 py-2">
-                    <span className="text-label font-medium text-fg-secondary">Purpose</span>
-                    <textarea
-                      rows={2}
-                      value={purpose}
-                      onChange={(event) => setPurpose(event.target.value)}
-                      placeholder="What should this agent own? You can refine it later."
-                      className="resize-none bg-transparent text-label leading-[1.5] text-fg outline-none placeholder:text-fg-faint"
-                    />
-                  </label>
+                  </SettingRow>
                 </div>
 
-                <footer className="flex h-12 items-center gap-2 border-t border-line bg-black/10 px-3">
+                <footer className="flex h-14 items-center gap-2 border-t border-line bg-black/10 px-5">
                   <div className="min-w-0 flex-1">
                     {error !== null && (
                       <p role="alert" className="flex items-center gap-1.5 text-label text-danger">
@@ -215,7 +217,7 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
                   </div>
                   <Button type="submit" variant="primary" disabled={project === null || creating}>
                     {creating && <DotSpinner variant="working" label="Creating" />}
-                    Create agent
+                    Create Agent
                   </Button>
                 </footer>
               </form>

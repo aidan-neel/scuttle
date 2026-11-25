@@ -14,6 +14,11 @@ const previewText = (text: string) => {
   return firstLine.length > 52 ? `${firstLine.slice(0, 51)}…` : firstLine;
 };
 
+const turnLabel = (turn: ThreadTurn) =>
+  turn.origin === "system"
+    ? previewText(turn.assistantMessage) || "Introduction"
+    : previewText(turn.userMessage);
+
 export function ScrollRuler({ turns, scrollRef }: ScrollRulerProps) {
   const [activeId, setActiveId] = useState<string | null>(turns[0]?.id ?? null);
   const [hovered, setHovered] = useState(false);
@@ -67,7 +72,7 @@ export function ScrollRuler({ turns, scrollRef }: ScrollRulerProps) {
             <div key={turn.id} className="flex flex-col gap-1.5">
               <button
                 type="button"
-                aria-label={`Jump to message ${idx + 1}: ${previewText(turn.userMessage)}`}
+                aria-label={`Jump to message ${idx + 1}: ${turnLabel(turn)}`}
                 aria-current={active ? "location" : undefined}
                 onClick={() => jumpTo(turn.id)}
                 className="group/tick flex h-2.5 w-5 cursor-pointer items-center outline-none"
@@ -123,7 +128,7 @@ export function ScrollRuler({ turns, scrollRef }: ScrollRulerProps) {
                     <span className="shrink-0 font-mono text-[10px] text-fg-faint tabular-nums">
                       {idx + 1}
                     </span>
-                    <span className="min-w-0 flex-1 truncate">{previewText(turn.userMessage)}</span>
+                    <span className="min-w-0 flex-1 truncate">{turnLabel(turn)}</span>
                   </button>
                 );
               })}

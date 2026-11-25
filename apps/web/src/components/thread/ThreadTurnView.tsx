@@ -1,5 +1,6 @@
 import type { RespondApprovalInput, ThreadTurn } from "@scuttle/contracts";
 import { motion } from "motion/react";
+import { formatClockTime } from "@/lib/format.ts";
 import { easeOut } from "@/lib/motion.ts";
 import { ApprovalCard } from "./ApprovalCard.tsx";
 import { MarkdownView, useSmoothedStream } from "./MarkdownView.tsx";
@@ -14,6 +15,8 @@ export function ThreadTurnView({ turn, onRespondApproval }: ThreadTurnViewProps)
   const pendingApprovals = turn.approvals.filter((a) => a.status === "pending");
   const streaming = turn.status === "running";
   const assistantMessage = useSmoothedStream(turn.assistantMessage, streaming);
+  const isSystem = turn.origin === "system";
+  const clockTime = isSystem ? formatClockTime(turn.startedAt) : "";
 
   return (
     <motion.article
@@ -23,11 +26,17 @@ export function ThreadTurnView({ turn, onRespondApproval }: ThreadTurnViewProps)
       transition={{ duration: 0.22, ease: easeOut }}
       className="scroll-mt-6 space-y-3"
     >
-      <div className="flex justify-end">
-        <div className="max-w-[78%] rounded-[14px] bg-raised px-4 py-2.5 text-[14px] leading-[1.55] text-fg shadow-raised whitespace-pre-wrap break-words">
-          {turn.userMessage}
+      {isSystem ? (
+        clockTime.length > 0 && (
+          <p className="text-center text-meta text-fg-faint tabular-nums">{clockTime}</p>
+        )
+      ) : (
+        <div className="flex justify-end">
+          <div className="max-w-[78%] rounded-[14px] bg-raised px-4 py-2.5 text-[14px] leading-[1.55] text-fg shadow-raised whitespace-pre-wrap break-words">
+            {turn.userMessage}
+          </div>
         </div>
-      </div>
+      )}
 
       <WorkProgress turn={turn} />
 
