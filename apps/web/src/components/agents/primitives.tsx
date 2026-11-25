@@ -80,11 +80,7 @@ export function ChipRow<Value extends string>({
   onValueChange,
 }: ChipRowProps<Value>) {
   return (
-    <div
-      role="radiogroup"
-      aria-label={label}
-      className="scrollbar-none flex items-center gap-0.5 overflow-x-auto p-0.5"
-    >
+    <div role="radiogroup" aria-label={label} className="flex flex-wrap items-center gap-0.5 p-0.5">
       {options.map((option) => {
         const selected = option.value === value;
         return (

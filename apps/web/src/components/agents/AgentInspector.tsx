@@ -1,5 +1,8 @@
 import { Tabs } from "@base-ui/react/tabs";
+import { Cancel01Icon } from "@hugeicons/core-free-icons";
 import type { Agent } from "@scuttle/contracts";
+import { Button } from "@/components/ui/Button.tsx";
+import { Icon } from "@/components/ui/Icon.tsx";
 import type { AgentWork } from "@/lib/agentState.ts";
 import { cn } from "@/lib/utils";
 import { AgentIssuesTab } from "./AgentIssuesTab.tsx";
@@ -28,6 +31,7 @@ interface AgentInspectorProps {
   readonly onTabChange: (tab: InspectorTab) => void;
   readonly delegateOpen: boolean;
   readonly onDelegateOpenChange: (open: boolean) => void;
+  readonly onClose?: () => void;
   readonly className?: string;
 }
 
@@ -38,6 +42,7 @@ export function AgentInspector({
   onTabChange,
   delegateOpen,
   onDelegateOpenChange,
+  onClose,
   className,
 }: AgentInspectorProps) {
   const openIssues = work.issues.filter(
@@ -69,6 +74,17 @@ export function AgentInspector({
               )}
             </Tabs.Tab>
           ))}
+          {onClose !== undefined && (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Close inspector"
+              onClick={onClose}
+              className="ml-auto lg:hidden"
+            >
+              <Icon icon={Cancel01Icon} />
+            </Button>
+          )}
         </Tabs.List>
         <Tabs.Panel value="overview" className={PANEL_CLASS}>
           <AgentOverviewTab

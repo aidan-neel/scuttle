@@ -162,15 +162,24 @@ function AgentView({ agentId }: { readonly agentId: string }) {
         <AgentConversation agent={agent} detail={detail} onQuickAction={handleQuickAction} />
       </div>
       {inspectorOpen && (
-        <AgentInspector
-          agent={agent}
-          work={work}
-          tab={tab}
-          onTabChange={setTab}
-          delegateOpen={delegateOpen}
-          onDelegateOpenChange={setDelegateOpen}
-          className="absolute inset-y-0 right-0 z-20 shadow-menu lg:static lg:shadow-none"
-        />
+        <>
+          <button
+            type="button"
+            aria-label="Close inspector"
+            onClick={() => setInspectorOpen(false)}
+            className="absolute inset-0 z-10 bg-black/40 lg:hidden"
+          />
+          <AgentInspector
+            agent={agent}
+            work={work}
+            tab={tab}
+            onTabChange={setTab}
+            delegateOpen={delegateOpen}
+            onDelegateOpenChange={setDelegateOpen}
+            onClose={() => setInspectorOpen(false)}
+            className="absolute inset-y-0 right-0 z-20 shadow-menu lg:static lg:shadow-none"
+          />
+        </>
       )}
     </section>
   );
