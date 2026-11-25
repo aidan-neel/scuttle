@@ -5,6 +5,7 @@ import {
   SidebarLeftIcon,
 } from "@hugeicons/core-free-icons";
 import type { ConnectionState } from "@scuttle/client-runtime";
+import type { ProjectId } from "@scuttle/shared/ids";
 import { Link } from "@tanstack/react-router";
 import { motion, type MotionValue } from "motion/react";
 import { useState } from "react";
@@ -16,7 +17,6 @@ import { AddProjectDialog } from "./AddProjectDialog.tsx";
 import { ConnectionStatus } from "./ConnectionStatus.tsx";
 import { ProjectList } from "./ProjectList.tsx";
 import { SearchDialog } from "./SearchDialog.tsx";
-import { SettledButton } from "./SettledButton.tsx";
 import { type SettledNotice, SettleToast } from "./SettleToast.tsx";
 import { ThreadList } from "./ThreadList.tsx";
 
@@ -25,11 +25,23 @@ interface SidebarProps {
   readonly open: boolean;
   readonly contentWidth: MotionValue<number>;
   readonly onCollapse: () => void;
+  readonly onExpand: () => void;
   readonly onNewThread: () => void;
 }
 
-export function Sidebar({ connection, open, contentWidth, onCollapse, onNewThread }: SidebarProps) {
-  const { settleThread } = useWorkspace();
+export function Sidebar({
+  connection,
+  open,
+  contentWidth,
+  onCollapse,
+  onExpand,
+  onNewThread,
+}: SidebarProps) {
+  const { projects, settleThread } = useWorkspace();
+  const [projectFilter, setProjectFilter] = useState<ProjectId | null>(null);
+  const filterProjectId = projects.some((project) => project.id === projectFilter)
+    ? projectFilter
+    : null;
   const [notice, setNotice] = useState<SettledNotice | null>(null);
   const [addProjectOpen, setAddProjectOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -70,11 +82,20 @@ export function Sidebar({ connection, open, contentWidth, onCollapse, onNewThrea
           aria-label="Workspace"
           className="scrollbar-none mt-5 flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto mask-[linear-gradient(to_bottom,transparent,black_8px,black_calc(100%-24px),transparent)]"
         >
-          <ProjectList onAddProject={() => setAddProjectOpen(true)} />
-          <ThreadList onNewThread={onNewThread} onSettled={setNotice} />
+          <ProjectList
+            filterProjectId={filterProjectId}
+            onFilterChange={setProjectFilter}
+            onAddProject={() => setAddProjectOpen(true)}
+          />
+          <ThreadList
+            filterProjectId={filterProjectId}
+            onFilterChange={setProjectFilter}
+            onNewThread={onNewThread}
+            onSettled={setNotice}
+          />
         </nav>
 
-        <div className="relative mt-2 flex flex-col gap-2">
+        <div className="relative mt-2">
           <SettleToast
             notice={notice}
             onUndo={(id) => {
@@ -83,7 +104,6 @@ export function Sidebar({ connection, open, contentWidth, onCollapse, onNewThrea
             }}
             onDismiss={() => setNotice(null)}
           />
-          <SettledButton />
         </div>
 
         <div className="mt-2 flex h-9 items-center gap-2.5 pr-1 pl-2">
@@ -102,6 +122,39 @@ export function Sidebar({ connection, open, contentWidth, onCollapse, onNewThrea
             />
           </Link>
         </div>
+      </motion.div>
+
+      <motion.div
+        inert={open}
+        initial={false}
+        animate={{ opacity: open ? 0 : 1 }}
+        transition={{ duration: 0.18, ease: easeOut, delay: open ? 0 : 0.1 }}
+        className={`absolute inset-y-0 left-0 z-30 flex w-11 flex-col items-center gap-1 py-4 ${open ? "pointer-events-none" : ""}`}
+      >
+        <Button variant="ghost" size="icon" aria-label="Expand sidebar" onClick={onExpand}>
+          <Icon icon={SidebarLeftIcon} />
+        </Button>
+        <Button variant="ghost" size="icon" aria-label="New thread" onClick={onNewThread}>
+          <Icon icon={PencilEdit02Icon} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Search (Ctrl+K)"
+          onClick={() => setSearchOpen(true)}
+        >
+          <Icon icon={Search01Icon} />
+        </Button>
+        <Link
+          to="/settings"
+          aria-label="Settings"
+          className={buttonClass("ghost", "icon", "group/settings mt-auto")}
+        >
+          <Icon
+            icon={Settings01Icon}
+            className="transition-transform duration-500 ease-out-quint group-hover/settings:rotate-45"
+          />
+        </Link>
       </motion.div>
 
       <AddProjectDialog open={addProjectOpen} onOpenChange={setAddProjectOpen} />

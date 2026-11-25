@@ -1,9 +1,6 @@
-import { PencilEdit02Icon, SidebarLeftIcon } from "@hugeicons/core-free-icons";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { animate, AnimatePresence, motion, MotionConfig, useMotionValue } from "motion/react";
+import { animate, motion, MotionConfig, useMotionValue } from "motion/react";
 import { type ReactNode, useState } from "react";
-import { Button } from "@/components/ui/Button.tsx";
-import { Icon } from "@/components/ui/Icon.tsx";
 import { spring } from "@/lib/motion";
 import {
   clampSidebarWidth,
@@ -18,6 +15,8 @@ import { Sidebar } from "./Sidebar.tsx";
 
 export const COMPOSER_ID = "composer-prompt";
 
+const RAIL_WIDTH = 44;
+
 export function AppShell({ children }: { children: ReactNode }) {
   const connection = useServerConnection();
   const navigate = useNavigate();
@@ -28,7 +27,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const toggle = (next: boolean) => {
     setOpen(next);
-    void animate(frameWidth, next ? width : SIDEBAR.collapsed, spring.smooth);
+    void animate(frameWidth, next ? width : RAIL_WIDTH, spring.smooth);
   };
 
   const resize = (next: number) => {
@@ -60,6 +59,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               open={open}
               contentWidth={contentWidth}
               onCollapse={() => toggle(false)}
+              onExpand={() => toggle(true)}
               onNewThread={newThread}
             />
             {open && (
@@ -79,28 +79,6 @@ export function AppShell({ children }: { children: ReactNode }) {
               <span className="text-[14px] font-semibold tracking-tight">Scuttle</span>
             </Link>
             <div className="relative isolate flex min-h-0 flex-1 flex-col overflow-hidden rounded-canvas bg-canvas shadow-canvas">
-              <AnimatePresence>
-                {!open && (
-                  <motion.div
-                    initial={{ opacity: 0, x: -6 }}
-                    animate={{ opacity: 1, x: 0, transition: { ...spring.smooth, delay: 0.08 } }}
-                    exit={{ opacity: 0, x: -6, transition: { duration: 0.12 } }}
-                    className="absolute top-2.5 left-2.5 z-10 hidden items-center gap-0.5 md:flex"
-                  >
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label="Expand sidebar"
-                      onClick={() => toggle(true)}
-                    >
-                      <Icon icon={SidebarLeftIcon} />
-                    </Button>
-                    <Button variant="ghost" size="icon" aria-label="New thread" onClick={newThread}>
-                      <Icon icon={PencilEdit02Icon} />
-                    </Button>
-                  </motion.div>
-                )}
-              </AnimatePresence>
               {children}
             </div>
           </main>
