@@ -17,15 +17,15 @@ import { ProviderId } from "@scuttle/shared/ids";
 import * as Effect from "effect/Effect";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
-import { handleApiRequest } from "../httpRoutes.ts";
-import { claudeAdapter } from "../providers/claudeAdapter.ts";
-import type { HarnessTurnInput, HarnessTurnResult } from "../providers/types.ts";
-import { makeAppLayer, startScuttleServer } from "../server.ts";
-import * as AgentService from "./AgentService.ts";
-import * as EventBus from "./EventBus.ts";
-import type { GitForgeOptions } from "./GitForgeService.ts";
-import * as ProjectService from "./ProjectService.ts";
-import * as ThreadService from "./ThreadService.ts";
+import { handleApiRequest } from "../../src/httpRoutes.ts";
+import { claudeAdapter } from "../../src/providers/claudeAdapter.ts";
+import type { HarnessTurnInput, HarnessTurnResult } from "../../src/providers/types.ts";
+import { makeAppLayer, startScuttleServer } from "../../src/server.ts";
+import * as AgentService from "../../src/services/AgentService.ts";
+import * as EventBus from "../../src/services/EventBus.ts";
+import type { GitForgeOptions } from "../../src/services/GitForgeService.ts";
+import * as ProjectService from "../../src/services/ProjectService.ts";
+import * as ThreadService from "../../src/services/ThreadService.ts";
 
 const gitSync = (cwd: string, ...args: string[]) => {
   const res = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });

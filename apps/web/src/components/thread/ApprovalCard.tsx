@@ -40,7 +40,7 @@ export function ApprovalCard({ approval, onRespond }: ApprovalCardProps) {
             <p className="text-label text-fg-secondary">{approval.description}</p>
           )}
           {approval.command && (
-            <pre className="overflow-x-auto rounded-control bg-chrome px-3 py-2 font-mono text-[12px] text-fg-secondary">
+            <pre className="overflow-x-auto rounded-control bg-chrome px-3 py-2 font-mono text-[13px] text-fg-secondary">
               {approval.command}
             </pre>
           )}

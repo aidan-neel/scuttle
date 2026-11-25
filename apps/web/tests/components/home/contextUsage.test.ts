@@ -1,6 +1,10 @@
 /// <reference types="bun" />
 import { describe, expect, test } from "bun:test";
-import { contextWindowFor, estimateContextUsage, formatTokens } from "./contextUsage.ts";
+import {
+  contextWindowFor,
+  estimateContextUsage,
+  formatTokens,
+} from "../../../src/components/home/contextUsage.ts";
 
 const turn = (userMessage: string, assistantMessage: string, detail: string) => ({
   userMessage,

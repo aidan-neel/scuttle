@@ -87,30 +87,46 @@ interface BranchPickerProps {
   readonly branches: ReadonlyArray<GitBranchInfo>;
   readonly value: string;
   readonly onValueChange: (branch: string) => void;
+  readonly side?: "top" | "bottom";
+  readonly align?: "start" | "end";
+  readonly disabled?: boolean;
+  readonly className?: string;
 }
 
-function BranchPicker({ branches, value, onValueChange }: BranchPickerProps) {
-  const names = branches.map((b) => b.name);
+export function BranchPicker({
+  branches,
+  value,
+  onValueChange,
+  side = "bottom",
+  align = "end",
+  disabled = false,
+  className,
+}: BranchPickerProps) {
+  const names = branches.some((b) => b.name === value)
+    ? branches.map((b) => b.name)
+    : [value, ...branches.map((b) => b.name)];
   const currentName = branches.find((b) => b.isCurrent)?.name;
 
   return (
     <Combobox.Root
       items={names}
       value={value}
+      disabled={disabled}
       onValueChange={(next: string | null) => {
-        if (next !== null) onValueChange(next);
+        if (next !== null && next !== value) onValueChange(next);
       }}
     >
       <Combobox.Trigger
+        disabled={disabled}
         aria-label={`Branch: ${value}`}
-        className={pillTriggerClass("max-w-[46%] shrink", "ghost")}
+        className={pillTriggerClass(className ?? "max-w-[46%] shrink", "ghost")}
       >
         <Icon icon={GitBranchIcon} className="size-3 text-fg-muted" />
-        <PillLabel mono>{value}</PillLabel>
+        <PillLabel>{value}</PillLabel>
         <PillChevron />
       </Combobox.Trigger>
       <Combobox.Portal>
-        <Combobox.Positioner sideOffset={4} align="end" className="z-50 outline-none">
+        <Combobox.Positioner side={side} sideOffset={4} align={align} className="z-50 outline-none">
           <Combobox.Popup
             aria-label="Branch"
             className="flex max-h-[min(20rem,var(--available-height))] w-max min-w-52 max-w-[min(24rem,var(--available-width))] origin-(--transform-origin) flex-col rounded-card bg-menu shadow-menu outline-none transition-[opacity,scale,translate] duration-180 ease-out-quint data-ending-style:scale-98 data-ending-style:opacity-0 data-ending-style:duration-110 data-starting-style:-translate-y-1 data-starting-style:scale-97 data-starting-style:opacity-0"
@@ -121,7 +137,7 @@ function BranchPicker({ branches, value, onValueChange }: BranchPickerProps) {
                 placeholder={
                   names.length > 1 ? `Search ${names.length} branches` : "Search branches"
                 }
-                className="h-full min-w-0 flex-1 bg-transparent font-mono text-label text-fg outline-none placeholder:font-sans placeholder:text-fg-faint"
+                className="h-full min-w-0 flex-1 bg-transparent text-label text-fg outline-none placeholder:text-fg-faint"
               />
             </div>
             <Combobox.Empty>
@@ -134,10 +150,7 @@ function BranchPicker({ branches, value, onValueChange }: BranchPickerProps) {
                   value={name}
                   className="flex h-7 cursor-default items-center gap-2 rounded-chip px-2 text-fg-secondary outline-none select-none data-highlighted:bg-(--wash) data-highlighted:text-fg data-selected:text-fg"
                 >
-                  <span
-                    title={name}
-                    className="min-w-0 flex-1 truncate font-mono text-label leading-4"
-                  >
+                  <span title={name} className="min-w-0 flex-1 truncate text-label leading-[18px]">
                     {name}
                   </span>
                   {name === currentName && (

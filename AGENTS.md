@@ -36,6 +36,7 @@ Scuttle is a fast, easily installable local-first app running across **web** and
    - Keep binaries thin and domain logic in library modules. No `unwrap()` / `expect()` on external input; no `unsafe` without a documented invariant.
 9. **Code hygiene.**
    - Keep source files under **500 lines** (`bun run check:file-length` enforces this). Split by responsibility before a file grows past the limit.
+   - Keep `*.test.ts(x)` files under each package or app's `tests/` directory, never alongside `.ts` files in `src/` (`bun run check:test-layout` enforces this).
    - Default to **no comments**. Add a short comment only to explain a non-obvious constraint, external quirk, or invariant the code cannot express.
    - Libraries over hand-rolled crypto, parsing, validation, or accessible widgets.
 10. **Clean-room identity.** Scuttle takes architectural inspiration from open-source tools (such as MIT-licensed T3 Code), never their trademarks, branding, or copy-pasted boilerplate. Every module we port or rewrite must fit Scuttle's own boundaries and naming.

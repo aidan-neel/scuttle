@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 export function SettingsHeader({ title }: { readonly title: string }) {
   return (
     <header className="pb-1">
-      <h1 className="text-[20px] leading-7 font-semibold tracking-tight text-fg">{title}</h1>
+      <h1 className="text-[21px] leading-7 font-semibold tracking-tight text-fg">{title}</h1>
     </header>
   );
 }

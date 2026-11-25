@@ -111,7 +111,7 @@ function ProfileForm({ agent, onClose }: { readonly agent: Agent; readonly onClo
           placeholder="Agent"
           aria-label="Agent name"
           spellCheck={false}
-          className="w-full bg-transparent text-center text-[22px] leading-tight font-medium tracking-tight text-fg caret-fg outline-none placeholder:text-fg-faint"
+          className="w-full bg-transparent text-center text-[23px] leading-tight font-medium tracking-tight text-fg caret-fg outline-none placeholder:text-fg-faint"
         />
       </div>
 

@@ -32,7 +32,7 @@ export function ThreadTurnView({ turn, onRespondApproval }: ThreadTurnViewProps)
         )
       ) : (
         <div className="flex justify-end">
-          <div className="max-w-[78%] rounded-[14px] bg-raised px-4 py-2.5 text-[14px] leading-[1.55] text-fg shadow-raised whitespace-pre-wrap break-words">
+          <div className="max-w-[78%] rounded-[14px] bg-raised px-4 py-2.5 text-[15px] leading-[1.55] text-fg shadow-raised whitespace-pre-wrap break-words">
             {turn.userMessage}
           </div>
         </div>

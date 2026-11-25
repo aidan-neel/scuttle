@@ -1,11 +1,12 @@
 import { StopIcon } from "@hugeicons/core-free-icons";
-import type { ModelSelection } from "@scuttle/contracts";
+import type { ModelSelection, ThreadDetail } from "@scuttle/contracts";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { ThreadGitPopover } from "@/components/git/ThreadGitPopover.tsx";
 import { Composer, type ComposerSubmitPayload } from "@/components/home/Composer.tsx";
 import { COMPACT_PROMPT } from "@/components/home/ComposerSlashMenu.tsx";
 import { estimateContextUsage } from "@/components/home/contextUsage.ts";
+import { useThreadLocationControls } from "@/components/home/useThreadLocationControls.ts";
 import { ScrollRuler } from "@/components/thread/ScrollRuler.tsx";
 import { ScrollToEndButton } from "@/components/thread/ScrollToEndButton.tsx";
 import { ThreadTurnView } from "@/components/thread/ThreadTurnView.tsx";
@@ -23,20 +24,10 @@ export const Route = createFileRoute("/threads/$threadId")({
 function ThreadPage() {
   const { threadId } = Route.useParams();
   const navigate = useNavigate();
-  const {
-    providers,
-    threadDetails,
-    loadThreadDetail,
-    sendTurn,
-    interruptTurn,
-    updateThread,
-    respondApproval,
-  } = useWorkspace();
+  const { threadDetails, loadThreadDetail } = useWorkspace();
 
   const detail = threadDetails[threadId];
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -49,9 +40,6 @@ function ThreadPage() {
       active = false;
     };
   }, [threadId]);
-
-  const turns = detail?.turns ?? [];
-  const { isAtBottom, scrollToBottom } = useStickToBottom(scrollRef, turns);
 
   if (loadError) {
     return (
@@ -73,8 +61,24 @@ function ThreadPage() {
     );
   }
 
-  const { thread } = detail;
+  return <ThreadView detail={detail} />;
+}
+
+function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
+  const { providers, sendTurn, interruptTurn, updateThread, respondApproval } = useWorkspace();
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  const { thread, turns } = detail;
+  const { isAtBottom, scrollToBottom } = useStickToBottom(scrollRef, turns);
   const isRunning = thread.status.kind === "running" || thread.status.kind === "needs-input";
+
+  const status = useThreadLocationControls({
+    thread,
+    disabled: isRunning,
+    onRuntimeUpdate: (runtime) => updateThread(thread.id, { runtime }),
+    onError: setSubmitError,
+  });
 
   const handleModelChange = (modelSelection: ModelSelection) => {
     void updateThread(thread.id, { modelSelection });
@@ -105,7 +109,7 @@ function ThreadPage() {
         <ThreadGitPopover
           target={{ projectId: thread.projectId, threadId: thread.id }}
           fallbackBranch={thread.branch}
-          refreshKey={`${thread.status.kind}:${turns.length}`}
+          refreshKey={`${thread.status.kind}:${turns.length}:${thread.branch}:${thread.runtime}`}
         />
         {isRunning && (
           <Button variant="destructive" size="sm" onClick={() => void interruptTurn(thread.id)}>
@@ -163,7 +167,7 @@ function ThreadPage() {
               })
             }
             filesRoot={thread.cwd}
-            status={{ runtime: thread.runtime, branch: thread.branch, state: thread.status.kind }}
+            status={status}
             contextUsage={estimateContextUsage({ turns, model: thread.modelSelection.model })}
           />
         </div>

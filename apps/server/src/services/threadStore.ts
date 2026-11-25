@@ -344,3 +344,44 @@ export const insertThreadRow = (
   );
   return readThreadById(db, input.id);
 };
+
+export const updateThreadRow = (
+  db: Database,
+  input: {
+    readonly id: ThreadId;
+    readonly title: string;
+    readonly runtime: Thread["runtime"];
+    readonly branch: string;
+    readonly worktreePath: string | null;
+    readonly cwd: string;
+    readonly modelSelection: Thread["modelSelection"];
+    readonly runtimeMode: Thread["runtimeMode"];
+    readonly interactionMode: Thread["interactionMode"];
+    readonly providerSessionId: string | null;
+    readonly now: string;
+  },
+): Thread | null => {
+  db.prepare(
+    `UPDATE threads
+     SET title = ?, runtime = ?, branch = ?, worktree_path = ?, cwd = ?,
+         provider_id = ?, provider_kind = ?, model = ?, effort = ?,
+         runtime_mode = ?, interaction_mode = ?, provider_session_id = ?, updated_at = ?
+     WHERE id = ?`,
+  ).run(
+    input.title,
+    input.runtime,
+    input.branch,
+    input.worktreePath,
+    input.cwd,
+    input.modelSelection.providerId,
+    input.modelSelection.providerKind,
+    input.modelSelection.model,
+    input.modelSelection.effort ?? null,
+    input.runtimeMode,
+    input.interactionMode,
+    input.providerSessionId,
+    input.now,
+    input.id,
+  );
+  return readThreadById(db, input.id);
+};

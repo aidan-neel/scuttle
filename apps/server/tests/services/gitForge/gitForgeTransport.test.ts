@@ -4,16 +4,16 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import * as ManagedRuntime from "effect/ManagedRuntime";
-import { handleApiRequest } from "../../httpRoutes.ts";
-import * as Sqlite from "../../persistence/Sqlite.ts";
-import { makeAppLayer } from "../../server.ts";
-import { runCommand } from "./processRunner.ts";
+import { handleApiRequest } from "../../../src/httpRoutes.ts";
+import * as Sqlite from "../../../src/persistence/Sqlite.ts";
+import { makeAppLayer } from "../../../src/server.ts";
+import { runCommand } from "../../../src/services/gitForge/processRunner.ts";
 import {
   cliApiArgs,
   type ForgeTransport,
   listOpenPullRequests,
   openPullRequest,
-} from "./pullRequests.ts";
+} from "../../../src/services/gitForge/pullRequests.ts";
 
 const mergeRequest = (overrides: Record<string, unknown>) => ({
   iid: 12,

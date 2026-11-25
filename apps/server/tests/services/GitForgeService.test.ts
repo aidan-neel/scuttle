@@ -4,9 +4,9 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import * as ManagedRuntime from "effect/ManagedRuntime";
-import { handleApiRequest } from "../httpRoutes.ts";
-import { makeAppLayer } from "../server.ts";
-import { parseCliAuthStatus, parseCliVersion } from "./gitForge/forgeCli.ts";
+import { handleApiRequest } from "../../src/httpRoutes.ts";
+import { makeAppLayer } from "../../src/server.ts";
+import { parseCliAuthStatus, parseCliVersion } from "../../src/services/gitForge/forgeCli.ts";
 import {
   applyLineDeltas,
   describeRemote,
@@ -15,10 +15,10 @@ import {
   parseNumstatZ,
   parsePorcelainV2,
   parseRemoteUrl,
-} from "./gitForge/gitParse.ts";
-import type { CommandRunner } from "./gitForge/processRunner.ts";
-import { redactSecrets, redactUrlCredentials } from "./gitForge/redact.ts";
-import { toForgeStatus } from "./GitForgeService.ts";
+} from "../../src/services/gitForge/gitParse.ts";
+import type { CommandRunner } from "../../src/services/gitForge/processRunner.ts";
+import { redactSecrets, redactUrlCredentials } from "../../src/services/gitForge/redact.ts";
+import { toForgeStatus } from "../../src/services/GitForgeService.ts";
 
 const NO_HOSTS = { github: [], gitlab: [] };
 const GITHUB_TOKEN = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";

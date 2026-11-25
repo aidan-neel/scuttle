@@ -404,6 +404,15 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
         createdAt: existing.createdAt,
         updatedAt: new Date().toISOString(),
       };
+      if (input.runtime !== undefined && input.runtime !== existing.runtime) {
+        yield* threads
+          .update(existing.primaryThreadId, { runtime: input.runtime })
+          .pipe(
+            Effect.mapError(
+              (err) => new AgentServiceError({ reason: "rejected", detail: err.message }),
+            ),
+          );
+      }
       updateAgentRow(db, updated);
       if (input.name !== undefined || input.modelSelection !== undefined) {
         yield* threads
