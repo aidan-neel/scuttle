@@ -66,6 +66,7 @@ export interface HarnessTurnResult {
   readonly finalText?: string;
   readonly providerSessionId?: string;
   readonly interrupted?: boolean;
+  readonly costUsd?: number;
 }
 
 export interface HarnessAdapter {

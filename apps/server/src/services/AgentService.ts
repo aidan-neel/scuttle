@@ -236,6 +236,7 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
           ...(input.checkInIntervalMinutes !== undefined
             ? { checkInIntervalMinutes: input.checkInIntervalMinutes }
             : {}),
+          pinned: false,
           needsAttention: false,
           createdAt: now,
           updatedAt: now,
@@ -398,6 +399,7 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
         ...(nextInterval !== undefined ? { checkInIntervalMinutes: nextInterval } : {}),
         ...(existing.lastCheckInAt !== undefined ? { lastCheckInAt: existing.lastCheckInAt } : {}),
         ...(existing.lastSummary !== undefined ? { lastSummary: existing.lastSummary } : {}),
+        pinned: input.pinned ?? existing.pinned,
         needsAttention: input.needsAttention ?? existing.needsAttention,
         createdAt: existing.createdAt,
         updatedAt: new Date().toISOString(),

@@ -68,7 +68,7 @@ export const launchTurnExecution = (
   const persistTurn = (next: ThreadTurn) => {
     db.prepare(
       `UPDATE turns
-       SET assistant_message = ?, thinking_text = ?, status = ?, completed_at = ?, duration_ms = ?, error = ?
+       SET assistant_message = ?, thinking_text = ?, status = ?, completed_at = ?, duration_ms = ?, cost_usd = ?, error = ?
        WHERE id = ?`,
     ).run(
       next.assistantMessage,
@@ -76,6 +76,7 @@ export const launchTurnExecution = (
       next.status,
       next.completedAt ?? null,
       next.durationMs ?? null,
+      next.costUsd ?? 0,
       next.error ?? null,
       next.id,
     );
@@ -402,6 +403,7 @@ export const launchTurnExecution = (
         status: result.interrupted ? "interrupted" : "completed",
         completedAt,
         durationMs,
+        ...(result.costUsd !== undefined && result.costUsd > 0 ? { costUsd: result.costUsd } : {}),
         activities,
         approvals,
       });

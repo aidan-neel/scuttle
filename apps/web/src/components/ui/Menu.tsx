@@ -17,15 +17,17 @@ export const MENU_ITEM_DANGER_CLASS =
 export function MenuPopup({
   children,
   label,
+  align = "start",
   className,
 }: {
   children: ReactNode;
   label: string;
+  align?: "start" | "end";
   className?: string;
 }) {
   return (
     <Menu.Portal>
-      <Menu.Positioner sideOffset={4} align="start" className="z-50 outline-none">
+      <Menu.Positioner sideOffset={4} align={align} className="z-50 outline-none">
         <Menu.Popup aria-label={label} className={cn(POPUP_CLASS, className)}>
           {children}
         </Menu.Popup>

@@ -1,19 +1,12 @@
 import { ContextMenu } from "@base-ui/react/context-menu";
-import {
-  Copy01Icon,
-  Delete02Icon,
-  FilterIcon,
-  Message01Icon,
-  RefreshIcon,
-} from "@hugeicons/core-free-icons";
 import type { Agent } from "@scuttle/contracts";
 import type { ProjectId } from "@scuttle/shared/ids";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useState } from "react";
+import { AgentContextMenuContent } from "@/components/agents/AgentActionsMenu.tsx";
+import { AgentProfileDialog } from "@/components/agents/AgentProfileDialog.tsx";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog.tsx";
-import { Icon } from "@/components/ui/Icon.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
-import { ContextMenuItem, ContextMenuPopup, ContextMenuSeparator } from "@/components/ui/Menu.tsx";
 import { formatRelativeAge } from "@/lib/format.ts";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace.tsx";
@@ -44,10 +37,11 @@ interface AgentListProps {
 }
 
 export function AgentList({ filterProjectId, onFilterChange, onCreateAgent }: AgentListProps) {
-  const { agents, deleteAgent, runCheckIn } = useWorkspace();
+  const { agents, deleteAgent } = useWorkspace();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const [sort, setSort] = useState<AgentSort>("recent");
+  const [profileAgent, setProfileAgent] = useState<Agent | null>(null);
   const [removing, setRemoving] = useState<Agent | null>(null);
 
   const clearFilter: SectionMenuEntry = {
@@ -71,6 +65,15 @@ export function AgentList({ filterProjectId, onFilterChange, onCreateAgent }: Ag
   const openAgent = (agent: Agent) =>
     void navigate({ to: "/agents/$agentId", params: { agentId: agent.id } });
 
+  const sorted = sortAgents(agents, sort);
+  const pinnedAgents = sorted.filter((agent) => agent.pinned);
+  const unpinnedAgents = sorted.filter((agent) => !agent.pinned);
+
+  const liveProfileAgent =
+    profileAgent === null
+      ? null
+      : (agents.find((candidate) => candidate.id === profileAgent.id) ?? null);
+
   return (
     <section aria-labelledby="agents-heading">
       <SectionHeader
@@ -80,8 +83,51 @@ export function AgentList({ filterProjectId, onFilterChange, onCreateAgent }: Ag
         onAdd={onCreateAgent}
         menu={menu}
       />
+
+      {pinnedAgents.length > 0 && (
+        <ul aria-label="Pinned agents" className="mt-1.5 mb-2 flex flex-wrap justify-center gap-2">
+          {pinnedAgents.map((agent) => {
+            const isFiltered = filterProjectId === agent.projectId;
+            const isSelected = pathname === `/agents/${agent.id}` || isFiltered;
+            return (
+              <li key={agent.id}>
+                <ContextMenu.Root>
+                  <ContextMenu.Trigger
+                    render={
+                      <button
+                        type="button"
+                        aria-current={isSelected ? "page" : undefined}
+                        onClick={() => openAgent(agent)}
+                        className={cn(
+                          "flex w-[84px] flex-col items-center gap-1.5 rounded-card p-2 text-center outline-none transition-colors duration-100 ease-out focus-visible:shadow-focus",
+                          isSelected ? "bg-white/9" : "bg-white/4 hover:bg-white/7",
+                        )}
+                      />
+                    }
+                  >
+                    <Identicon name={agent.name} size="xl" className="size-14 rounded-[12px]" />
+                    <span className="w-full truncate text-label font-semibold text-fg">
+                      {agent.name}
+                    </span>
+                  </ContextMenu.Trigger>
+                  <AgentContextMenuContent
+                    agent={agent}
+                    handlers={{
+                      onOpenProfile: () => setProfileAgent(agent),
+                      onRequestRemove: () => setRemoving(agent),
+                      isFiltered,
+                      onToggleFilter: () => onFilterChange(isFiltered ? null : agent.projectId),
+                    }}
+                  />
+                </ContextMenu.Root>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
       <ul className="mt-0.5 flex flex-col gap-px">
-        {sortAgents(agents, sort).map((agent) => {
+        {unpinnedAgents.map((agent) => {
           const isFiltered = filterProjectId === agent.projectId;
           const isSelected = pathname === `/agents/${agent.id}` || isFiltered;
           return (
@@ -91,7 +137,7 @@ export function AgentList({ filterProjectId, onFilterChange, onCreateAgent }: Ag
                   render={
                     <button
                       type="button"
-                      aria-current={isSelected}
+                      aria-current={isSelected ? "page" : undefined}
                       onClick={() => openAgent(agent)}
                       className={cn(
                         "flex w-full items-center gap-2.5 rounded-row p-2 text-left outline-none transition-colors duration-100 ease-out focus-visible:shadow-focus",
@@ -120,35 +166,15 @@ export function AgentList({ filterProjectId, onFilterChange, onCreateAgent }: Ag
                     </span>
                   </span>
                 </ContextMenu.Trigger>
-                <ContextMenuPopup label={`${agent.name} actions`}>
-                  <ContextMenuItem onClick={() => openAgent(agent)}>
-                    <Icon icon={Message01Icon} className="text-fg-muted" />
-                    Open agent
-                  </ContextMenuItem>
-                  <ContextMenuItem onClick={() => void runCheckIn(agent.id)}>
-                    <Icon icon={RefreshIcon} className="text-fg-muted" />
-                    Run check-in
-                  </ContextMenuItem>
-                  <ContextMenuItem
-                    onClick={() => onFilterChange(isFiltered ? null : agent.projectId)}
-                  >
-                    <Icon icon={FilterIcon} className="text-fg-muted" />
-                    {isFiltered ? "Clear thread filter" : "Filter threads"}
-                  </ContextMenuItem>
-                  <ContextMenuItem
-                    onClick={() => {
-                      void navigator.clipboard?.writeText(agent.projectPath);
-                    }}
-                  >
-                    <Icon icon={Copy01Icon} className="text-fg-muted" />
-                    Copy path
-                  </ContextMenuItem>
-                  <ContextMenuSeparator />
-                  <ContextMenuItem danger onClick={() => setRemoving(agent)}>
-                    <Icon icon={Delete02Icon} />
-                    Remove agent
-                  </ContextMenuItem>
-                </ContextMenuPopup>
+                <AgentContextMenuContent
+                  agent={agent}
+                  handlers={{
+                    onOpenProfile: () => setProfileAgent(agent),
+                    onRequestRemove: () => setRemoving(agent),
+                    isFiltered,
+                    onToggleFilter: () => onFilterChange(isFiltered ? null : agent.projectId),
+                  }}
+                />
               </ContextMenu.Root>
             </li>
           );
@@ -159,11 +185,18 @@ export function AgentList({ filterProjectId, onFilterChange, onCreateAgent }: Ag
           </li>
         )}
       </ul>
+
+      <AgentProfileDialog
+        agent={liveProfileAgent}
+        open={liveProfileAgent !== null}
+        onOpenChange={(next) => !next && setProfileAgent(null)}
+      />
+
       <ConfirmDialog
         open={removing !== null}
         onOpenChange={(next) => !next && setRemoving(null)}
         title={`Remove ${removing?.name ?? "agent"}?`}
-        description="This removes the agent, its conversation, memory, and issues from Scuttle. The project and files on disk are not touched."
+        description="This removes the agent, its conversation, and its memory from Scuttle. The project and files on disk are not touched."
         confirmLabel="Remove agent"
         onConfirm={async () => {
           if (removing === null) return;

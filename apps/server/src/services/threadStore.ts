@@ -44,6 +44,7 @@ export interface ThreadRow {
   readonly runtime_mode: string;
   readonly interaction_mode: string;
   readonly status_json: string;
+  readonly cost_usd?: number | null;
   readonly settled_at: string | null;
   readonly provider_session_id: string | null;
   readonly created_at: string;
@@ -62,6 +63,7 @@ export interface TurnRow {
   readonly started_at: string;
   readonly completed_at: string | null;
   readonly duration_ms: number | null;
+  readonly cost_usd: number;
   readonly error: string | null;
   readonly model_selection_json: string;
 }
@@ -142,6 +144,7 @@ export const rowToThread = (row: ThreadRow): Thread => {
     runtimeMode: rmOpt._tag === "Some" ? rmOpt.value : "auto",
     interactionMode: imOpt._tag === "Some" ? imOpt.value : "default",
     status: statusOpt._tag === "Some" ? statusOpt.value : { kind: "idle" },
+    ...(typeof row.cost_usd === "number" && row.cost_usd > 0 ? { costUsd: row.cost_usd } : {}),
     ...(row.settled_at ? { settledAt: row.settled_at } : {}),
     ...(row.provider_session_id ? { providerSessionId: row.provider_session_id } : {}),
     createdAt: row.created_at,
@@ -184,13 +187,18 @@ export const rowToApproval = (row: ApprovalRow): PendingApproval => {
   };
 };
 
+const THREAD_SELECT = `
+  SELECT t.*, COALESCE((SELECT SUM(cost_usd) FROM turns WHERE thread_id = t.id), 0) AS cost_usd
+  FROM threads t
+`;
+
 export const readThreadById = (db: Database, threadId: string): Thread | null => {
-  const row = db.query<ThreadRow, [string]>("SELECT * FROM threads WHERE id = ?").get(threadId);
+  const row = db.query<ThreadRow, [string]>(`${THREAD_SELECT} WHERE t.id = ?`).get(threadId);
   return row ? rowToThread(row) : null;
 };
 
 export const listAllThreads = (db: Database): ReadonlyArray<Thread> => {
-  const rows = db.query<ThreadRow, []>("SELECT * FROM threads ORDER BY updated_at DESC").all();
+  const rows = db.query<ThreadRow, []>(`${THREAD_SELECT} ORDER BY t.updated_at DESC`).all();
   return rows.map(rowToThread);
 };
 
@@ -236,6 +244,7 @@ export const readTurnsForThread = (db: Database, thread: Thread): ReadonlyArray<
       startedAt: row.started_at,
       ...(row.completed_at ? { completedAt: row.completed_at } : {}),
       ...(row.duration_ms !== null ? { durationMs: row.duration_ms } : {}),
+      ...(row.cost_usd > 0 ? { costUsd: row.cost_usd } : {}),
       ...(row.error ? { error: row.error } : {}),
       modelSelection: msOpt._tag === "Some" ? msOpt.value : thread.modelSelection,
       activities: activitiesByTurn.get(row.id) ?? [],

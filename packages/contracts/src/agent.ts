@@ -48,6 +48,7 @@ export const Agent = Schema.Struct({
   checkInIntervalMinutes: Schema.optionalKey(Schema.Number),
   lastCheckInAt: Schema.optionalKey(Schema.String),
   lastSummary: Schema.optionalKey(Schema.String),
+  pinned: Schema.Boolean,
   needsAttention: Schema.Boolean,
   createdAt: Schema.String,
   updatedAt: Schema.String,
@@ -179,6 +180,7 @@ export const UpdateAgentInput = Schema.Struct({
   modelStack: Schema.optionalKey(AgentModelStack),
   instructionsMd: Schema.optionalKey(Schema.String),
   checkInIntervalMinutes: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  pinned: Schema.optionalKey(Schema.Boolean),
   needsAttention: Schema.optionalKey(Schema.Boolean),
 });
 export type UpdateAgentInput = typeof UpdateAgentInput.Type;

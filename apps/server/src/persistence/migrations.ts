@@ -81,6 +81,7 @@ export const applyScuttleMigrations = (db: Database): void => {
       started_at TEXT NOT NULL,
       completed_at TEXT,
       duration_ms INTEGER,
+      cost_usd REAL NOT NULL DEFAULT 0,
       error TEXT,
       model_selection_json TEXT NOT NULL
     );
@@ -89,6 +90,9 @@ export const applyScuttleMigrations = (db: Database): void => {
   const turnColumns = db.query<{ readonly name: string }, []>("PRAGMA table_info(turns)").all();
   if (!turnColumns.some((col) => col.name === "origin")) {
     db.run("ALTER TABLE turns ADD COLUMN origin TEXT NOT NULL DEFAULT 'user';");
+  }
+  if (!turnColumns.some((col) => col.name === "cost_usd")) {
+    db.run("ALTER TABLE turns ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0;");
   }
 
   db.run(`
@@ -162,11 +166,17 @@ export const applyScuttleMigrations = (db: Database): void => {
       check_in_interval_minutes INTEGER,
       last_check_in_at TEXT,
       last_summary TEXT,
+      pinned INTEGER NOT NULL DEFAULT 0,
       needs_attention INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
   `);
+
+  const agentColumns = db.query<{ readonly name: string }, []>("PRAGMA table_info(agents)").all();
+  if (!agentColumns.some((col) => col.name === "pinned")) {
+    db.run("ALTER TABLE agents ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;");
+  }
 
   db.run(`
     CREATE INDEX IF NOT EXISTS idx_agents_project_id ON agents(project_id);

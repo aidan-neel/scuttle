@@ -165,6 +165,7 @@ export const claudeAdapter: HarnessAdapter = {
     let streamedAssistant = "";
     let finalResultText: string | undefined;
     let resultError: string | undefined;
+    let costUsd: number | undefined;
     const seenToolIds = new Set<string>();
     let stderrText = "";
 
@@ -280,6 +281,9 @@ export const claudeAdapter: HarnessAdapter = {
       }
 
       if (eventType === "result") {
+        if (typeof parsed.total_cost_usd === "number" && Number.isFinite(parsed.total_cost_usd)) {
+          costUsd = parsed.total_cost_usd;
+        }
         if (parsed.is_error === true) {
           resultError = asString(parsed.result) ?? "Claude Code returned an error.";
         } else if (typeof parsed.result === "string" && parsed.result.length > 0) {
@@ -339,6 +343,7 @@ export const claudeAdapter: HarnessAdapter = {
     return {
       ...(finalResultText ? { finalText: finalResultText } : {}),
       ...(providerSessionId ? { providerSessionId } : {}),
+      ...(costUsd !== undefined && costUsd > 0 ? { costUsd } : {}),
     };
   },
 };

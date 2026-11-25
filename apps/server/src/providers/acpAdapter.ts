@@ -435,7 +435,7 @@ export const createAcpAdapter = (kind: AcpProviderKind): HarnessAdapter => ({
           .catch(() => null);
       }
 
-      await rpc.request(
+      const promptRes = await rpc.request(
         "session/prompt",
         {
           sessionId,
@@ -443,14 +443,30 @@ export const createAcpAdapter = (kind: AcpProviderKind): HarnessAdapter => ({
         },
         30 * 60 * 1000,
       );
+      let costUsd: number | undefined;
+      if (isObject(promptRes)) {
+        const costObj = isObject(promptRes.cost) ? promptRes.cost : undefined;
+        const usageObj = isObject(promptRes.usage) ? promptRes.usage : undefined;
+        const candidate =
+          typeof costObj?.totalUsd === "number"
+            ? costObj.totalUsd
+            : typeof usageObj?.costUsd === "number"
+              ? usageObj.costUsd
+              : typeof promptRes.total_cost_usd === "number"
+                ? promptRes.total_cost_usd
+                : undefined;
+        if (candidate !== undefined && Number.isFinite(candidate) && candidate > 0) {
+          costUsd = candidate;
+        }
+      }
+      return {
+        ...(sessionId ? { providerSessionId: sessionId } : {}),
+        ...(input.signal.aborted ? { interrupted: true } : {}),
+        ...(costUsd !== undefined ? { costUsd } : {}),
+      };
     } finally {
       input.signal.removeEventListener("abort", onAbort);
       rpc.kill();
     }
-
-    return {
-      ...(sessionId ? { providerSessionId: sessionId } : {}),
-      ...(input.signal.aborted ? { interrupted: true } : {}),
-    };
   },
 });
