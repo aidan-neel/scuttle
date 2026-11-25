@@ -9,37 +9,20 @@ import {
 } from "@scuttle/contracts";
 import { ApprovalId, ProjectId, ProviderId, ThreadId } from "@scuttle/shared/ids";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
+import { handleGitApiRequest } from "./gitRoutes.ts";
+import { jsonError, matchRoute, readAndDecode } from "./httpHelpers.ts";
+import type * as GitForgeService from "./services/GitForgeService.ts";
 import * as HealthService from "./services/HealthService.ts";
 import * as ProjectService from "./services/ProjectService.ts";
 import * as ProviderService from "./services/ProviderService.ts";
 import * as ThreadService from "./services/ThreadService.ts";
 
 export type ApiServices =
+  | GitForgeService.GitForgeService
   | HealthService.HealthService
   | ProjectService.ProjectService
   | ProviderService.ProviderService
   | ThreadService.ThreadService;
-
-const jsonError = (message: string, status: number): Response =>
-  Response.json({ error: message }, { status });
-
-const readAndDecode = <A>(request: Request, schema: Schema.Decoder<A>) =>
-  Effect.gen(function* () {
-    const raw: unknown = yield* Effect.tryPromise({
-      try: () => request.json(),
-      catch: () => new Error("Request body must be valid JSON."),
-    });
-    return yield* Schema.decodeUnknownEffect(schema)(raw).pipe(
-      Effect.mapError(() => new Error("Request body did not match expected schema.")),
-    );
-  });
-
-const matchRoute = (pathname: string, pattern: RegExp): ReadonlyArray<string> | null => {
-  const match = pattern.exec(pathname);
-  if (!match) return null;
-  return match.slice(1).map((segment) => decodeURIComponent(segment));
-};
 
 export const handleApiRequest = (
   request: Request,
@@ -48,6 +31,9 @@ export const handleApiRequest = (
   Effect.gen(function* () {
     const method = request.method.toUpperCase();
     const pathname = url.pathname;
+
+    const gitResponse = yield* handleGitApiRequest(request, url);
+    if (gitResponse !== null) return gitResponse;
 
     if (method === "GET" && pathname === "/api/health") {
       const health = yield* HealthService.HealthService;

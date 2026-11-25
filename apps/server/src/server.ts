@@ -9,6 +9,7 @@ import { handleApiRequest } from "./httpRoutes.ts";
 import * as Sqlite from "./persistence/Sqlite.ts";
 import { handleRpcMessage } from "./rpc.ts";
 import * as EventBus from "./services/EventBus.ts";
+import * as GitForgeService from "./services/GitForgeService.ts";
 import * as GitService from "./services/GitService.ts";
 import * as HealthService from "./services/HealthService.ts";
 import * as ProjectService from "./services/ProjectService.ts";
@@ -22,7 +23,10 @@ export interface ScuttleServerHandle {
   readonly stop: () => Promise<void>;
 }
 
-const makeAppLayer = (overrides?: Partial<ServerConfig.ServerConfigValues>) => {
+export const makeAppLayer = (
+  overrides?: Partial<ServerConfig.ServerConfigValues>,
+  forgeOptions: GitForgeService.GitForgeOptions = GitForgeService.readGitForgeOptions(process.env),
+) => {
   const configLayer = ServerConfig.layer(overrides);
   const sqliteLayer = Sqlite.layer.pipe(Layer.provide(configLayer));
   const eventBusLayer = EventBus.layer;
@@ -47,6 +51,12 @@ const makeAppLayer = (overrides?: Partial<ServerConfig.ServerConfigValues>) => {
     Layer.provide(projectLayer),
     Layer.provide(providerLayer),
   );
+  const gitForgeLayer = GitForgeService.layer(forgeOptions).pipe(
+    Layer.provide(sqliteLayer),
+    Layer.provide(gitLayer),
+    Layer.provide(projectLayer),
+    Layer.provide(threadLayer),
+  );
 
   return Layer.mergeAll(
     configLayer,
@@ -57,6 +67,7 @@ const makeAppLayer = (overrides?: Partial<ServerConfig.ServerConfigValues>) => {
     providerLayer,
     projectLayer,
     threadLayer,
+    gitForgeLayer,
   );
 };
 

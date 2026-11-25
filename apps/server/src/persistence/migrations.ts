@@ -129,4 +129,16 @@ export const applyScuttleMigrations = (db: Database): void => {
   db.run(`
     CREATE INDEX IF NOT EXISTS idx_approvals_turn_id ON approvals(turn_id);
   `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS git_forge_accounts (
+      forge TEXT PRIMARY KEY NOT NULL,
+      host TEXT NOT NULL,
+      auth_source TEXT NOT NULL,
+      token TEXT NOT NULL,
+      username TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
 };

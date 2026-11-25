@@ -1,11 +1,28 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import type { GitBranchInfo } from "@scuttle/contracts";
+import type {
+  GitBranchInfo,
+  GitCheckoutInput,
+  GitCommitInput,
+  GitRemote,
+  GitStatus,
+} from "@scuttle/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import {
+  applyLineDeltas,
+  describeRemote,
+  isSafeRepoPath,
+  type KnownForgeHosts,
+  parseNumstatZ,
+  parsePorcelainV2,
+  summarizeFiles,
+} from "./gitForge/gitParse.ts";
+import { commandFailure, runCommand } from "./gitForge/processRunner.ts";
+import { redactSecrets } from "./gitForge/redact.ts";
 
 export class GitServiceError extends Schema.TaggedError<GitServiceError>()("GitServiceError", {
   operation: Schema.String,
@@ -28,32 +45,10 @@ export interface CreatedWorktree {
   readonly branch: string;
 }
 
-const runGit = (
-  cwd: string,
-  args: ReadonlyArray<string>,
-): Effect.Effect<{ readonly exitCode: number; readonly stdout: string; readonly stderr: string }> =>
-  Effect.promise(async () => {
-    try {
-      const proc = Bun.spawn(["git", ...args], {
-        cwd,
-        stdout: "pipe",
-        stderr: "pipe",
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-      ]);
-      return { exitCode, stdout, stderr };
-    } catch (error) {
-      return {
-        exitCode: 127,
-        stdout: "",
-        stderr: error instanceof Error ? error.message : String(error),
-      };
-    }
-  });
+const runGit = (cwd: string, args: ReadonlyArray<string>, timeoutMs?: number) =>
+  runCommand(["git", ...args], { cwd, ...(timeoutMs !== undefined ? { timeoutMs } : {}) });
+
+const NETWORK_TIMEOUT_MS = 120_000;
 
 const sanitizeSlug = (raw: string): string => {
   const cleaned = raw
@@ -76,6 +71,14 @@ export class GitService extends Context.Service<
       readonly threadId: string;
     }) => Effect.Effect<CreatedWorktree, GitServiceError>;
     readonly removeWorktree: (repoPath: string, worktreePath: string) => Effect.Effect<void>;
+    readonly status: (cwd: string, known: KnownForgeHosts) => Effect.Effect<GitStatus>;
+    readonly commit: (cwd: string, input: GitCommitInput) => Effect.Effect<string, GitServiceError>;
+    readonly push: (cwd: string) => Effect.Effect<string, GitServiceError>;
+    readonly pull: (cwd: string) => Effect.Effect<string, GitServiceError>;
+    readonly checkout: (
+      cwd: string,
+      input: GitCheckoutInput,
+    ) => Effect.Effect<string, GitServiceError>;
   }
 >()("scuttle/server/GitService") {}
 
@@ -242,11 +245,167 @@ const make = Effect.sync(() => {
     yield* runGit(repoPath, ["worktree", "prune"]);
   });
 
+  const requireRoot = Effect.fn("GitService.requireRoot")(function* (
+    cwd: string,
+    operation: string,
+  ) {
+    const res = yield* runGit(NodePath.resolve(cwd), ["rev-parse", "--show-toplevel"]);
+    if (res.exitCode !== 0) {
+      return yield* new GitServiceError({ operation, detail: `${cwd} is not a Git repository.` });
+    }
+    return res.stdout.trim();
+  });
+
+  const fail = (operation: string, result: Parameters<typeof commandFailure>[0]) =>
+    new GitServiceError({
+      operation,
+      detail: redactSecrets(commandFailure(result, `git ${operation} failed`)),
+    });
+
+  const listRemotes = Effect.fn("GitService.listRemotes")(function* (root: string) {
+    const res = yield* runGit(root, ["config", "--get-regexp", "^remote\\..*\\.url$"]);
+    const remotes = new Map<string, string>();
+    for (const line of res.stdout.split(/\r?\n/)) {
+      const match = /^remote\.(.+)\.url (.+)$/.exec(line.trim());
+      if (match !== null) remotes.set(match[1]!, match[2]!);
+    }
+    return remotes;
+  });
+
+  const pickRemoteName = (remotes: ReadonlyMap<string, string>, upstream: string | null) => {
+    const upstreamRemote = upstream?.split("/")[0];
+    if (upstreamRemote !== undefined && remotes.has(upstreamRemote)) return upstreamRemote;
+    if (remotes.has("origin")) return "origin";
+    return remotes.keys().next().value ?? null;
+  };
+
+  const status = Effect.fn("GitService.status")(function* (cwd: string, known: KnownForgeHosts) {
+    const rootRes = yield* runGit(NodePath.resolve(cwd), ["rev-parse", "--show-toplevel"]);
+    if (rootRes.exitCode !== 0) return { kind: "not-a-repo" as const, path: cwd };
+    const root = rootRes.stdout.trim();
+    const [porcelain, unstaged, staged, remotes] = yield* Effect.all(
+      [
+        runGit(root, ["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"]),
+        runGit(root, ["diff", "--numstat", "-z"]),
+        runGit(root, ["diff", "--cached", "--numstat", "-z"]),
+        listRemotes(root),
+      ],
+      { concurrency: "unbounded" },
+    );
+    const parsed = parsePorcelainV2(porcelain.stdout);
+    const files = applyLineDeltas(parsed.files, [
+      parseNumstatZ(unstaged.stdout),
+      parseNumstatZ(staged.stdout),
+    ]);
+    const remoteName = pickRemoteName(remotes, parsed.upstream);
+    const remote: GitRemote | null =
+      remoteName === null ? null : describeRemote(remoteName, remotes.get(remoteName)!, known);
+    return {
+      kind: "repo" as const,
+      branch: parsed.branch,
+      upstream: parsed.upstream,
+      ahead: parsed.ahead,
+      behind: parsed.behind,
+      hasCommits: parsed.hasCommits,
+      remote,
+      forge: remote?.forge ?? "none",
+      files,
+      summary: summarizeFiles(files),
+    };
+  });
+
+  const commit = Effect.fn("GitService.commit")(function* (cwd: string, input: GitCommitInput) {
+    const root = yield* requireRoot(cwd, "commit");
+    const paths = input.paths ?? [];
+    const unsafe = paths.find((path) => !isSafeRepoPath(path));
+    if (unsafe !== undefined) {
+      return yield* new GitServiceError({
+        operation: "commit",
+        detail: `Path "${unsafe}" must be relative to the repository root.`,
+      });
+    }
+    const addRes = yield* runGit(
+      root,
+      paths.length > 0 ? ["add", "-A", "--", ...paths] : ["add", "-A"],
+    );
+    if (addRes.exitCode !== 0) return yield* fail("add", addRes);
+    const commitArgs = ["commit", "-m", input.message];
+    const commitRes = yield* runGit(
+      root,
+      paths.length > 0 ? [...commitArgs, "--", ...paths] : commitArgs,
+    );
+    if (commitRes.exitCode !== 0) return yield* fail("commit", commitRes);
+    const sha = yield* runGit(root, ["rev-parse", "--short", "HEAD"]);
+    return `Committed ${sha.stdout.trim()}`;
+  });
+
+  const push = Effect.fn("GitService.push")(function* (cwd: string) {
+    const root = yield* requireRoot(cwd, "push");
+    const parsed = parsePorcelainV2(
+      (yield* runGit(root, ["status", "--porcelain=v2", "--branch", "-z"])).stdout,
+    );
+    if (parsed.branch === null) {
+      return yield* new GitServiceError({
+        operation: "push",
+        detail: "HEAD is detached. Switch to a branch before pushing.",
+      });
+    }
+    let args: ReadonlyArray<string> = ["push"];
+    if (parsed.upstream === null) {
+      const remoteName = pickRemoteName(yield* listRemotes(root), null);
+      if (remoteName === null) {
+        return yield* new GitServiceError({
+          operation: "push",
+          detail: "No remote is configured. Add one with `git remote add origin <url>`.",
+        });
+      }
+      args = ["push", "--set-upstream", remoteName, "HEAD"];
+    }
+    const res = yield* runGit(root, args, NETWORK_TIMEOUT_MS);
+    if (res.exitCode !== 0) return yield* fail("push", res);
+    return parsed.upstream === null
+      ? `Pushed ${parsed.branch} and set upstream`
+      : `Pushed ${parsed.branch}`;
+  });
+
+  const pull = Effect.fn("GitService.pull")(function* (cwd: string) {
+    const root = yield* requireRoot(cwd, "pull");
+    const res = yield* runGit(root, ["pull", "--ff-only"], NETWORK_TIMEOUT_MS);
+    if (res.exitCode !== 0) return yield* fail("pull", res);
+    return /up to date/i.test(res.stdout) ? "Already up to date" : "Pulled latest changes";
+  });
+
+  const checkout = Effect.fn("GitService.checkout")(function* (
+    cwd: string,
+    input: GitCheckoutInput,
+  ) {
+    const root = yield* requireRoot(cwd, "checkout");
+    const valid = yield* runGit(root, ["check-ref-format", "--branch", input.branch]);
+    if (valid.exitCode !== 0 || input.branch.startsWith("-")) {
+      return yield* new GitServiceError({
+        operation: "checkout",
+        detail: `"${input.branch}" is not a valid branch name.`,
+      });
+    }
+    const create = input.create === true;
+    const res = yield* runGit(
+      root,
+      create ? ["switch", "-c", input.branch] : ["switch", input.branch],
+    );
+    if (res.exitCode !== 0) return yield* fail("checkout", res);
+    return create ? `Created and switched to ${input.branch}` : `Switched to ${input.branch}`;
+  });
+
   return GitService.of({
     inspectRepo,
     listBranches,
     createWorktree,
     removeWorktree,
+    status,
+    commit,
+    push,
+    pull,
+    checkout,
   });
 });
 
