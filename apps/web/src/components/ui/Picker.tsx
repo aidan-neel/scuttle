@@ -1,15 +1,55 @@
 import { Menu } from "@base-ui/react/menu";
 import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
+import type { IconSvgElement } from "@hugeicons/react";
 import type { ReactNode } from "react";
-import { buttonClass } from "./Button.tsx";
+import { cn } from "@/lib/utils";
 import { Icon } from "./Icon.tsx";
-import { MenuPopup, MenuRadioItem } from "./Menu.tsx";
+import { MenuPopup, MenuRadioItem, MenuSeparator } from "./Menu.tsx";
 
 export interface PickerOption<Value extends string> {
   readonly value: Value;
-  readonly label: ReactNode;
+  readonly label: string;
   readonly icon?: ReactNode;
 }
+
+export interface PickerAction {
+  readonly label: string;
+  readonly icon: IconSvgElement;
+  readonly onSelect: () => void;
+}
+
+export const pillTriggerClass = (className?: string) =>
+  cn(
+    "group/pill inline-flex h-6.5 min-w-0 shrink-0 cursor-default items-center gap-1.5 rounded-control pr-1.5 pl-2 whitespace-nowrap select-none outline-none",
+    "bg-panel/70 text-label text-fg-secondary shadow-[inset_0_0_0_1px_var(--color-edge)] backdrop-blur-xs",
+    "transition-[background-color,color,box-shadow] duration-(--dur-hover) ease-hover",
+    "hover:bg-raised hover:text-fg active:bg-hover active:duration-(--dur-tap)",
+    "data-popup-open:bg-raised data-popup-open:text-fg data-popup-open:shadow-[inset_0_0_0_1px_var(--color-edge-strong)]",
+    "focus-visible:shadow-[var(--shadow-focus),inset_0_0_0_1px_var(--color-edge-strong)]",
+    "disabled:pointer-events-none disabled:opacity-40",
+    "[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*=size-])]:size-[13px]",
+    className,
+  );
+
+export function PillLabel({ children, mono }: { children: string; mono?: boolean }) {
+  return (
+    <span title={children} className={cn("min-w-0 truncate leading-4", mono && "font-mono")}>
+      {children}
+    </span>
+  );
+}
+
+export function PillChevron() {
+  return (
+    <Icon
+      icon={ArrowDown01Icon}
+      className="size-2.5 text-fg-faint transition-[rotate,color] duration-150 ease-out group-hover/pill:text-fg-muted group-data-popup-open/pill:rotate-180 group-data-popup-open/pill:text-fg-muted"
+    />
+  );
+}
+
+const ACTION_ITEM =
+  "flex h-8 cursor-default items-center gap-2 rounded-chip px-2 text-button text-fg-secondary outline-none select-none data-highlighted:bg-(--wash) data-highlighted:text-fg [&_svg]:size-3.5 [&_svg]:text-fg-muted";
 
 interface PickerProps<Value extends string> {
   label: string;
@@ -17,6 +57,8 @@ interface PickerProps<Value extends string> {
   options: ReadonlyArray<PickerOption<Value>>;
   onValueChange: (value: Value) => void;
   icon?: ReactNode;
+  action?: PickerAction;
+  className?: string;
 }
 
 export function Picker<Value extends string>({
@@ -25,27 +67,22 @@ export function Picker<Value extends string>({
   options,
   onValueChange,
   icon,
+  action,
+  className,
 }: PickerProps<Value>) {
   const current = options.find((option) => option.value === value);
 
   return (
     <Menu.Root>
       <Menu.Trigger
-        className={buttonClass(
-          "quiet",
-          "md",
-          "group/picker data-popup-open:bg-(--wash) [&_svg:not([class*=size-])]:size-4",
-        )}
+        aria-label={`${label}: ${current?.label ?? ""}`}
+        className={pillTriggerClass(className)}
       >
         {icon ?? current?.icon}
-        <span className="sr-only">{label}: </span>
-        <span className="inline-flex items-center gap-1.5 whitespace-nowrap">{current?.label}</span>
-        <Icon
-          icon={ArrowDown01Icon}
-          className="size-3 text-fg-muted transition-transform duration-150 ease-out group-data-popup-open/picker:rotate-180"
-        />
+        {current && <PillLabel>{current.label}</PillLabel>}
+        <PillChevron />
       </Menu.Trigger>
-      <MenuPopup label={label}>
+      <MenuPopup label={label} className="max-w-80">
         <Menu.RadioGroup
           value={value}
           onValueChange={(next: unknown) => {
@@ -56,10 +93,19 @@ export function Picker<Value extends string>({
           {options.map((option) => (
             <MenuRadioItem key={option.value} value={option.value}>
               {option.icon}
-              {option.label}
+              <span className="min-w-0 truncate leading-4">{option.label}</span>
             </MenuRadioItem>
           ))}
         </Menu.RadioGroup>
+        {action && (
+          <>
+            <MenuSeparator />
+            <Menu.Item className={ACTION_ITEM} onClick={action.onSelect}>
+              <Icon icon={action.icon} />
+              {action.label}
+            </Menu.Item>
+          </>
+        )}
       </MenuPopup>
     </Menu.Root>
   );
