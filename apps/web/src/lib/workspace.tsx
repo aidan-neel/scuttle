@@ -251,6 +251,8 @@ const applyPushEvent = (state: WorkspaceState, event: ServerPushEvent): Workspac
       const defaultModelSelection = pickBestSelection(providers, state.defaultModelSelection);
       return { ...state, providers, defaultModelSelection };
     }
+    default:
+      return state;
   }
 };
 
