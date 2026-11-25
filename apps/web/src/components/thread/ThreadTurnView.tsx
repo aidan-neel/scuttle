@@ -2,7 +2,7 @@ import type { RespondApprovalInput, ThreadTurn } from "@scuttle/contracts";
 import { motion } from "motion/react";
 import { easeOut } from "@/lib/motion.ts";
 import { ApprovalCard } from "./ApprovalCard.tsx";
-import { MarkdownView } from "./MarkdownView.tsx";
+import { MarkdownView, useSmoothedStream } from "./MarkdownView.tsx";
 import { WorkProgress } from "./WorkProgress.tsx";
 
 interface ThreadTurnViewProps {
@@ -12,6 +12,8 @@ interface ThreadTurnViewProps {
 
 export function ThreadTurnView({ turn, onRespondApproval }: ThreadTurnViewProps) {
   const pendingApprovals = turn.approvals.filter((a) => a.status === "pending");
+  const streaming = turn.status === "running";
+  const assistantMessage = useSmoothedStream(turn.assistantMessage, streaming);
 
   return (
     <motion.article
@@ -37,9 +39,9 @@ export function ThreadTurnView({ turn, onRespondApproval }: ThreadTurnViewProps)
         />
       ))}
 
-      {turn.assistantMessage.trim().length > 0 && (
+      {assistantMessage.trim().length > 0 && (
         <div className="pt-1">
-          <MarkdownView content={turn.assistantMessage} />
+          <MarkdownView content={assistantMessage} streaming={streaming} />
         </div>
       )}
 

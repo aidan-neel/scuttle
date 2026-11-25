@@ -1,8 +1,10 @@
 import { Add01Icon, Delete02Icon } from "@hugeicons/core-free-icons";
+import type { Project } from "@scuttle/contracts";
 import { useState } from "react";
 import { AddProjectDialog } from "@/components/shell/AddProjectDialog.tsx";
 import { BrandLogo } from "@/components/ui/BrandLogo.tsx";
 import { Button } from "@/components/ui/Button.tsx";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
 import { useDisabledModels } from "@/lib/disabledModels.ts";
@@ -68,7 +70,7 @@ export function ModelsSection() {
 export function ProjectsSection() {
   const { projects, deleteProject } = useWorkspace();
   const [addOpen, setAddOpen] = useState(false);
-  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<Project | null>(null);
   return (
     <>
       <SettingsGroup
@@ -99,33 +101,15 @@ export function ProjectsSection() {
                   {age.length > 0 && ` · active ${age === "now" ? "just now" : `${age} ago`}`}
                 </div>
               </div>
-              {confirmingId === project.id ? (
-                <div className="flex shrink-0 items-center gap-1">
-                  <Button variant="ghost" size="md" onClick={() => setConfirmingId(null)}>
-                    Cancel
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    size="md"
-                    onClick={() => {
-                      setConfirmingId(null);
-                      void deleteProject(project.id);
-                    }}
-                  >
-                    Remove
-                  </Button>
-                </div>
-              ) : (
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={`Remove ${project.name} from Scuttle`}
-                  onClick={() => setConfirmingId(project.id)}
-                  className="hover:text-danger"
-                >
-                  <Icon icon={Delete02Icon} />
-                </Button>
-              )}
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`Remove ${project.name} from Scuttle`}
+                onClick={() => setRemoving(project)}
+                className="hover:text-danger"
+              >
+                <Icon icon={Delete02Icon} />
+              </Button>
             </div>
           );
         })}
@@ -142,6 +126,16 @@ export function ProjectsSection() {
         Removing a project also deletes its threads in Scuttle. Files on disk are not touched.
       </p>
       <AddProjectDialog open={addOpen} onOpenChange={setAddOpen} />
+      <ConfirmDialog
+        open={removing !== null}
+        onOpenChange={(next) => !next && setRemoving(null)}
+        title={`Remove ${removing?.name ?? "project"}?`}
+        description="This removes the project and all of its threads from Scuttle. Files on disk are not touched."
+        confirmLabel="Remove project"
+        onConfirm={async () => {
+          if (removing !== null) await deleteProject(removing.id);
+        }}
+      />
     </>
   );
 }

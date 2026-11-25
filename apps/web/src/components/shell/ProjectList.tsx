@@ -4,6 +4,7 @@ import type { Project } from "@scuttle/contracts";
 import type { ProjectId } from "@scuttle/shared/ids";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useState } from "react";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
 import { ContextMenuItem, ContextMenuPopup, ContextMenuSeparator } from "@/components/ui/Menu.tsx";
@@ -42,6 +43,7 @@ export function ProjectList({
   const navigate = useNavigate();
   const isHome = useRouterState({ select: (state) => state.location.pathname === "/" });
   const [sort, setSort] = useState<ProjectSort>("recent");
+  const [removing, setRemoving] = useState<Project | null>(null);
 
   const clearFilter: SectionMenuEntry = {
     kind: "action",
@@ -134,13 +136,7 @@ export function ProjectList({
                     Copy path
                   </ContextMenuItem>
                   <ContextMenuSeparator />
-                  <ContextMenuItem
-                    danger
-                    onClick={() => {
-                      if (filterProjectId === project.id) onFilterChange(null);
-                      void deleteProject(project.id);
-                    }}
-                  >
+                  <ContextMenuItem danger onClick={() => setRemoving(project)}>
                     <Icon icon={Delete02Icon} />
                     Remove project
                   </ContextMenuItem>
@@ -155,6 +151,18 @@ export function ProjectList({
           </li>
         )}
       </ul>
+      <ConfirmDialog
+        open={removing !== null}
+        onOpenChange={(next) => !next && setRemoving(null)}
+        title={`Remove ${removing?.name ?? "project"}?`}
+        description="This removes the project and all of its threads from Scuttle. Files on disk are not touched."
+        confirmLabel="Remove project"
+        onConfirm={async () => {
+          if (removing === null) return;
+          await deleteProject(removing.id);
+          if (filterProjectId === removing.id) onFilterChange(null);
+        }}
+      />
     </section>
   );
 }

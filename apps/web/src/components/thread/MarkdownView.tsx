@@ -1,7 +1,50 @@
 import { Copy01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { marked, type Token, type Tokens } from "marked";
-import { type ReactNode, useState } from "react";
+import { useReducedMotion } from "motion/react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/ui/Icon.tsx";
+
+const MIN_CHARS_PER_SECOND = 90;
+const CATCHUP_PER_SECOND = 7;
+const MAX_LAG_CHARS = 480;
+const MAX_FRAME_SECONDS = 0.05;
+const UNSETTLED_LINE = /^ {0,3}(?:`+[^`\n]*|~{3,}.*|[-=]+ *)$/;
+
+export function useSmoothedStream(content: string, streaming: boolean) {
+  const reducedMotion = useReducedMotion() === true;
+  const animate = streaming && !reducedMotion;
+  const target = content.length;
+  const positionRef = useRef(target);
+  const [shown, setShown] = useState(target);
+
+  useEffect(() => {
+    if (!animate) {
+      positionRef.current = target;
+      return;
+    }
+    positionRef.current = Math.min(Math.max(positionRef.current, target - MAX_LAG_CHARS), target);
+    let frame = 0;
+    let last = performance.now();
+    const tick = (now: number) => {
+      const elapsed = Math.min((now - last) / 1000, MAX_FRAME_SECONDS);
+      last = now;
+      const backlog = target - positionRef.current;
+      const velocity = Math.max(MIN_CHARS_PER_SECOND, backlog * CATCHUP_PER_SECOND);
+      positionRef.current = Math.min(target, positionRef.current + velocity * elapsed);
+      setShown(Math.floor(positionRef.current));
+      if (positionRef.current < target) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [animate, target]);
+
+  return animate ? content.slice(0, Math.min(shown, target)) : content;
+}
+
+const settledStreamingText = (text: string) => {
+  const lineStart = text.lastIndexOf("\n") + 1;
+  return UNSETTLED_LINE.test(text.slice(lineStart)) ? text.slice(0, lineStart) : text;
+};
 
 function CodeBlock({ code, lang }: { readonly code: string; readonly lang?: string }) {
   const [copied, setCopied] = useState(false);
@@ -194,7 +237,12 @@ const renderBlocks = (tokens: ReadonlyArray<Token>, keyPrefix: string): ReactNod
     }
   });
 
-export function MarkdownView({ content }: { readonly content: string }) {
-  const tokens = marked.lexer(content);
+interface MarkdownViewProps {
+  readonly content: string;
+  readonly streaming?: boolean;
+}
+
+export function MarkdownView({ content, streaming = false }: MarkdownViewProps) {
+  const tokens = marked.lexer(streaming ? settledStreamingText(content) : content);
   return <div className="text-[14px] leading-[1.65] text-fg">{renderBlocks(tokens, "md")}</div>;
 }

@@ -11,6 +11,7 @@ import type { ProjectId } from "@scuttle/shared/ids";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { AnimatePresence, LayoutGroup, motion } from "motion/react";
 import { useState } from "react";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { ContextMenuItem, ContextMenuPopup, ContextMenuSeparator } from "@/components/ui/Menu.tsx";
 import { easeOut, spring } from "@/lib/motion";
@@ -51,6 +52,7 @@ export function ThreadList({
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const [sort, setSort] = useState<ThreadSort>("recent");
+  const [deleting, setDeleting] = useState<Thread | null>(null);
   const open = sortThreads(
     threads.filter(
       (thread) =>
@@ -89,12 +91,10 @@ export function ThreadList({
     },
   ];
 
-  const handleDelete = (thread: Thread) => {
-    void deleteThread(thread.id).then(() => {
-      if (pathname === `/threads/${thread.id}`) {
-        void navigate({ to: "/" });
-      }
-    });
+  const confirmDelete = async () => {
+    if (deleting === null) return;
+    await deleteThread(deleting.id);
+    if (pathname === `/threads/${deleting.id}`) void navigate({ to: "/" });
   };
 
   return (
@@ -176,7 +176,7 @@ export function ThreadList({
                         </ContextMenuItem>
                       )}
                       <ContextMenuSeparator />
-                      <ContextMenuItem danger onClick={() => handleDelete(thread)}>
+                      <ContextMenuItem danger onClick={() => setDeleting(thread)}>
                         <Icon icon={Delete02Icon} />
                         Delete thread
                       </ContextMenuItem>
@@ -196,6 +196,14 @@ export function ThreadList({
         </motion.ul>
       </LayoutGroup>
       <SettledSection projectId={filterProjectId} />
+      <ConfirmDialog
+        open={deleting !== null}
+        onOpenChange={(next) => !next && setDeleting(null)}
+        title="Delete thread?"
+        description={`“${deleting?.title ?? "This thread"}” and its conversation history will be permanently deleted.`}
+        confirmLabel="Delete thread"
+        onConfirm={confirmDelete}
+      />
     </section>
   );
 }
