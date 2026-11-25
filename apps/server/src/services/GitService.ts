@@ -49,6 +49,7 @@ const runGit = (cwd: string, args: ReadonlyArray<string>, timeoutMs?: number) =>
   runCommand(["git", ...args], { cwd, ...(timeoutMs !== undefined ? { timeoutMs } : {}) });
 
 const NETWORK_TIMEOUT_MS = 120_000;
+const LONG_TIMEOUT_MS = 600_000;
 
 const sanitizeSlug = (raw: string): string => {
   const cleaned = raw
@@ -219,14 +220,11 @@ const make = Effect.sync(() => {
     ]);
     const baseRef = baseCheck.exitCode === 0 ? input.baseBranch : "HEAD";
 
-    const addRes = yield* runGit(inspection.rootPath, [
-      "worktree",
-      "add",
-      "-b",
-      branch,
-      worktreePath,
-      baseRef,
-    ]);
+    const addRes = yield* runGit(
+      inspection.rootPath,
+      ["worktree", "add", "-b", branch, worktreePath, baseRef],
+      LONG_TIMEOUT_MS,
+    );
     if (addRes.exitCode !== 0) {
       return yield* new GitServiceError({
         operation: "createWorktree",
@@ -241,7 +239,7 @@ const make = Effect.sync(() => {
     repoPath: string,
     worktreePath: string,
   ) {
-    yield* runGit(repoPath, ["worktree", "remove", "--force", worktreePath]);
+    yield* runGit(repoPath, ["worktree", "remove", "--force", worktreePath], LONG_TIMEOUT_MS);
     yield* runGit(repoPath, ["worktree", "prune"]);
   });
 
@@ -327,12 +325,14 @@ const make = Effect.sync(() => {
     const addRes = yield* runGit(
       root,
       paths.length > 0 ? ["add", "-A", "--", ...paths] : ["add", "-A"],
+      LONG_TIMEOUT_MS,
     );
     if (addRes.exitCode !== 0) return yield* fail("add", addRes);
     const commitArgs = ["commit", "-m", input.message];
     const commitRes = yield* runGit(
       root,
       paths.length > 0 ? [...commitArgs, "--", ...paths] : commitArgs,
+      LONG_TIMEOUT_MS,
     );
     if (commitRes.exitCode !== 0) return yield* fail("commit", commitRes);
     const sha = yield* runGit(root, ["rev-parse", "--short", "HEAD"]);

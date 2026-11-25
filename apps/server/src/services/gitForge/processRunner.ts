@@ -25,6 +25,7 @@ const NON_INTERACTIVE_ENV = {
   GH_PROMPT_DISABLED: "1",
   GH_NO_UPDATE_NOTIFIER: "1",
   GLAB_CHECK_UPDATE: "false",
+  GIT_OPTIONAL_LOCKS: "0",
   NO_COLOR: "1",
 };
 
@@ -39,18 +40,21 @@ export const runCommand: CommandRunner = (argv, options) =>
         stderr: "pipe",
         env: { ...process.env, ...NON_INTERACTIVE_ENV },
       });
-      let timedOut = false;
-      const timer = setTimeout(() => {
-        timedOut = true;
-        proc.kill();
-      }, timeoutMs);
-      const [stdout, stderr, exitCode] = await Promise.all([
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<CommandResult>((resolve) => {
+        timer = setTimeout(() => {
+          proc.kill();
+          resolve({ exitCode: 124, stdout: "", stderr: "", timedOut: true });
+        }, timeoutMs);
+      });
+      const completed = Promise.all([
         new Response(proc.stdout).text(),
         new Response(proc.stderr).text(),
         proc.exited,
-      ]);
+      ]).then(([stdout, stderr, exitCode]) => ({ exitCode, stdout, stderr, timedOut: false }));
+      const result = await Promise.race([completed, deadline]);
       clearTimeout(timer);
-      return { exitCode, stdout, stderr, timedOut };
+      return result;
     } catch (error) {
       return {
         exitCode: 127,
