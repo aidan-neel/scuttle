@@ -2,6 +2,7 @@ import { Popover } from "@base-ui/react/popover";
 import type { Agent, AgentDelegation, Thread } from "@scuttle/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
+import { isAgentThread } from "@/lib/agentState.ts";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace.tsx";
 
@@ -45,7 +46,7 @@ interface AgentCostPopoverProps {
 }
 
 export function AgentCostPopover({ agent, primaryThread, delegations }: AgentCostPopoverProps) {
-  const { threads, providers } = useWorkspace();
+  const { agents, threads, providers } = useWorkspace();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<CostTab>("thread");
@@ -56,7 +57,9 @@ export function AgentCostPopover({ agent, primaryThread, delegations }: AgentCos
     ...threads
       .filter(
         (t) =>
-          t.id !== primaryThread.id && (delegatedIds.has(t.id) || t.projectId === agent.projectId),
+          t.id !== primaryThread.id &&
+          !isAgentThread(agents, t.id) &&
+          (delegatedIds.has(t.id) || t.projectId === agent.projectId),
       )
       .toSorted(
         (a, b) => (b.costUsd ?? 0) - (a.costUsd ?? 0) || b.updatedAt.localeCompare(a.updatedAt),
