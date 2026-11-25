@@ -42,3 +42,22 @@ export const formatElapsedSeconds = (ms: number): string => {
   const rem = secs % 60;
   return rem === 0 ? `${mins}m` : `${mins}m ${rem}s`;
 };
+
+const CLOCK_FORMAT = new Intl.DateTimeFormat(undefined, {
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+export const formatClockTime = (iso: string): string => {
+  const ts = Date.parse(iso);
+  return Number.isFinite(ts) ? CLOCK_FORMAT.format(ts) : "";
+};
+
+export const formatAgentName = (projectName: string): string => {
+  const words = projectName
+    .trim()
+    .split(/[-_\s]+/)
+    .filter((word) => word.length > 0)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1));
+  return words.length > 0 ? words.join(" ") : "Agent";
+};

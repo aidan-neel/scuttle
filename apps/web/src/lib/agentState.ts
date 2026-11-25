@@ -21,7 +21,7 @@ export interface AgentSlice {
   readonly agentWork: Readonly<Record<string, AgentWork>>;
 }
 
-export const isCaptainThread = (agents: ReadonlyArray<Agent>, threadId: string): boolean =>
+export const isAgentThread = (agents: ReadonlyArray<Agent>, threadId: string): boolean =>
   agents.some((agent) => agent.primaryThreadId === threadId);
 
 const withWork = (

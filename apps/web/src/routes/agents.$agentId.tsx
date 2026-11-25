@@ -3,7 +3,7 @@ import { describeApiError } from "@scuttle/client-runtime";
 import { isAgentId } from "@scuttle/shared/ids";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { AgentConversation, type QuickAction } from "@/components/agents/AgentConversation.tsx";
+import { AgentConversation } from "@/components/agents/AgentConversation.tsx";
 import { AgentInspector, type InspectorTab } from "@/components/agents/AgentInspector.tsx";
 import { useTask } from "@/components/agents/useTask.ts";
 import { ThreadGitPopover } from "@/components/git/ThreadGitPopover.tsx";
@@ -18,16 +18,6 @@ export const Route = createFileRoute("/agents/$agentId")({
   component: AgentPage,
 });
 
-const WIDE_QUERY = "(min-width: 1024px)";
-
-const startsWide = () => {
-  try {
-    return window.matchMedia(WIDE_QUERY).matches;
-  } catch {
-    return true;
-  }
-};
-
 type LoadState =
   | { readonly kind: "loading" }
   | { readonly kind: "loaded" }
@@ -40,17 +30,10 @@ function AgentPage() {
 
 function AgentView({ agentId }: { readonly agentId: string }) {
   const navigate = useNavigate();
-  const {
-    agents,
-    agentWork,
-    threadDetails,
-    loadAgentDetail,
-    updateAgent,
-    runCheckIn,
-    syncForgeIssues,
-  } = useWorkspace();
+  const { agents, agentWork, threadDetails, loadAgentDetail, updateAgent, runCheckIn } =
+    useWorkspace();
   const [load, setLoad] = useState<LoadState>({ kind: "loading" });
-  const [inspectorOpen, setInspectorOpen] = useState(startsWide);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const [tab, setTab] = useState<InspectorTab>("overview");
   const [delegateOpen, setDelegateOpen] = useState(false);
   const task = useTask();
@@ -109,21 +92,6 @@ function AgentView({ agentId }: { readonly agentId: string }) {
   const checkIn = () =>
     void task.run("checkin", () => runCheckIn(agent.id), "Could not run a check-in.");
 
-  const handleQuickAction = (action: QuickAction) => {
-    if (action === "checkin") {
-      checkIn();
-      return;
-    }
-    setInspectorOpen(true);
-    if (action === "sync") {
-      setTab("issues");
-      void task.run("sync", () => syncForgeIssues(agent.id), "Could not sync issues.");
-      return;
-    }
-    setTab("overview");
-    setDelegateOpen(true);
-  };
-
   return (
     <section className="relative flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
@@ -159,7 +127,11 @@ function AgentView({ agentId }: { readonly agentId: string }) {
             <Icon icon={SidebarRightIcon} />
           </Button>
         </header>
-        <AgentConversation agent={agent} detail={detail} onQuickAction={handleQuickAction} />
+        <AgentConversation
+          agent={agent}
+          detail={detail}
+          onViewAgent={() => setInspectorOpen((open) => !open)}
+        />
       </div>
       {inspectorOpen && (
         <>

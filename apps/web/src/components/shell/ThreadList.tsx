@@ -14,7 +14,7 @@ import { useState } from "react";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { ContextMenuItem, ContextMenuPopup, ContextMenuSeparator } from "@/components/ui/Menu.tsx";
-import { isCaptainThread } from "@/lib/agentState.ts";
+import { isAgentThread } from "@/lib/agentState.ts";
 import { easeOut, spring } from "@/lib/motion";
 import { useWorkspace } from "@/lib/workspace.tsx";
 import { SectionHeader, type SectionMenuEntry } from "./SectionHeader.tsx";
@@ -59,7 +59,7 @@ export function ThreadList({
     threads.filter(
       (thread) =>
         thread.settledAt === undefined &&
-        !isCaptainThread(agents, thread.id) &&
+        !isAgentThread(agents, thread.id) &&
         (filterProjectId === null || thread.projectId === filterProjectId),
     ),
     sort,

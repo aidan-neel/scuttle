@@ -7,7 +7,7 @@ import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState 
 import { BrandLogo } from "@/components/ui/BrandLogo.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
-import { isCaptainThread } from "@/lib/agentState.ts";
+import { isAgentThread } from "@/lib/agentState.ts";
 import { formatRelativeAge } from "@/lib/format.ts";
 import { easeOut, spring } from "@/lib/motion.ts";
 import { cn } from "@/lib/utils";
@@ -55,7 +55,7 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
   const matchedThreads = threads
     .filter(
       (t) =>
-        !isCaptainThread(agents, t.id) &&
+        !isAgentThread(agents, t.id) &&
         (q.length === 0 ||
           t.title.toLowerCase().includes(q) ||
           t.projectName.toLowerCase().includes(q) ||
