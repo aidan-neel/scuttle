@@ -123,15 +123,17 @@
 @utility capy-shimmer {
   color: transparent;
   background-image: linear-gradient(
-    90deg,
-    var(--color-fg-faint) 0%,
-    var(--color-fg-secondary) 50%,
-    var(--color-fg-faint) 100%
+    100deg,
+    #78787c 0%,
+    #78787c 38%,
+    var(--color-fg) 50%,
+    #78787c 62%,
+    #78787c 100%
   );
-  background-size: 220% 100%;
+  background-size: 260% 100%;
   background-clip: text;
   -webkit-background-clip: text;
-  animation: capy-shimmer 2.1s linear infinite;
+  animation: capy-shimmer 2s linear infinite;
 }
 
 :root {
@@ -227,5 +229,10 @@ html[data-resizing] * {
   ::after {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
+  }
+
+  .capy-shimmer {
+    color: var(--color-fg-muted);
+    background-image: none;
   }
 }
