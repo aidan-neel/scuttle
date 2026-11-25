@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { DitherHorizon } from "@/components/dithercn/dither-horizon.tsx";
 import { Composer, type ComposerSubmitPayload } from "@/components/home/Composer.tsx";
 import { ComposerContextBar } from "@/components/home/ComposerContextBar.tsx";
+import { useDitherBackground } from "@/components/settings/preferences.ts";
 import { AddProjectDialog } from "@/components/shell/AddProjectDialog.tsx";
 import { useWorkspace } from "@/lib/workspace.tsx";
 
@@ -25,6 +26,7 @@ function HomePage() {
     createThread,
   } = useWorkspace();
 
+  const ditherBackground = useDitherBackground();
   const [runtime, setRuntime] = useState<ThreadRuntime>("local");
   const [branch, setBranch] = useState<string>("main");
   const [addProjectOpen, setAddProjectOpen] = useState(false);
@@ -94,9 +96,11 @@ function HomePage() {
 
   return (
     <section className="group/home flex flex-1 flex-col items-center justify-center px-4 pb-24">
-      <div className="pointer-events-none absolute inset-0 -z-10 opacity-85 transition-opacity duration-300 ease-out group-has-[textarea:focus]/home:opacity-100">
-        <DitherHorizon intensity={0.72} className="absolute inset-0" />
-      </div>
+      {ditherBackground && (
+        <div className="pointer-events-none absolute inset-0 -z-10 opacity-85 transition-opacity duration-300 ease-out group-has-[textarea:focus]/home:opacity-100">
+          <DitherHorizon intensity={0.72} className="absolute inset-0" />
+        </div>
+      )}
       <h1 className="sr-only">New thread</h1>
       <div className="w-full max-w-composer">
         <ComposerContextBar

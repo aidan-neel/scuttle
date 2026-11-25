@@ -1,6 +1,7 @@
 import { ArrowUp02Icon, Cancel01Icon, PlusSignIcon, StopIcon } from "@hugeicons/core-free-icons";
 import type { ModelSelection, ProviderSnapshot, ThreadAttachment } from "@scuttle/contracts";
 import { type ChangeEvent, type KeyboardEvent, useLayoutEffect, useRef, useState } from "react";
+import { isSubmitKey, usePreferences } from "@/components/settings/preferences.ts";
 import { COMPOSER_ID } from "@/components/shell/AppShell.tsx";
 import { Button } from "@/components/ui/Button.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
@@ -38,6 +39,7 @@ export function Composer({
   onSubmit,
   onStop,
 }: ComposerProps) {
+  const { enterBehavior } = usePreferences();
   const [prompt, setPrompt] = useState("");
   const [attachments, setAttachments] = useState<ReadonlyArray<ThreadAttachment>>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -77,7 +79,7 @@ export function Composer({
       onStop();
       return;
     }
-    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    if (event.nativeEvent.isComposing || !isSubmitKey(enterBehavior, event)) return;
     event.preventDefault();
     void submit();
   };

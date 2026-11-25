@@ -318,6 +318,23 @@ export const launchTurnExecution = (
     };
   };
 
+  const closeRunningActivities = (completedAt: string, finalStatus: "completed" | "failed") => {
+    for (const [key, item] of activitiesByKey.entries()) {
+      if (item.status !== "running") continue;
+      const doneItem: ActivityItem = {
+        ...item,
+        status: finalStatus,
+        completedAt,
+        durationMs: Math.max(0, Date.parse(completedAt) - Date.parse(item.startedAt)),
+      };
+      activitiesByKey.set(key, doneItem);
+      db.prepare(
+        "UPDATE activities SET status = ?, completed_at = ?, duration_ms = ? WHERE id = ?",
+      ).run(doneItem.status, completedAt, doneItem.durationMs ?? 0, doneItem.id);
+      eventBus.publishSync({ kind: "turn.activity", activity: doneItem });
+    }
+  };
+
   const adapter = getHarnessAdapter(thread.modelSelection.providerKind);
   void adapter
     .runTurn({
@@ -336,21 +353,7 @@ export const launchTurnExecution = (
       closeThinkingIfOpen();
       const completedAt = new Date().toISOString();
       const durationMs = Math.max(0, Date.parse(completedAt) - startedMs);
-      for (const [key, item] of activitiesByKey.entries()) {
-        if (item.status === "running") {
-          const doneItem: ActivityItem = {
-            ...item,
-            status: result.interrupted ? "failed" : "completed",
-            completedAt,
-            durationMs: Math.max(0, Date.parse(completedAt) - Date.parse(item.startedAt)),
-          };
-          activitiesByKey.set(key, doneItem);
-          db.prepare(
-            "UPDATE activities SET status = ?, completed_at = ?, duration_ms = ? WHERE id = ?",
-          ).run(doneItem.status, completedAt, doneItem.durationMs ?? 0, doneItem.id);
-          eventBus.publishSync({ kind: "turn.activity", activity: doneItem });
-        }
-      }
+      closeRunningActivities(completedAt, "completed");
       const finalMessage =
         assistantText.length > 0 ? assistantText : (result.finalText ?? assistantText);
       const { activities, approvals } = readLatestTurnChildren();
@@ -371,6 +374,7 @@ export const launchTurnExecution = (
       closeThinkingIfOpen();
       const completedAt = new Date().toISOString();
       const durationMs = Math.max(0, Date.parse(completedAt) - startedMs);
+      closeRunningActivities(completedAt, controller.signal.aborted ? "completed" : "failed");
       const errorMessage = error instanceof Error ? error.message : String(error);
       const { activities, approvals } = readLatestTurnChildren();
       persistTurn({

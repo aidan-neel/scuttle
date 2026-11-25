@@ -1,4 +1,4 @@
-export const SIDEBAR = { min: 220, max: 420, initial: 280, collapsed: 8 } as const;
+export const SIDEBAR = { min: 220, max: 420, initial: 280 } as const;
 
 const STORAGE_KEY = "scuttle.sidebar-width.v1";
 

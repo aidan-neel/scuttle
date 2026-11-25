@@ -1,4 +1,4 @@
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { animate, motion, MotionConfig, useMotionValue } from "motion/react";
 import { type ReactNode, useState } from "react";
 import { spring } from "@/lib/motion";
@@ -9,6 +9,7 @@ import {
   writeSidebarWidth,
 } from "@/lib/sidebarWidth.ts";
 import { useServerConnection } from "@/lib/useServerConnection.ts";
+import { cn } from "@/lib/utils";
 import { WorkspaceProvider } from "@/lib/workspace.tsx";
 import { ResizeHandle } from "./ResizeHandle.tsx";
 import { Sidebar } from "./Sidebar.tsx";
@@ -20,6 +21,7 @@ const RAIL_WIDTH = 44;
 export function AppShell({ children }: { children: ReactNode }) {
   const connection = useServerConnection();
   const navigate = useNavigate();
+  const isSettings = useRouterState({ select: (s) => s.location.pathname === "/settings" });
   const [open, setOpen] = useState(true);
   const [width, setWidth] = useState(readSidebarWidth);
   const frameWidth = useMotionValue(width);
@@ -50,34 +52,38 @@ export function AppShell({ children }: { children: ReactNode }) {
     <MotionConfig reducedMotion="user">
       <WorkspaceProvider>
         <div className="flex h-dvh bg-chrome text-fg">
-          <motion.aside
-            style={{ width: frameWidth }}
-            className="relative hidden shrink-0 overflow-x-clip md:block"
-          >
-            <Sidebar
-              connection={connection}
-              open={open}
-              contentWidth={contentWidth}
-              onCollapse={() => toggle(false)}
-              onExpand={() => toggle(true)}
-              onNewThread={newThread}
-            />
-            {open && (
-              <ResizeHandle
-                width={width}
-                onResize={resize}
-                onResizeEnd={() => writeSidebarWidth(frameWidth.get())}
-                onReset={resetWidth}
-              />
-            )}
-          </motion.aside>
-          <main className="flex min-w-0 flex-1 flex-col p-2 md:pl-0">
-            <Link
-              to="/"
-              className="mb-2 flex h-9 items-center self-start rounded-control px-2 outline-none focus-visible:shadow-focus md:hidden"
+          {!isSettings && (
+            <motion.aside
+              style={{ width: frameWidth }}
+              className="relative hidden shrink-0 overflow-x-clip md:block"
             >
-              <span className="text-[14px] font-semibold tracking-tight">Scuttle</span>
-            </Link>
+              <Sidebar
+                connection={connection}
+                open={open}
+                contentWidth={contentWidth}
+                onCollapse={() => toggle(false)}
+                onExpand={() => toggle(true)}
+                onNewThread={newThread}
+              />
+              {open && (
+                <ResizeHandle
+                  width={width}
+                  onResize={resize}
+                  onResizeEnd={() => writeSidebarWidth(frameWidth.get())}
+                  onReset={resetWidth}
+                />
+              )}
+            </motion.aside>
+          )}
+          <main className={cn("flex min-w-0 flex-1 flex-col p-2", !isSettings && "md:pl-0")}>
+            {!isSettings && (
+              <Link
+                to="/"
+                className="mb-2 flex h-9 items-center self-start rounded-control px-2 outline-none focus-visible:shadow-focus md:hidden"
+              >
+                <span className="text-[14px] font-semibold tracking-tight">Scuttle</span>
+              </Link>
+            )}
             <div className="relative isolate flex min-h-0 flex-1 flex-col overflow-hidden rounded-canvas bg-canvas shadow-canvas">
               {children}
             </div>

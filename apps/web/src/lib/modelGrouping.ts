@@ -52,13 +52,16 @@ const KNOWN_UPSTREAMS: ReadonlyArray<readonly [string, string]> = [
   ["moonshot", "Moonshot"],
   ["zai", "Z.ai"],
   ["z-ai", "Z.ai"],
+  ["zai-coding-plan", "Z.ai Coding Plan"],
   ["zhipuai", "Zhipu"],
   ["minimax", "MiniMax"],
   ["cohere", "Cohere"],
   ["perplexity", "Perplexity"],
   ["openrouter", "OpenRouter"],
   ["opencode", "OpenCode"],
+  ["opencode-go", "OpenCode Go"],
   ["github-copilot", "GitHub Copilot"],
+  ["github-models", "GitHub Models"],
   ["amazon-bedrock", "Amazon Bedrock"],
   ["azure", "Azure"],
   ["groq", "Groq"],
@@ -83,7 +86,7 @@ for (const [id, label] of KNOWN_UPSTREAMS) {
   KNOWN_BY_ID.set(id, { label, rank });
 }
 
-const UPPERCASE_WORDS = new Set(["ai", "api", "llm", "gpt"]);
+const UPPERCASE_WORDS = new Set(["ai", "api", "llm", "gpt", "lm"]);
 
 function humanizePrefix(prefix: string): string {
   return prefix
