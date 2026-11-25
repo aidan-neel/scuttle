@@ -6,10 +6,10 @@ import type { Project, Thread } from "@scuttle/contracts";
 import { ProviderId } from "@scuttle/shared/ids";
 import * as Effect from "effect/Effect";
 import * as ManagedRuntime from "effect/ManagedRuntime";
-import { handleApiRequest } from "../httpRoutes.ts";
-import { makeAppLayer } from "../server.ts";
-import * as ProjectService from "./ProjectService.ts";
-import * as ThreadService from "./ThreadService.ts";
+import { handleApiRequest } from "../../src/httpRoutes.ts";
+import { makeAppLayer } from "../../src/server.ts";
+import * as ProjectService from "../../src/services/ProjectService.ts";
+import * as ThreadService from "../../src/services/ThreadService.ts";
 
 const runGitSync = (cwd: string, args: ReadonlyArray<string>) => {
   const proc = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });

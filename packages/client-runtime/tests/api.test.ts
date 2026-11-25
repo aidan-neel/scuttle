@@ -10,7 +10,7 @@ import {
   ThreadId,
   TurnId,
 } from "@scuttle/shared/ids";
-import { createScuttleApiClient } from "./api.ts";
+import { createScuttleApiClient } from "../src/api.ts";
 
 const originalFetch = globalThis.fetch;
 

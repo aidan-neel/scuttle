@@ -2,12 +2,16 @@ import { Database } from "bun:sqlite";
 import { describe, expect, spyOn, test } from "bun:test";
 import type { ProviderConfig, ServerPushEvent, Thread, ThreadTurn } from "@scuttle/contracts";
 import { ProjectId, ProviderId, ThreadId, TurnId } from "@scuttle/shared/ids";
-import { applyScuttleMigrations } from "../persistence/migrations.ts";
-import { claudeAdapter } from "../providers/claudeAdapter.ts";
-import * as EventBus from "./EventBus.ts";
-import { readThreadById } from "./threadStore.ts";
-import { deriveThreadTitle, shouldRefreshThreadTitle } from "./threadTitle.ts";
-import { type ActiveRun, launchTurnExecution, type PendingApprovalResolver } from "./turnRunner.ts";
+import { applyScuttleMigrations } from "../../src/persistence/migrations.ts";
+import { claudeAdapter } from "../../src/providers/claudeAdapter.ts";
+import * as EventBus from "../../src/services/EventBus.ts";
+import { readThreadById } from "../../src/services/threadStore.ts";
+import { deriveThreadTitle, shouldRefreshThreadTitle } from "../../src/services/threadTitle.ts";
+import {
+  type ActiveRun,
+  launchTurnExecution,
+  type PendingApprovalResolver,
+} from "../../src/services/turnRunner.ts";
 
 const turn = (userMessage: string, assistantMessage = "") => ({ userMessage, assistantMessage });
 

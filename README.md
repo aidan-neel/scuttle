@@ -1,27 +1,41 @@
+<div align="center">
+
 # Scuttle
 
-Local-first web and desktop workspace built with **React + Vite + TanStack Router**, **TypeScript + Effect 4 (Bun)**, **Electrobun v2**, and **Rust**.
+Fast, local-first workspace for coding agents across web and desktop.
 
-## Prerequisites
+[Quick Start](#quick-start) · [Stack](#stack) · [Checks](#checks)
 
-- [Bun](https://bun.sh/) `>= 1.4`
-- [Rust](https://rustup.rs/) `1.94.1` (auto-selected via `rust-toolchain.toml`)
+<br />
+
+<img src="docs/screenshot.png" alt="Scuttle workspace" width="100%" />
+
+</div>
 
 ## Quick Start
 
+Requires [Bun](https://bun.sh/) `>= 1.4` and [Rust](https://rustup.rs/) `1.94.1` (auto-selected via `rust-toolchain.toml`).
+
 ```bash
-# Install JS/TS dependencies
 bun install
-
-# Prepare the Electrobun v2 Hutch devkit (needed once for desktop typecheck & dev)
 bun run desktop:prepare
-
-# Run web + Effect backend together (http://localhost:5173)
 bun run dev
+```
 
-# Run the native Electrobun desktop app
+Launch the native Electrobun desktop shell.
+
+```bash
 bun run dev:desktop
 ```
+
+## Stack
+
+| Layer                            | Technologies                                                              |
+| :------------------------------- | :------------------------------------------------------------------------ |
+| Web (`apps/web`)                 | React 19, React Compiler, Vite, TanStack Router, Tailwind CSS v4, Base UI |
+| Desktop (`apps/desktop`)         | Electrobun v2 hosting the same SPA with an in-process backend             |
+| Server (`apps/server`)           | Bun, Effect 4, SQLite (WAL), WebSocket and HTTP RPC                       |
+| Native (`crates/scuttle-native`) | Rust workspace for performance-critical OS and native tasks               |
 
 ## Checks
 

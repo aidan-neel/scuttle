@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { IDENTICON_GRID, identicon } from "./identicon.ts";
+import { IDENTICON_GRID, identicon } from "../src/identicon.ts";
 
 describe("identicon", () => {
   test("returns the same identicon for the same name", () => {

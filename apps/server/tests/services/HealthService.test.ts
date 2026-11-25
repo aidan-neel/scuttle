@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as ServerConfig from "../config.ts";
-import * as Sqlite from "../persistence/Sqlite.ts";
-import * as HealthService from "./HealthService.ts";
+import * as ServerConfig from "../../src/config.ts";
+import * as Sqlite from "../../src/persistence/Sqlite.ts";
+import * as HealthService from "../../src/services/HealthService.ts";
 
 const testConfigLayer = ServerConfig.layer({
   dbPath: ":memory:",
