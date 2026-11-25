@@ -8,6 +8,7 @@ import type {
 import * as Effect from "effect/Effect";
 import type * as GitService from "../GitService.ts";
 import { fromHttpError, GitForgeError } from "./errors.ts";
+import type { ForgeHttpError } from "./forgeHttp.ts";
 import { CLI_BINARY, type CliDetection } from "./forgeCli.ts";
 import type { StoredForgeAccount } from "./forgeAccounts.ts";
 import type { FetchFn } from "./forgeHttp.ts";
@@ -122,13 +123,21 @@ export const makeForgeRepoOps = (deps: {
         detail: `No ${FORGE_LABEL[forge]} credential for ${remote.host}. Run \`${CLI_BINARY[forge]} auth login\` or connect ${FORGE_LABEL[forge]} in Settings → Git.`,
       });
     }
-    return { status, transport, owner: remote.owner, repo: remote.repo };
+    const slug = `${remote.owner}/${remote.repo}`;
+    const toError = (error: ForgeHttpError) =>
+      error.status === 404
+        ? new GitForgeError({
+            reason: "not-found",
+            detail: `${slug} was not found on ${remote.host}, or your ${FORGE_LABEL[forge]} account cannot access it.`,
+          })
+        : fromHttpError(error);
+    return { status, transport, owner: remote.owner, repo: remote.repo, toError };
   });
 
   const listPullRequests = Effect.fn("GitForgeService.listPullRequests")(function* (cwd: string) {
     const ctx = yield* forgeContext(cwd);
     const items = yield* listOpenPullRequests(ctx.transport, ctx.owner, ctx.repo).pipe(
-      Effect.mapError(fromHttpError),
+      Effect.mapError(ctx.toError),
     );
     return { forge: ctx.transport.forge, authSource: transportAuthSource(ctx.transport), items };
   });
@@ -153,7 +162,7 @@ export const makeForgeRepoOps = (deps: {
     const base =
       input.base ??
       (yield* fetchDefaultBranch(ctx.transport, ctx.owner, ctx.repo).pipe(
-        Effect.mapError(fromHttpError),
+        Effect.mapError(ctx.toError),
       ));
     if (base === head) {
       return yield* new GitForgeError({
@@ -168,7 +177,7 @@ export const makeForgeRepoOps = (deps: {
       head,
       base,
       draft: input.draft === true,
-    }).pipe(Effect.mapError(fromHttpError));
+    }).pipe(Effect.mapError(ctx.toError));
   });
 
   return {

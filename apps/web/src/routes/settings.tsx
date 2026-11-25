@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { ModelsSection, ProjectsSection } from "@/components/settings/AgentSections.tsx";
 import { EnvironmentSection } from "@/components/settings/EnvironmentSection.tsx";
+import { GitSection } from "@/components/settings/GitSection.tsx";
 import { SettingsHeader } from "@/components/settings/primitives.tsx";
 import { ProvidersSection } from "@/components/settings/ProvidersSection.tsx";
 import {
@@ -38,6 +39,8 @@ function SectionBody({ id }: { readonly id: SectionId }) {
       return <ModelsSection />;
     case "projects":
       return <ProjectsSection />;
+    case "git":
+      return <GitSection />;
     case "environment":
       return <EnvironmentSection />;
   }

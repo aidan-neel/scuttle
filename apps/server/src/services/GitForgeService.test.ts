@@ -216,8 +216,17 @@ const fakeForge = () => {
   return { requests, replies, fetchFn };
 };
 
-const cliMissing: CommandRunner = () =>
-  Effect.succeed({ exitCode: 127, stdout: "", stderr: "not found", timedOut: false });
+const cliCalls: Array<ReadonlyArray<string>> = [];
+let ghLoggedIn = false;
+const fakeCli: CommandRunner = (argv) => {
+  cliCalls.push(argv);
+  const reply = (exitCode: number, stdout: string, stderr = "") =>
+    Effect.succeed({ exitCode, stdout, stderr, timedOut: false });
+  if (!ghLoggedIn || argv[0] !== "gh") return reply(127, "", "not found");
+  if (argv[1] === "--version") return reply(0, "gh version 2.45.0 (2025-07-18)");
+  if (argv[1] === "auth") return reply(0, "", "  ✓ Logged in to github.com account octo (keyring)");
+  return reply(1, '{"message":"Not Found"}', "gh: Not Found (HTTP 404)");
+};
 
 const git = (cwd: string, ...args: string[]) => {
   const result = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
@@ -233,13 +242,14 @@ describe("git forge HTTP routes", () => {
       { dbPath: ":memory:" },
       {
         githubOAuthClientId: "test-client",
-        runner: cliMissing,
+        runner: fakeCli,
         fetch: forge.fetchFn,
         now: () => now,
       },
     ),
   );
   let tempDir = "";
+  let projectGitBase = "";
 
   beforeAll(() => {
     tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scuttle-git-forge-"));
@@ -385,6 +395,7 @@ describe("git forge HTTP routes", () => {
 
     const project = await call("POST", "/api/projects", { path: repo });
     const base = `/api/projects/${project.json.id}/git`;
+    projectGitBase = base;
 
     const checkout = await call("POST", `${base}/checkout`, {
       branch: "feature/login",
@@ -451,5 +462,22 @@ describe("git forge HTTP routes", () => {
       draft: true,
     });
     expect(git(bare, "branch", "--list", "feature/login")).toContain("feature/login");
+  });
+
+  it("prefers a logged-in gh CLI and explains a missing repository", async () => {
+    ghLoggedIn = true;
+    now += 60_000;
+    const result = await call("GET", `${projectGitBase}/pull-requests`);
+    expect(result.status).toBe(404);
+    expect(result.json.error).toContain("acme/widgets was not found on github.com");
+    expect(cliCalls.at(-1)).toEqual([
+      "gh",
+      "api",
+      "--hostname",
+      "github.com",
+      "-X",
+      "GET",
+      "repos/acme/widgets/pulls?state=open&per_page=30",
+    ]);
   });
 });

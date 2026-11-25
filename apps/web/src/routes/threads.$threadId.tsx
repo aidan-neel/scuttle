@@ -2,6 +2,7 @@ import { StopIcon } from "@hugeicons/core-free-icons";
 import type { ModelSelection } from "@scuttle/contracts";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
+import { ThreadGitPopover } from "@/components/git/ThreadGitPopover.tsx";
 import { Composer, type ComposerSubmitPayload } from "@/components/home/Composer.tsx";
 import { ScrollRuler } from "@/components/thread/ScrollRuler.tsx";
 import { ThreadTurnView } from "@/components/thread/ThreadTurnView.tsx";
@@ -107,6 +108,11 @@ function ThreadPage() {
         </span>
         <span className="text-fg-faint">/</span>
         <h1 className="min-w-0 flex-1 truncate text-body font-medium text-fg">{thread.title}</h1>
+        <ThreadGitPopover
+          target={{ projectId: thread.projectId, threadId: thread.id }}
+          fallbackBranch={thread.branch}
+          refreshKey={`${thread.status.kind}:${turns.length}`}
+        />
         {isRunning && (
           <Button variant="destructive" size="sm" onClick={() => void interruptTurn(thread.id)}>
             <Icon icon={StopIcon} />

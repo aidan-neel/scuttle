@@ -1,4 +1,16 @@
 import {
+  type CreatePullRequestInput,
+  DeviceFlowPoll,
+  DeviceFlowStart,
+  type ForgeKind,
+  ForgeStatus,
+  type ForgeTokenInput,
+  GitActionResult,
+  type GitCheckoutInput,
+  type GitCommitInput,
+  GitStatus,
+  PullRequest,
+  PullRequestList,
   type CreateProjectInput,
   type CreateThreadInput,
   DirectoryListing,
@@ -28,6 +40,21 @@ const decodeProvider = Schema.decodeUnknownEffect(ProviderSnapshot);
 const decodeThread = Schema.decodeUnknownEffect(Thread);
 const decodeThreadDetail = Schema.decodeUnknownEffect(ThreadDetail);
 const decodeTurn = Schema.decodeUnknownEffect(ThreadTurn);
+const decodeForges = Schema.decodeUnknownEffect(Schema.Array(ForgeStatus));
+const decodeForge = Schema.decodeUnknownEffect(ForgeStatus);
+const decodeDeviceStart = Schema.decodeUnknownEffect(DeviceFlowStart);
+const decodeDevicePoll = Schema.decodeUnknownEffect(DeviceFlowPoll);
+const decodeGitStatus = Schema.decodeUnknownEffect(GitStatus);
+const decodeGitAction = Schema.decodeUnknownEffect(GitActionResult);
+const decodePullRequests = Schema.decodeUnknownEffect(PullRequestList);
+const decodePullRequest = Schema.decodeUnknownEffect(PullRequest);
+
+export const describeApiError = (error: unknown, fallback: string): string => {
+  if (error instanceof ServerFetchError && error.cause instanceof Error) {
+    return error.cause.message;
+  }
+  return error instanceof Error && error.message.length > 0 ? error.message : fallback;
+};
 
 const extractErrorMessage = (payload: unknown, fallback: string): string => {
   if (typeof payload === "object" && payload !== null && "error" in payload) {
@@ -103,6 +130,67 @@ const requestVoid = (baseUrl: string | undefined, path: string, init: RequestIni
       });
     }
   });
+
+export interface GitTargetRef {
+  readonly projectId: string;
+  readonly threadId?: string;
+}
+
+const gitPath = (target: GitTargetRef, action: string): string => {
+  const query =
+    target.threadId !== undefined ? `?threadId=${encodeURIComponent(target.threadId)}` : "";
+  return `/api/projects/${encodeURIComponent(target.projectId)}/git/${action}${query}`;
+};
+
+const postJson = (body?: unknown): RequestInit =>
+  body === undefined ? { method: "POST" } : { method: "POST", body: JSON.stringify(body) };
+
+export interface ScuttleGitApi {
+  readonly listForges: (refresh?: boolean) => Promise<ReadonlyArray<ForgeStatus>>;
+  readonly connectForgeToken: (input: ForgeTokenInput) => Promise<ForgeStatus>;
+  readonly disconnectForge: (forge: ForgeKind) => Promise<ForgeStatus>;
+  readonly startGithubDeviceFlow: () => Promise<DeviceFlowStart>;
+  readonly pollGithubDeviceFlow: (flowId: string) => Promise<DeviceFlowPoll>;
+  readonly getGitStatus: (target: GitTargetRef) => Promise<GitStatus>;
+  readonly commitGit: (target: GitTargetRef, input: GitCommitInput) => Promise<GitActionResult>;
+  readonly pushGit: (target: GitTargetRef) => Promise<GitActionResult>;
+  readonly pullGit: (target: GitTargetRef) => Promise<GitActionResult>;
+  readonly checkoutGit: (target: GitTargetRef, input: GitCheckoutInput) => Promise<GitActionResult>;
+  readonly listPullRequests: (target: GitTargetRef) => Promise<PullRequestList>;
+  readonly createPullRequest: (
+    target: GitTargetRef,
+    input: CreatePullRequestInput,
+  ) => Promise<PullRequest>;
+}
+
+export const createScuttleGitApi = (baseUrl?: string): ScuttleGitApi => {
+  const call = <A>(
+    path: string,
+    init: RequestInit | undefined,
+    decode: (input: unknown) => Effect.Effect<A, unknown>,
+  ) => Effect.runPromise(requestJson(baseUrl, path, init, decode));
+  return {
+    listForges: (refresh) =>
+      call(`/api/git/forges${refresh === true ? "?refresh=1" : ""}`, undefined, decodeForges),
+    connectForgeToken: (input) => call("/api/git/forges/token", postJson(input), decodeForge),
+    disconnectForge: (forge) =>
+      call(`/api/git/forges/${encodeURIComponent(forge)}`, { method: "DELETE" }, decodeForge),
+    startGithubDeviceFlow: () =>
+      call("/api/git/forges/github/device/start", postJson(), decodeDeviceStart),
+    pollGithubDeviceFlow: (flowId) =>
+      call("/api/git/forges/github/device/poll", postJson({ flowId }), decodeDevicePoll),
+    getGitStatus: (target) => call(gitPath(target, "status"), undefined, decodeGitStatus),
+    commitGit: (target, input) => call(gitPath(target, "commit"), postJson(input), decodeGitAction),
+    pushGit: (target) => call(gitPath(target, "push"), postJson(), decodeGitAction),
+    pullGit: (target) => call(gitPath(target, "pull"), postJson(), decodeGitAction),
+    checkoutGit: (target, input) =>
+      call(gitPath(target, "checkout"), postJson(input), decodeGitAction),
+    listPullRequests: (target) =>
+      call(gitPath(target, "pull-requests"), undefined, decodePullRequests),
+    createPullRequest: (target, input) =>
+      call(gitPath(target, "pull-requests"), postJson(input), decodePullRequest),
+  };
+};
 
 export interface ScuttleApiClient {
   readonly getWorkspace: () => Promise<WorkspaceSnapshot>;

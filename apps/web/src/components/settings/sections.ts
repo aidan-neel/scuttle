@@ -2,6 +2,7 @@ import {
   AiBrain01Icon,
   ComputerIcon,
   Folder01Icon,
+  GitBranchIcon,
   KeyboardIcon,
   PaintBoardIcon,
   PlugSocketIcon,
@@ -16,6 +17,7 @@ export const SECTION_IDS = [
   "providers",
   "models",
   "projects",
+  "git",
   "environment",
 ] as const;
 
@@ -84,6 +86,22 @@ export const SETTINGS_GROUPS: ReadonlyArray<SectionGroup> = [
         description: "Repositories and folders agents can work in.",
         icon: Folder01Icon,
         keywords: ["repository", "repo", "folder", "branch", "git"],
+      },
+      {
+        id: "git",
+        label: "Git",
+        description: "GitHub and GitLab accounts used for pull and merge requests.",
+        icon: GitBranchIcon,
+        keywords: [
+          "github",
+          "gitlab",
+          "gh",
+          "glab",
+          "token",
+          "oauth",
+          "pull request",
+          "merge request",
+        ],
       },
     ],
   },

@@ -76,7 +76,8 @@ export const forgeCall = (
       const detail =
         forgeErrorMessage(payload) ??
         commandFailure(result, `${CLI_BINARY[transport.forge]} api failed`);
-      return Effect.fail(new ForgeHttpError({ status: 502, detail: redactSecrets(detail) }));
+      const status = Number(/\(HTTP (\d{3})\)/.exec(result.stderr)?.[1] ?? 502);
+      return Effect.fail(new ForgeHttpError({ status, detail: redactSecrets(detail) }));
     }),
   );
 };
