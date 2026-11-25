@@ -1,17 +1,15 @@
 import { ComputerIcon, Folder01Icon, GitBranchIcon } from "@hugeicons/core-free-icons";
-import type { InteractionMode, RuntimeMode, ThreadRuntime } from "@scuttle/contracts";
+import type { ThreadRuntime } from "@scuttle/contracts";
 import { ProjectId } from "@scuttle/shared/ids";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { motion } from "motion/react";
 import { useEffect, useState } from "react";
-import { DitherGlow } from "@/components/dithercn/dither-glow";
+import { DitherHorizon } from "@/components/dithercn/dither-horizon.tsx";
 import { Composer, type ComposerSubmitPayload } from "@/components/home/Composer.tsx";
 import { AddProjectDialog } from "@/components/shell/AddProjectDialog.tsx";
 import { Button } from "@/components/ui/Button.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
 import { Picker } from "@/components/ui/Picker.tsx";
-import { easeOut } from "@/lib/motion";
 import { useWorkspace } from "@/lib/workspace.tsx";
 
 export const Route = createFileRoute("/")({
@@ -39,8 +37,6 @@ function HomePage() {
 
   const [runtime, setRuntime] = useState<ThreadRuntime>("local");
   const [branch, setBranch] = useState<string>("main");
-  const [runtimeMode, setRuntimeMode] = useState<RuntimeMode>("auto");
-  const [interactionMode, setInteractionMode] = useState<InteractionMode>("default");
   const [addProjectOpen, setAddProjectOpen] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -97,8 +93,8 @@ function HomePage() {
         runtime,
         branch: effectiveBranch,
         modelSelection: payload.modelSelection,
-        runtimeMode: payload.runtimeMode,
-        interactionMode: payload.interactionMode,
+        runtimeMode: "auto",
+        interactionMode: "default",
         ...(payload.attachments.length > 0 ? { attachments: [...payload.attachments] } : {}),
       });
       await navigate({ to: "/threads/$threadId", params: { threadId: detail.thread.id } });
@@ -109,22 +105,11 @@ function HomePage() {
 
   return (
     <section className="group/home flex flex-1 flex-col items-center justify-center px-4 pb-24">
-      <div className="absolute inset-0 -z-10 opacity-80 transition-opacity duration-700 ease-out group-has-[textarea:focus]/home:opacity-100">
-        <DitherGlow
-          position="top-left"
-          radius={0.5}
-          intensity={0.6}
-          speed={4}
-          className="absolute inset-0"
-        />
+      <div className="pointer-events-none absolute inset-0 -z-10 opacity-85 transition-opacity duration-300 ease-out group-has-[textarea:focus]/home:opacity-100">
+        <DitherHorizon intensity={0.72} className="absolute inset-0" />
       </div>
       <h1 className="sr-only">New thread</h1>
-      <motion.div
-        initial={{ opacity: 0, y: 12, filter: "blur(4px)" }}
-        animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-        transition={{ duration: 0.4, ease: easeOut, delay: 0.05 }}
-        className="w-full max-w-composer"
-      >
+      <div className="w-full max-w-composer">
         <div className="mb-2 flex items-center gap-1 px-1">
           {activeProject ? (
             <Picker
@@ -159,14 +144,10 @@ function HomePage() {
           providers={providers}
           modelSelection={defaultModelSelection}
           onModelSelectionChange={setDefaultModelSelection}
-          runtimeMode={runtimeMode}
-          onRuntimeModeChange={setRuntimeMode}
-          interactionMode={interactionMode}
-          onInteractionModeChange={setInteractionMode}
           disabled={!activeProject}
           onSubmit={handleSubmit}
         />
-      </motion.div>
+      </div>
       <AddProjectDialog open={addProjectOpen} onOpenChange={setAddProjectOpen} />
     </section>
   );

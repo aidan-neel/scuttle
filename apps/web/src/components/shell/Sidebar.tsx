@@ -14,7 +14,6 @@ import { easeOut } from "@/lib/motion";
 import { useWorkspace } from "@/lib/workspace.tsx";
 import { AddProjectDialog } from "./AddProjectDialog.tsx";
 import { ConnectionStatus } from "./ConnectionStatus.tsx";
-import { Mark } from "./Mark.tsx";
 import { ProjectList } from "./ProjectList.tsx";
 import { SearchDialog } from "./SearchDialog.tsx";
 import { SettledButton } from "./SettledButton.tsx";
@@ -47,9 +46,8 @@ export function Sidebar({ connection, open, contentWidth, onCollapse, onNewThrea
         <div className="flex h-9 items-center gap-1 pr-1 pl-2">
           <Link
             to="/"
-            className="flex flex-1 items-center gap-2.5 rounded-control outline-none focus-visible:shadow-focus"
+            className="flex flex-1 items-center rounded-control outline-none focus-visible:shadow-focus"
           >
-            <Mark />
             <span className="text-[14px] font-semibold tracking-tight text-fg">Scuttle</span>
           </Link>
           <Button

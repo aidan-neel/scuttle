@@ -108,10 +108,14 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
                     className="flex w-full items-center gap-2 rounded-chip px-2 py-1.5 text-left transition-colors hover:bg-(--wash)"
                   >
                     <Identicon name={project.name} size="sm" />
-                    <span className="text-body font-medium text-fg">{project.name}</span>
-                    <span className="min-w-0 flex-1 truncate font-mono text-meta text-fg-muted">
-                      {project.path}
+                    <span className="min-w-0 flex-1 truncate text-body font-medium text-fg">
+                      {project.name}
                     </span>
+                    {project.isGitRepo && (
+                      <span className="rounded-chip bg-white/6 px-1.5 py-0.5 font-mono text-meta text-fg-muted">
+                        {project.defaultBranch}
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>

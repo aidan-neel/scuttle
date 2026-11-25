@@ -6,11 +6,6 @@ import { spring } from "@/lib/motion";
 import { useWorkspace } from "@/lib/workspace.tsx";
 import { SectionHeader } from "./SectionHeader.tsx";
 
-const item = {
-  hidden: { opacity: 0, y: 6 },
-  show: { opacity: 1, y: 0, transition: spring.smooth },
-};
-
 export function ProjectList({ onAddProject }: { readonly onAddProject: () => void }) {
   const { projects, selectedProjectId, selectProject } = useWorkspace();
   const navigate = useNavigate();
@@ -24,16 +19,13 @@ export function ProjectList({ onAddProject }: { readonly onAddProject: () => voi
         onAdd={onAddProject}
       />
       <LayoutGroup id="projects">
-        <motion.ul
-          initial="hidden"
-          animate="show"
-          variants={{ show: { transition: { staggerChildren: 0.04 } } }}
-          className="mt-0.5 flex flex-col gap-px"
-        >
+        <ul className="mt-0.5 flex flex-col gap-px">
           {projects.map((project) => {
             const isSelected = project.id === selectedProjectId;
+            const subtitle =
+              project.lastMessage ?? (project.isGitRepo ? project.defaultBranch : "Ready");
             return (
-              <motion.li key={project.id} variants={item}>
+              <li key={project.id}>
                 <button
                   type="button"
                   aria-current={isSelected}
@@ -60,20 +52,18 @@ export function ProjectList({ onAddProject }: { readonly onAddProject: () => voi
                         {formatRelativeAge(project.lastActivityAt ?? project.updatedAt)}
                       </span>
                     </span>
-                    <span className="truncate text-label text-fg-muted">
-                      {project.lastMessage ?? project.path}
-                    </span>
+                    <span className="truncate text-label text-fg-muted">{subtitle}</span>
                   </span>
                 </button>
-              </motion.li>
+              </li>
             );
           })}
           {projects.length === 0 && (
             <li className="px-2 py-2 text-label text-fg-muted">
-              No projects yet. Press + to add a folder.
+              No projects yet. Press + to add one.
             </li>
           )}
-        </motion.ul>
+        </ul>
       </LayoutGroup>
     </section>
   );

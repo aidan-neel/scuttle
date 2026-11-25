@@ -13,7 +13,6 @@ import {
 } from "@/lib/sidebarWidth.ts";
 import { useServerConnection } from "@/lib/useServerConnection.ts";
 import { WorkspaceProvider } from "@/lib/workspace.tsx";
-import { Mark } from "./Mark.tsx";
 import { ResizeHandle } from "./ResizeHandle.tsx";
 import { Sidebar } from "./Sidebar.tsx";
 
@@ -75,9 +74,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           <main className="flex min-w-0 flex-1 flex-col p-2 md:pl-0">
             <Link
               to="/"
-              className="mb-2 flex h-9 items-center gap-2.5 self-start rounded-control px-2 outline-none focus-visible:shadow-focus md:hidden"
+              className="mb-2 flex h-9 items-center self-start rounded-control px-2 outline-none focus-visible:shadow-focus md:hidden"
             >
-              <Mark />
               <span className="text-[14px] font-semibold tracking-tight">Scuttle</span>
             </Link>
             <div className="relative isolate flex min-h-0 flex-1 flex-col overflow-hidden rounded-canvas bg-canvas shadow-canvas">

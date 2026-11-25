@@ -6,7 +6,7 @@ import {
   Tick02Icon,
   Undo02Icon,
 } from "@hugeicons/core-free-icons";
-import type { InteractionMode, ModelSelection, RuntimeMode } from "@scuttle/contracts";
+import type { ModelSelection } from "@scuttle/contracts";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { Composer, type ComposerSubmitPayload } from "@/components/home/Composer.tsx";
@@ -96,22 +96,12 @@ function ThreadPage() {
     void updateThread(thread.id, { modelSelection });
   };
 
-  const handleRuntimeModeChange = (runtimeMode: RuntimeMode) => {
-    void updateThread(thread.id, { runtimeMode });
-  };
-
-  const handleInteractionModeChange = (interactionMode: InteractionMode) => {
-    void updateThread(thread.id, { interactionMode });
-  };
-
   const handleSubmit = async (payload: ComposerSubmitPayload) => {
     setSubmitError(null);
     try {
       await sendTurn(thread.id, {
         prompt: payload.prompt,
         modelSelection: payload.modelSelection,
-        runtimeMode: payload.runtimeMode,
-        interactionMode: payload.interactionMode,
         ...(payload.attachments.length > 0 ? { attachments: [...payload.attachments] } : {}),
       });
     } catch (error) {
@@ -128,7 +118,9 @@ function ThreadPage() {
     <section className="flex min-h-0 flex-1 flex-col">
       <header className="flex h-12 shrink-0 items-center gap-2.5 border-b border-line px-4">
         <Identicon name={thread.projectName} size="sm" />
-        <span className="text-label font-medium text-fg-secondary">{thread.projectName}</span>
+        <span className="shrink-0 text-label font-medium text-fg-secondary">
+          {thread.projectName}
+        </span>
         <span className="text-fg-faint">/</span>
         <h1 className="min-w-0 flex-1 truncate text-body font-medium text-fg">{thread.title}</h1>
         <span className="hidden items-center gap-1 rounded-chip bg-white/5 px-2 py-0.5 font-mono text-meta text-fg-muted sm:inline-flex">
@@ -196,10 +188,6 @@ function ThreadPage() {
             providers={providers}
             modelSelection={thread.modelSelection}
             onModelSelectionChange={handleModelChange}
-            runtimeMode={thread.runtimeMode}
-            onRuntimeModeChange={handleRuntimeModeChange}
-            interactionMode={thread.interactionMode}
-            onInteractionModeChange={handleInteractionModeChange}
             running={isRunning}
             onSubmit={handleSubmit}
             onStop={() => void interruptTurn(thread.id)}
