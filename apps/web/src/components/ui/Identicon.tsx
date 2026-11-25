@@ -5,6 +5,7 @@ const SIZES = {
   sm: { box: 16, radius: 4 },
   md: { box: 24, radius: 6 },
   lg: { box: 32, radius: 8 },
+  xl: { box: 56, radius: 14 },
 } as const;
 
 interface IdenticonProps {

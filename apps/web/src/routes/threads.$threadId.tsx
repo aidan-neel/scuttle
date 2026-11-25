@@ -6,6 +6,7 @@ import { ThreadGitPopover } from "@/components/git/ThreadGitPopover.tsx";
 import { Composer, type ComposerSubmitPayload } from "@/components/home/Composer.tsx";
 import { ScrollRuler } from "@/components/thread/ScrollRuler.tsx";
 import { ThreadTurnView } from "@/components/thread/ThreadTurnView.tsx";
+import { useStickToBottom } from "@/components/thread/useStickToBottom.ts";
 import { Button } from "@/components/ui/Button.tsx";
 import { DotSpinner } from "@/components/ui/DotSpinner.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
@@ -47,17 +48,7 @@ function ThreadPage() {
   }, [threadId]);
 
   const turns = detail?.turns ?? [];
-  const lastTurn = turns[turns.length - 1];
-  const scrollSignature = `${turns.length}:${lastTurn?.assistantMessage.length ?? 0}:${lastTurn?.activities.length ?? 0}:${lastTurn?.approvals.length ?? 0}`;
-
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (distanceFromBottom < 220) {
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [scrollSignature]);
+  useStickToBottom(scrollRef, turns);
 
   if (loadError) {
     return (

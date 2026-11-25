@@ -1,12 +1,13 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { Search01Icon } from "@hugeicons/core-free-icons";
-import type { Project, Thread } from "@scuttle/contracts";
+import type { Agent, Project, Thread } from "@scuttle/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { AnimatePresence, motion } from "motion/react";
 import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { BrandLogo } from "@/components/ui/BrandLogo.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
+import { isCaptainThread } from "@/lib/agentState.ts";
 import { formatRelativeAge } from "@/lib/format.ts";
 import { easeOut, spring } from "@/lib/motion.ts";
 import { cn } from "@/lib/utils";
@@ -20,11 +21,12 @@ interface SearchDialogProps {
 }
 
 type Result =
+  | { readonly kind: "agent"; readonly agent: Agent }
   | { readonly kind: "thread"; readonly thread: Thread }
   | { readonly kind: "project"; readonly project: Project };
 
 export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
-  const { projects, threads, selectProject } = useWorkspace();
+  const { agents, projects, threads, selectProject } = useWorkspace();
   const navigate = useNavigate();
   const baseId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -43,23 +45,34 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
   }, [open, onOpenChange]);
 
   const q = query.trim().toLowerCase();
+  const matchedAgents = agents.filter(
+    (a) =>
+      q.length === 0 ||
+      a.name.toLowerCase().includes(q) ||
+      a.purpose.toLowerCase().includes(q) ||
+      a.projectName.toLowerCase().includes(q),
+  );
   const matchedThreads = threads
     .filter(
       (t) =>
-        q.length === 0 ||
-        t.title.toLowerCase().includes(q) ||
-        t.projectName.toLowerCase().includes(q) ||
-        t.branch.toLowerCase().includes(q),
+        !isCaptainThread(agents, t.id) &&
+        (q.length === 0 ||
+          t.title.toLowerCase().includes(q) ||
+          t.projectName.toLowerCase().includes(q) ||
+          t.branch.toLowerCase().includes(q)),
     )
     .slice(0, THREAD_LIMIT);
   const matchedProjects = projects.filter(
     (p) => q.length === 0 || p.name.toLowerCase().includes(q) || p.path.toLowerCase().includes(q),
   );
   const results: ReadonlyArray<Result> = [
+    ...matchedAgents.map((agent): Result => ({ kind: "agent", agent })),
     ...matchedThreads.map((thread): Result => ({ kind: "thread", thread })),
     ...matchedProjects.map((project): Result => ({ kind: "project", project })),
   ];
   const active = Math.min(activeIndex, results.length - 1);
+  const threadOffset = matchedAgents.length;
+  const projectOffset = threadOffset + matchedThreads.length;
 
   const rowId = (index: number) => `${baseId}-row-${index}`;
   const moveTo = (index: number) => {
@@ -69,7 +82,9 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
 
   const choose = (result: Result) => {
     onOpenChange(false);
-    if (result.kind === "thread") {
+    if (result.kind === "agent") {
+      void navigate({ to: "/agents/$agentId", params: { agentId: result.agent.id } });
+    } else if (result.kind === "thread") {
       void navigate({ to: "/threads/$threadId", params: { threadId: result.thread.id } });
     } else {
       selectProject(result.project.id);
@@ -130,7 +145,7 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
                   ref={inputRef}
                   type="text"
                   role="combobox"
-                  aria-label="Search threads and projects"
+                  aria-label="Search agents, threads, and projects"
                   aria-expanded
                   aria-controls={`${baseId}-list`}
                   aria-activedescendant={results.length > 0 ? rowId(active) : undefined}
@@ -142,7 +157,7 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
                     setActiveIndex(0);
                   }}
                   onKeyDown={onKeyDown}
-                  placeholder="Search threads and projects…"
+                  placeholder="Search agents, threads, and projects…"
                   className="min-w-0 flex-1 bg-transparent text-body text-fg outline-none placeholder:text-fg-muted"
                 />
                 <kbd className="shrink-0 rounded-chip bg-white/6 px-1.5 py-0.5 font-mono text-[10px] text-fg-muted">
@@ -156,17 +171,46 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
                 aria-label="Results"
                 className="h-80 shrink-0 overflow-y-auto overscroll-contain p-1.5"
               >
+                {matchedAgents.length > 0 && (
+                  <div role="group" aria-label="Agents">
+                    <div className="flex h-7 items-center px-2 text-meta font-medium text-fg-muted">
+                      Agents
+                    </div>
+                    {matchedAgents.map((agent, index) => (
+                      <ResultRow
+                        key={agent.id}
+                        id={rowId(index)}
+                        active={index === active}
+                        onHover={() => setActiveIndex(index)}
+                        onChoose={() => choose({ kind: "agent", agent })}
+                      >
+                        <Identicon name={agent.name} size="sm" />
+                        <span className="min-w-0 flex-1 truncate text-body font-medium text-fg">
+                          {agent.name}
+                        </span>
+                        <span className="shrink-0 truncate text-meta text-fg-muted">
+                          {agent.projectName}
+                        </span>
+                      </ResultRow>
+                    ))}
+                  </div>
+                )}
+
                 {matchedThreads.length > 0 && (
-                  <div role="group" aria-label="Threads">
+                  <div
+                    role="group"
+                    aria-label="Threads"
+                    className={cn(matchedAgents.length > 0 && "mt-1.5")}
+                  >
                     <div className="flex h-7 items-center px-2 text-meta font-medium text-fg-muted">
                       Threads
                     </div>
                     {matchedThreads.map((thread, index) => (
                       <ResultRow
                         key={thread.id}
-                        id={rowId(index)}
-                        active={index === active}
-                        onHover={() => setActiveIndex(index)}
+                        id={rowId(threadOffset + index)}
+                        active={threadOffset + index === active}
+                        onHover={() => setActiveIndex(threadOffset + index)}
                         onChoose={() => choose({ kind: "thread", thread })}
                       >
                         <Identicon name={thread.projectName} size="sm" />
@@ -189,7 +233,7 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
                   <div
                     role="group"
                     aria-label="Projects"
-                    className={cn(matchedThreads.length > 0 && "mt-1.5")}
+                    className={cn(projectOffset > 0 && "mt-1.5")}
                   >
                     <div className="flex h-7 items-center px-2 text-meta font-medium text-fg-muted">
                       Projects
@@ -197,9 +241,9 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
                     {matchedProjects.map((project, index) => (
                       <ResultRow
                         key={project.id}
-                        id={rowId(matchedThreads.length + index)}
-                        active={matchedThreads.length + index === active}
-                        onHover={() => setActiveIndex(matchedThreads.length + index)}
+                        id={rowId(projectOffset + index)}
+                        active={projectOffset + index === active}
+                        onHover={() => setActiveIndex(projectOffset + index)}
                         onChoose={() => choose({ kind: "project", project })}
                       >
                         <Identicon name={project.name} size="sm" />
@@ -219,8 +263,8 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
                 {results.length === 0 && (
                   <p className="grid h-full place-items-center px-6 text-center text-label text-fg-muted">
                     {q.length > 0
-                      ? `No threads or projects match “${query.trim()}”.`
-                      : "No threads or projects yet."}
+                      ? `Nothing matches “${query.trim()}”.`
+                      : "No agents, threads, or projects yet."}
                   </p>
                 )}
               </div>

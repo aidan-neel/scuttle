@@ -4,6 +4,8 @@ import {
   type ScuttleApiClient,
 } from "@scuttle/client-runtime";
 import type {
+  Agent,
+  AgentDetail,
   CreateThreadInput,
   DirectoryListing,
   GitBranchInfo,
@@ -19,99 +21,20 @@ import type {
   ThreadTurn,
   UpdateThreadInput,
 } from "@scuttle/contracts";
-import { type ProjectId, ProviderId } from "@scuttle/shared/ids";
+import type { ProjectId } from "@scuttle/shared/ids";
 import { createContext, type ReactNode, use, useEffect, useReducer, useRef } from "react";
+import { type AgentActions, createAgentActions } from "./agentActions.ts";
+import { type AgentSlice, agentDetailLoaded, applyAgentEvent } from "./agentState.ts";
+import { upsertById } from "./collections.ts";
 import { getDesktopBridge } from "./desktopBridge.ts";
-import { readDisabledModels } from "./disabledModels.ts";
-import { modelFavoriteKey } from "./modelFavorites.ts";
+import {
+  FALLBACK_SELECTION,
+  pickBestSelection,
+  readStoredSelection,
+  writeStoredSelection,
+} from "./modelSelection.ts";
 
-const MODEL_STORAGE_KEY = "scuttle.defaultModelSelection.v1";
-
-const FALLBACK_SELECTION: ModelSelection = {
-  providerId: ProviderId.make("claude"),
-  providerKind: "claude",
-  model: "claude-opus-5-5",
-  effort: "high",
-};
-
-const readStoredSelection = (): ModelSelection | null => {
-  try {
-    const raw = localStorage.getItem(MODEL_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed: unknown = JSON.parse(raw);
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      "providerId" in parsed &&
-      "providerKind" in parsed &&
-      "model" in parsed &&
-      typeof parsed.providerId === "string" &&
-      typeof parsed.providerKind === "string" &&
-      typeof parsed.model === "string"
-    ) {
-      return parsed as ModelSelection;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-};
-
-const pickBestSelection = (
-  providers: ReadonlyArray<ProviderSnapshot>,
-  preferred: ModelSelection | null,
-): ModelSelection => {
-  const disabled = readDisabledModels();
-  const isEnabled = (providerId: string, slug: string) =>
-    !disabled.has(modelFavoriteKey(providerId, slug));
-  if (preferred) {
-    const match = providers.find((p) => p.id === preferred.providerId && p.enabled);
-    if (match && match.status === "ready") {
-      const enabledModels = match.models.filter((m) => isEnabled(match.id, m.slug));
-      const model =
-        enabledModels.find((m) => m.slug === preferred.model) ??
-        enabledModels.find((m) => m.isDefault) ??
-        enabledModels[0];
-      if (model) {
-        const effort =
-          preferred.effort && model.efforts.includes(preferred.effort)
-            ? preferred.effort
-            : (model.defaultEffort ?? model.efforts[0]);
-        return {
-          providerId: match.id,
-          providerKind: match.kind,
-          model: model.slug,
-          ...(effort ? { effort } : {}),
-        };
-      }
-    }
-  }
-  const ready =
-    providers.find(
-      (p) => p.enabled && p.status === "ready" && p.models.some((m) => isEnabled(p.id, m.slug)),
-    ) ??
-    providers.find((p) => p.enabled && p.models.some((m) => isEnabled(p.id, m.slug))) ??
-    providers.find((p) => p.enabled) ??
-    providers[0];
-  if (!ready) return preferred ?? FALLBACK_SELECTION;
-  const enabledModels = ready.models.filter((m) => isEnabled(ready.id, m.slug));
-  const pool = enabledModels.length > 0 ? enabledModels : ready.models;
-  const model =
-    pool.find((m) => m.slug === ready.defaultModel) ?? pool.find((m) => m.isDefault) ?? pool[0];
-  if (!model) return preferred ?? FALLBACK_SELECTION;
-  const effort =
-    ready.defaultEffort && model.efforts.includes(ready.defaultEffort)
-      ? ready.defaultEffort
-      : (model.defaultEffort ?? model.efforts[0]);
-  return {
-    providerId: ready.id,
-    providerKind: ready.kind,
-    model: model.slug,
-    ...(effort ? { effort } : {}),
-  };
-};
-
-interface WorkspaceState {
+interface WorkspaceState extends AgentSlice {
   readonly loading: boolean;
   readonly projects: ReadonlyArray<Project>;
   readonly threads: ReadonlyArray<Thread>;
@@ -129,6 +52,7 @@ type Action =
       readonly projects: ReadonlyArray<Project>;
       readonly threads: ReadonlyArray<Thread>;
       readonly providers: ReadonlyArray<ProviderSnapshot>;
+      readonly agents: ReadonlyArray<Agent>;
     }
   | { readonly kind: "error"; readonly message: string | null }
   | { readonly kind: "selectProject"; readonly projectId: ProjectId | null }
@@ -139,21 +63,15 @@ type Action =
       readonly branches: ReadonlyArray<GitBranchInfo>;
     }
   | { readonly kind: "threadDetailLoaded"; readonly detail: ThreadDetail }
+  | { readonly kind: "agentDetailLoaded"; readonly detail: AgentDetail }
   | { readonly kind: "push"; readonly event: ServerPushEvent };
 
-const upsertById = <T extends { readonly id: string }>(
-  items: ReadonlyArray<T>,
-  next: T,
-  prepend = true,
-): ReadonlyArray<T> => {
-  const index = items.findIndex((item) => item.id === next.id);
-  if (index === -1) return prepend ? [next, ...items] : [...items, next];
-  const copy = [...items];
-  copy[index] = next;
-  return copy;
+const applyPushEvent = (state: WorkspaceState, event: ServerPushEvent): WorkspaceState => {
+  const agentSlice = applyAgentEvent(state, event);
+  return applyCoreEvent(agentSlice === state ? state : { ...state, ...agentSlice }, event);
 };
 
-const applyPushEvent = (state: WorkspaceState, event: ServerPushEvent): WorkspaceState => {
+const applyCoreEvent = (state: WorkspaceState, event: ServerPushEvent): WorkspaceState => {
   switch (event.kind) {
     case "project.upserted": {
       const projects = upsertById(state.projects, event.project, true);
@@ -273,6 +191,7 @@ const reduce = (state: WorkspaceState, action: Action): WorkspaceState => {
         projects: action.projects,
         threads: action.threads,
         providers: action.providers,
+        agents: action.agents,
         selectedProjectId,
         defaultModelSelection,
         error: null,
@@ -282,14 +201,9 @@ const reduce = (state: WorkspaceState, action: Action): WorkspaceState => {
       return { ...state, loading: false, error: action.message };
     case "selectProject":
       return { ...state, selectedProjectId: action.projectId };
-    case "setModelSelection": {
-      try {
-        localStorage.setItem(MODEL_STORAGE_KEY, JSON.stringify(action.selection));
-      } catch {
-        // Ignore storage errors.
-      }
+    case "setModelSelection":
+      writeStoredSelection(action.selection);
       return { ...state, defaultModelSelection: action.selection };
-    }
     case "branchesLoaded":
       return {
         ...state,
@@ -301,12 +215,21 @@ const reduce = (state: WorkspaceState, action: Action): WorkspaceState => {
         threads: upsertById(state.threads, action.detail.thread, true),
         threadDetails: { ...state.threadDetails, [action.detail.thread.id]: action.detail },
       };
+    case "agentDetailLoaded": {
+      const primary = action.detail.primaryThread;
+      return {
+        ...state,
+        ...agentDetailLoaded(state, action.detail),
+        threads: upsertById(state.threads, primary.thread, true),
+        threadDetails: { ...state.threadDetails, [primary.thread.id]: primary },
+      };
+    }
     case "push":
       return applyPushEvent(state, action.event);
   }
 };
 
-export interface Workspace extends WorkspaceState {
+export interface Workspace extends WorkspaceState, AgentActions {
   readonly selectProject: (projectId: ProjectId | null) => void;
   readonly setDefaultModelSelection: (selection: ModelSelection) => void;
   readonly refreshWorkspace: () => Promise<void>;
@@ -342,6 +265,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     threads: [],
     providers: [],
     threadDetails: {},
+    agents: [],
+    agentWork: {},
     branchesByProject: {},
     selectedProjectId: null,
     defaultModelSelection: readStoredSelection() ?? FALLBACK_SELECTION,
@@ -358,6 +283,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         projects: snapshot.projects,
         threads: snapshot.threads,
         providers: snapshot.providers,
+        agents: snapshot.agents,
       });
     } catch (error) {
       dispatch({
@@ -396,8 +322,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  const agentActions = createAgentActions(() => apiRef.current, {
+    onEvent: (event) => dispatch({ kind: "push", event }),
+    onDetail: (detail) => dispatch({ kind: "agentDetailLoaded", detail }),
+  });
+
   const workspace: Workspace = {
     ...state,
+    ...agentActions,
     selectProject: (projectId) => dispatch({ kind: "selectProject", projectId }),
     setDefaultModelSelection: (selection) => dispatch({ kind: "setModelSelection", selection }),
     refreshWorkspace,

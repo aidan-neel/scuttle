@@ -16,9 +16,9 @@ import { Button, buttonClass } from "@/components/ui/Button.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { easeOut } from "@/lib/motion";
 import { useWorkspace } from "@/lib/workspace.tsx";
-import { AddProjectDialog } from "./AddProjectDialog.tsx";
+import { AgentList } from "./AgentList.tsx";
 import { ConnectionStatus } from "./ConnectionStatus.tsx";
-import { ProjectList } from "./ProjectList.tsx";
+import { CreateAgentDialog } from "./CreateAgentDialog.tsx";
 import { SearchDialog } from "./SearchDialog.tsx";
 import { type SettledNotice, SettleToast } from "./SettleToast.tsx";
 import { ThreadList } from "./ThreadList.tsx";
@@ -53,7 +53,7 @@ export function Sidebar({
     ? projectFilter
     : null;
   const [notice, setNotice] = useState<SettledNotice | null>(null);
-  const [addProjectOpen, setAddProjectOpen] = useState(false);
+  const [createAgentOpen, setCreateAgentOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
 
   const leaveSettings = () => {
@@ -115,11 +115,10 @@ export function Sidebar({
             aria-label="Workspace"
             className="scrollbar-none mt-5 flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto mask-[linear-gradient(to_bottom,transparent,black_8px,black_calc(100%-24px),transparent)]"
           >
-            <ProjectList
+            <AgentList
               filterProjectId={filterProjectId}
               onFilterChange={setProjectFilter}
-              onAddProject={() => setAddProjectOpen(true)}
-              onNewThread={onNewThread}
+              onCreateAgent={() => setCreateAgentOpen(true)}
             />
             <ThreadList
               filterProjectId={filterProjectId}
@@ -224,7 +223,7 @@ export function Sidebar({
         )}
       </motion.div>
 
-      <AddProjectDialog open={addProjectOpen} onOpenChange={setAddProjectOpen} />
+      <CreateAgentDialog open={createAgentOpen} onOpenChange={setCreateAgentOpen} />
       <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
     </>
   );

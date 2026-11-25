@@ -11,7 +11,7 @@ import { Icon } from "@/components/ui/Icon.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
 import { PillChevron, PillLabel, Picker, pillTriggerClass } from "@/components/ui/Picker.tsx";
 
-const RUNTIMES = [
+export const RUNTIMES = [
   { value: "local", label: "Local", icon: <Icon icon={ComputerIcon} /> },
   { value: "worktree", label: "Worktree", icon: <Icon icon={GitBranchIcon} /> },
 ] as const satisfies ReadonlyArray<{ value: ThreadRuntime; label: string; icon: unknown }>;

@@ -14,6 +14,7 @@ import { useState } from "react";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { ContextMenuItem, ContextMenuPopup, ContextMenuSeparator } from "@/components/ui/Menu.tsx";
+import { isCaptainThread } from "@/lib/agentState.ts";
 import { easeOut, spring } from "@/lib/motion";
 import { useWorkspace } from "@/lib/workspace.tsx";
 import { SectionHeader, type SectionMenuEntry } from "./SectionHeader.tsx";
@@ -48,7 +49,8 @@ export function ThreadList({
   onNewThread,
   onSettled,
 }: ThreadListProps) {
-  const { threads, selectedProjectId, settleThread, deleteThread, interruptTurn } = useWorkspace();
+  const { agents, threads, selectedProjectId, settleThread, deleteThread, interruptTurn } =
+    useWorkspace();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const [sort, setSort] = useState<ThreadSort>("recent");
@@ -57,6 +59,7 @@ export function ThreadList({
     threads.filter(
       (thread) =>
         thread.settledAt === undefined &&
+        !isCaptainThread(agents, thread.id) &&
         (filterProjectId === null || thread.projectId === filterProjectId),
     ),
     sort,

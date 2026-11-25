@@ -10,7 +10,7 @@ import {
   Home01Icon,
   Search01Icon,
 } from "@hugeicons/core-free-icons";
-import type { DirectoryEntry, DirectoryListing } from "@scuttle/contracts";
+import type { DirectoryEntry, DirectoryListing, Project } from "@scuttle/contracts";
 import { AnimatePresence, motion } from "motion/react";
 import { type KeyboardEvent, type MouseEvent, useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button.tsx";
@@ -27,6 +27,7 @@ const SPINNER_DELAY_MS = 180;
 interface AddProjectDialogProps {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
+  readonly onAdded?: (project: Project) => void;
 }
 
 interface Crumb {
@@ -72,7 +73,7 @@ function filterEntries(entries: ReadonlyArray<DirectoryEntry>, query: string) {
 
 const keepFocus = (event: MouseEvent) => event.preventDefault();
 
-export function AddProjectDialog({ open, onOpenChange }: AddProjectDialogProps) {
+export function AddProjectDialog({ open, onOpenChange, onAdded }: AddProjectDialogProps) {
   const { addProject, listDirectory } = useWorkspace();
   const baseId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -145,7 +146,8 @@ export function AddProjectDialog({ open, onOpenChange }: AddProjectDialogProps) 
     if (status.kind === "adding") return;
     setStatus({ kind: "adding" });
     try {
-      await addProject(path);
+      const project = await addProject(path);
+      onAdded?.(project);
       setStatus(IDLE);
       onOpenChange(false);
     } catch {
