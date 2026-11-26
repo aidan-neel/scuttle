@@ -1,5 +1,6 @@
 import { describeApiError } from "@scuttle/client-runtime";
 import type { Agent, ThreadDetail } from "@scuttle/contracts";
+import { motion } from "motion/react";
 import { useRef, useState } from "react";
 import { Composer, type ComposerSubmitPayload } from "@/components/home/Composer.tsx";
 import { COMPACT_PROMPT } from "@/components/home/ComposerSlashMenu.tsx";
@@ -11,6 +12,7 @@ import { ThreadTurnView } from "@/components/thread/ThreadTurnView.tsx";
 import { useStickToBottom } from "@/components/thread/useStickToBottom.ts";
 import { DotSpinner } from "@/components/ui/DotSpinner.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
+import { easeOut } from "@/lib/motion.ts";
 import { useWorkspace } from "@/lib/workspace.tsx";
 import { useTask } from "./useTask.ts";
 
@@ -55,7 +57,7 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
   const { thread, turns } = detail;
   const isRunning = thread.status.kind === "running" || thread.status.kind === "needs-input";
   const composerId = `composer-agent-${agent.id}`;
-  const { isAtBottom, scrollToBottom } = useStickToBottom(scrollRef, turns);
+  const { isAtBottom, scrollToBottom } = useStickToBottom(scrollRef, turns, thread.id);
   const contextUsage = estimateContextUsage({ turns, model: thread.modelSelection.model });
   const status = useThreadLocationControls({
     thread,
@@ -85,9 +87,18 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
 
   return (
     <>
-      <div className="relative flex min-h-0 flex-1 flex-col">
+      <motion.div
+        key={agent.id}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.11, ease: easeOut }}
+        className="relative flex min-h-0 flex-1 flex-col"
+      >
         {turns.length > 0 && <ScrollRuler turns={turns} scrollRef={scrollRef} />}
-        <div ref={scrollRef} className="flex flex-1 flex-col overflow-y-auto px-4 py-8 sm:px-10">
+        <div
+          ref={scrollRef}
+          className="flex flex-1 flex-col overflow-y-auto px-4 pt-8 pb-10 sm:px-10"
+        >
           <div className="mx-auto flex w-full max-w-composer flex-col">
             <header className="flex flex-col items-center pt-2 pb-7 text-center">
               <Identicon name={agent.name} size="xl" className="size-16 rounded-[14px]" />
@@ -165,10 +176,14 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
             )}
           </div>
         </div>
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-12 bg-gradient-to-t from-canvas via-canvas/80 to-transparent"
+        />
         <ScrollToEndButton visible={!isAtBottom} onClick={scrollToBottom} />
-      </div>
+      </motion.div>
 
-      <div className="shrink-0 px-4 pt-2 pb-4">
+      <div className="shrink-0 px-4 pt-0 pb-4">
         <div className="mx-auto w-full max-w-composer space-y-2">
           {submitError !== null && (
             <div className="rounded-control border border-danger/30 bg-danger/10 px-3 py-1.5 text-label text-danger">

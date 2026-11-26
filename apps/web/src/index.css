@@ -67,7 +67,7 @@
   --radius-canvas: 12px;
   --radius-composer: 16px;
 
-  --container-composer: 720px;
+  --container-composer: 840px;
 
   --shadow-raised:
     inset 0 0 0 1px var(--color-edge), inset 0 1px 0 var(--color-edge-highlight),

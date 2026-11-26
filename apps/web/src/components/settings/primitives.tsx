@@ -108,7 +108,7 @@ export function SearchField({
   return (
     <label
       className={cn(
-        "flex h-8.5 items-center gap-2 rounded-row bg-transparent px-2.5 shadow-[inset_0_0_0_1px_var(--color-edge)] transition-shadow duration-(--dur-hover) focus-within:shadow-[inset_0_0_0_1px_var(--color-edge-strong)]",
+        "flex h-8.5 items-center gap-2 rounded-row bg-white/[0.05] px-2.5 shadow-[inset_0_0_0_1px_var(--color-edge)] transition-shadow duration-(--dur-hover) focus-within:shadow-[inset_0_0_0_1px_var(--color-edge-strong)]",
         className,
       )}
     >

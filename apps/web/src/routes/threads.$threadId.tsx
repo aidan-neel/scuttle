@@ -1,6 +1,7 @@
 import { StopIcon } from "@hugeicons/core-free-icons";
 import type { ModelSelection, ThreadDetail } from "@scuttle/contracts";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { ThreadGitPopover } from "@/components/git/ThreadGitPopover.tsx";
 import { Composer, type ComposerSubmitPayload } from "@/components/home/Composer.tsx";
@@ -15,6 +16,7 @@ import { Button } from "@/components/ui/Button.tsx";
 import { DotSpinner } from "@/components/ui/DotSpinner.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
+import { easeOut } from "@/lib/motion.ts";
 import { useWorkspace } from "@/lib/workspace.tsx";
 
 export const Route = createFileRoute("/threads/$threadId")({
@@ -70,7 +72,7 @@ function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const { thread, turns } = detail;
-  const { isAtBottom, scrollToBottom } = useStickToBottom(scrollRef, turns);
+  const { isAtBottom, scrollToBottom } = useStickToBottom(scrollRef, turns, thread.id);
   const isRunning = thread.status.kind === "running" || thread.status.kind === "needs-input";
 
   const status = useThreadLocationControls({
@@ -119,9 +121,15 @@ function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
         )}
       </header>
 
-      <div className="relative flex min-h-0 flex-1 flex-col">
+      <motion.div
+        key={thread.id}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.11, ease: easeOut }}
+        className="relative flex min-h-0 flex-1 flex-col"
+      >
         <ScrollRuler turns={turns} scrollRef={scrollRef} />
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-8">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 pt-8 pb-10">
           <div className="mx-auto flex w-full max-w-composer flex-col gap-9">
             {turns.map((turn) => (
               <ThreadTurnView
@@ -134,10 +142,14 @@ function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
             ))}
           </div>
         </div>
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-12 bg-gradient-to-t from-canvas via-canvas/80 to-transparent"
+        />
         <ScrollToEndButton visible={!isAtBottom} onClick={scrollToBottom} />
-      </div>
+      </motion.div>
 
-      <div className="shrink-0 px-4 pt-2 pb-2">
+      <div className="shrink-0 px-4 pt-0 pb-2">
         <div className="mx-auto w-full max-w-composer space-y-2">
           {submitError && (
             <div className="rounded-control border border-danger/30 bg-danger/10 px-3 py-1.5 text-label text-danger">

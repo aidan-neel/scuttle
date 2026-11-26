@@ -10,7 +10,7 @@ interface ScrollToEndButtonProps {
 
 export function ScrollToEndButton({ visible, onClick }: ScrollToEndButtonProps) {
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
+    <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center">
       <AnimatePresence>
         {visible && (
           <motion.button
