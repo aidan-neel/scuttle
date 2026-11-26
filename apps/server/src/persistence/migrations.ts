@@ -179,6 +179,12 @@ export const applyScuttleMigrations = (db: Database): void => {
   }
 
   db.run(`
+    UPDATE agents
+    SET purpose = ''
+    WHERE purpose LIKE 'Persistent Captain for %Maintains project memory, triages issues, and delegates focused tasks and PRs.%';
+  `);
+
+  db.run(`
     CREATE INDEX IF NOT EXISTS idx_agents_project_id ON agents(project_id);
   `);
   db.run(`
