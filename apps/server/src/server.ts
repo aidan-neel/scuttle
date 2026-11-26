@@ -27,6 +27,10 @@ export interface ScuttleServerHandle {
 export const makeAppLayer = (
   overrides?: Partial<ServerConfig.ServerConfigValues>,
   forgeOptions: GitForgeService.GitForgeOptions = GitForgeService.readGitForgeOptions(process.env),
+  agentOptions?: Pick<
+    AgentService.AgentServiceOptions,
+    "askParentTimeoutMs" | "enableCheckInScheduler"
+  >,
 ) => {
   const configLayer = ServerConfig.layer(overrides);
   const sqliteLayer = Sqlite.layer.pipe(Layer.provide(configLayer));
@@ -62,6 +66,7 @@ export const makeAppLayer = (
   const agentLayer = AgentService.layer({
     runner: forgeOptions.runner,
     fetch: forgeOptions.fetch,
+    ...agentOptions,
   }).pipe(
     Layer.provide(configLayer),
     Layer.provide(sqliteLayer),

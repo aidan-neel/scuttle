@@ -121,6 +121,17 @@ export const readPendingQuestionForDelegation = (
   return row ? rowToQuestion(row) : null;
 };
 
+export const listPendingQuestionIdsForAgent = (
+  db: Database,
+  agentId: string,
+): ReadonlyArray<AgentDelegationQuestionId> =>
+  db
+    .query<{ readonly id: string }, [string]>(
+      "SELECT id FROM agent_delegation_questions WHERE agent_id = ? AND status = 'pending'",
+    )
+    .all(agentId)
+    .map((row) => AgentDelegationQuestionId.make(row.id));
+
 export const listQuestionsForDelegation = (
   db: Database,
   agentId: string,

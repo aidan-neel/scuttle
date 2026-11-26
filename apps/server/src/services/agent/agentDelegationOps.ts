@@ -237,12 +237,6 @@ export const makeAgentDelegationOps = (deps: {
       .sendTurn(childThread.id, { prompt: fullBrief })
       .pipe(Effect.result);
     if (sendResult._tag === "Failure") {
-      updateDelegationRow(db, {
-        ...delegation,
-        status: "failed",
-        resultSummary: sendResult.failure.message,
-        completedAt: new Date().toISOString(),
-      });
       yield* threads.remove(childThread.id).pipe(Effect.ignore);
       return yield* new AgentServiceError({
         reason: "rejected",

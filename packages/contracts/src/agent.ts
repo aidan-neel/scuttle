@@ -14,6 +14,11 @@ import { ModelSelection } from "./provider.ts";
 import { ThreadDetail, ThreadRuntime, ThreadTurn } from "./thread.ts";
 
 const NonEmpty = Schema.String.check(Schema.isMinLength(1));
+const BoundedQuestion = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(4_000),
+  Schema.isPattern(/\S/),
+);
 
 export const AgentModelRole = Schema.Literals([
   "agent",
@@ -186,9 +191,9 @@ export type AgentDelegationQuestion = typeof AgentDelegationQuestion.Type;
 
 export const AskDelegationParentInput = Schema.Struct({
   kind: Schema.optionalKey(AgentDelegationQuestionKind),
-  question: NonEmpty,
-  attempted: Schema.optionalKey(Schema.String),
-  context: Schema.optionalKey(Schema.String),
+  question: BoundedQuestion,
+  attempted: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(4_000))),
+  context: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(8_000))),
 });
 export type AskDelegationParentInput = typeof AskDelegationParentInput.Type;
 

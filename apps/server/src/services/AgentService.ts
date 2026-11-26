@@ -304,6 +304,7 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
       eventBus,
       requireAgent,
       sendAgentTurn: sendTurn,
+      interruptThreadTurn: threads.interrupt,
       ...(options.askParentTimeoutMs !== undefined
         ? { askParentTimeoutMs: options.askParentTimeoutMs }
         : {}),
@@ -422,6 +423,7 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
 
     const remove = Effect.fn("AgentService.remove")(function* (agentId: AgentId) {
       const existing = yield* requireAgent(agentId);
+      bounceOps.cancelPendingForAgent(existing.id, "Agent was deleted.");
       deleteAgentRow(db, existing.id);
       yield* threads.remove(existing.primaryThreadId).pipe(Effect.ignore);
       eventBus.publishSync({ kind: "agent.deleted", agentId: existing.id });

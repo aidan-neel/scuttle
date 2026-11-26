@@ -12,30 +12,37 @@ import {
   type AgentDelegationId,
   AgentDelegationQuestionId,
   type AgentId,
+  type ThreadId,
   type TurnId,
 } from "@scuttle/shared/ids";
 import * as Effect from "effect/Effect";
 import type * as EventBus from "../EventBus.ts";
-import { buildParentQuestionPrompt } from "./agentPrompts.ts";
+import { type ActiveParentTurn, makeAgentBounceDispatcher } from "./agentBounceDispatcher.ts";
+import {
+  applyQuestionPatch,
+  buildParentTurnOutcomePatch,
+  markParentNeedsAttention,
+  persistPendingQuestionPatch,
+  type QuestionSettlementPatch,
+  validateAskInput,
+} from "./agentBounceHelpers.ts";
 import {
   insertQuestion,
+  listPendingQuestionIdsForAgent,
   listQuestionsForDelegation,
   readPendingQuestionForDelegation,
   readQuestionById,
-  updateQuestionRow,
 } from "./agentQuestionStore.ts";
-import { readAgentById, readAgentByPrimaryThreadId, updateAgentRow } from "./agentStore.ts";
+import { readAgentByPrimaryThreadId } from "./agentStore.ts";
 import { readDelegationById, updateDelegationRow } from "./agentWorkStore.ts";
 import { AgentServiceError } from "./errors.ts";
 
 export const DEFAULT_ASK_PARENT_TIMEOUT_MS = 300_000;
 
-const hasRunningTurnOnThread = (db: Database, threadId: string): boolean =>
-  db
-    .query<{ readonly present: number }, [string]>(
-      "SELECT 1 AS present FROM turns WHERE thread_id = ? AND status = 'running' LIMIT 1",
-    )
-    .get(threadId) !== null;
+interface QuestionWaiter {
+  readonly question: AgentDelegationQuestion;
+  readonly resolve: (settled: AgentDelegationQuestion) => void;
+}
 
 export const makeAgentBounceOps = (deps: {
   readonly db: Database;
@@ -46,6 +53,10 @@ export const makeAgentBounceOps = (deps: {
     input: SendTurnInput,
     options?: { readonly origin?: TurnOrigin },
   ) => Effect.Effect<ThreadTurn, AgentServiceError>;
+  readonly interruptThreadTurn: (
+    threadId: ThreadId,
+    expectedTurnId?: TurnId,
+  ) => Effect.Effect<void, unknown>;
   readonly askParentTimeoutMs?: number;
 }) => {
   const {
@@ -53,17 +64,22 @@ export const makeAgentBounceOps = (deps: {
     eventBus,
     requireAgent,
     sendAgentTurn,
+    interruptThreadTurn,
     askParentTimeoutMs = DEFAULT_ASK_PARENT_TIMEOUT_MS,
   } = deps;
 
-  const waiters = new Map<AgentDelegationQuestionId, (settled: AgentDelegationQuestion) => void>();
+  const waiters = new Map<AgentDelegationQuestionId, QuestionWaiter>();
+  const questionTimers = new Map<AgentDelegationQuestionId, ReturnType<typeof setTimeout>>();
   const queues = new Map<AgentId, AgentDelegationQuestionId[]>();
-  const activeParentTurns = new Map<
-    TurnId,
-    { readonly agentId: AgentId; readonly questionId: AgentDelegationQuestionId }
-  >();
-  const pumpingAgents = new Set<AgentId>();
+  const activeParentTurns = new Map<TurnId, ActiveParentTurn>();
   let disposed = false;
+
+  const clearQuestionTimer = (questionId: AgentDelegationQuestionId) => {
+    const timer = questionTimers.get(questionId);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    questionTimers.delete(questionId);
+  };
 
   const removeFromQueue = (agentId: AgentId, questionId: AgentDelegationQuestionId) => {
     const queue = queues.get(agentId);
@@ -73,156 +89,121 @@ export const makeAgentBounceOps = (deps: {
     if (queue.length === 0) queues.delete(agentId);
   };
 
-  const hasActiveParentTurnForAgent = (agentId: AgentId): boolean => {
-    for (const entry of activeParentTurns.values()) {
-      if (entry.agentId === agentId) return true;
+  const resolveWaiter = (
+    questionId: AgentDelegationQuestionId,
+    question: AgentDelegationQuestion,
+  ) => {
+    const waiter = waiters.get(questionId);
+    if (!waiter) return;
+    waiters.delete(questionId);
+    waiter.resolve(question);
+  };
+
+  const interruptTurn = (threadId: ThreadId, turnId: TurnId) => {
+    Effect.runFork(interruptThreadTurn(threadId, turnId).pipe(Effect.ignore));
+  };
+
+  const interruptActiveParentTurnForQuestion = (
+    questionId: AgentDelegationQuestionId,
+  ): AgentId | null => {
+    for (const [turnId, entry] of activeParentTurns.entries()) {
+      if (entry.questionId !== questionId) continue;
+      activeParentTurns.delete(turnId);
+      interruptTurn(entry.parentThreadId, turnId);
+      return entry.agentId;
     }
-    return false;
-  };
-
-  const restoreDelegationIfWaiting = (agentId: AgentId, delegationId: AgentDelegationId) => {
-    const delegation = readDelegationById(db, agentId, delegationId);
-    if (!delegation || delegation.status !== "waiting_parent") return;
-    const restored: AgentDelegation = { ...delegation, status: "running" };
-    updateDelegationRow(db, restored);
-    eventBus.publishSync({ kind: "agent.delegation.upserted", delegation: restored });
-  };
-
-  const markParentNeedsAttention = (agentId: AgentId, updatedAt: string) => {
-    const parent = readAgentById(db, agentId);
-    if (!parent || parent.needsAttention) return;
-    const nextParent: Agent = { ...parent, needsAttention: true, updatedAt };
-    updateAgentRow(db, nextParent);
-    eventBus.publishSync({ kind: "agent.upserted", agent: nextParent });
+    return null;
   };
 
   const settlePendingQuestion = (
     questionId: AgentDelegationQuestionId,
-    patch: {
-      readonly status: "answered" | "failed" | "canceled";
-      readonly answer?: string;
-      readonly error?: string;
-      readonly answeredAt: string;
-    },
-    options: { readonly restoreDelegation: boolean },
+    patch: QuestionSettlementPatch,
+    options: { readonly restoreDelegation: boolean; readonly fallbackAgentId?: AgentId },
   ): AgentDelegationQuestion | null => {
-    const current = readQuestionById(db, questionId);
-    if (!current) return null;
-    if (current.status !== "pending") return current;
-
-    removeFromQueue(current.agentId, current.id);
-    const updated: AgentDelegationQuestion = {
-      ...current,
-      status: patch.status,
-      ...(patch.answer !== undefined ? { answer: patch.answer } : {}),
-      ...(patch.error !== undefined ? { error: patch.error } : {}),
-      answeredAt: patch.answeredAt,
-    };
-    updateQuestionRow(db, updated);
-    if (options.restoreDelegation) {
-      restoreDelegationIfWaiting(current.agentId, current.delegationId);
-    }
-    eventBus.publishSync({ kind: "agent.delegation.question.upserted", question: updated });
-    const resolveWaiter = waiters.get(updated.id);
-    if (resolveWaiter) {
-      waiters.delete(updated.id);
-      resolveWaiter(updated);
-    }
-    return updated;
-  };
-
-  const failQueuedQuestions = (agentId: AgentId, detail: string) => {
-    const queue = [...(queues.get(agentId) ?? [])];
-    const now = new Date().toISOString();
-    for (const qid of queue) {
-      settlePendingQuestion(
-        qid,
-        { status: "failed", error: detail, answeredAt: now },
-        { restoreDelegation: true },
-      );
-    }
-  };
-
-  const dispatchQueuedQuestion = async (
-    agent: Agent,
-    question: AgentDelegationQuestion,
-  ): Promise<"dispatched" | "busy" | "failed"> => {
-    const delegation = readDelegationById(db, agent.id, question.delegationId);
-    const prompt = buildParentQuestionPrompt({ agent, delegation, question });
-    const result = await Effect.runPromise(
-      sendAgentTurn(agent.id, { prompt }, { origin: "system" }).pipe(Effect.result),
+    clearQuestionTimer(questionId);
+    const waiter = waiters.get(questionId);
+    const persisted = persistPendingQuestionPatch(
+      db,
+      eventBus,
+      questionId,
+      patch,
+      options.restoreDelegation,
     );
-    if (disposed) return "busy";
-
-    if (result._tag === "Failure") {
-      const detail = result.failure.message;
-      if (detail.includes("already has a turn running")) return "busy";
-      const now = new Date().toISOString();
-      markParentNeedsAttention(agent.id, now);
-      settlePendingQuestion(
-        question.id,
-        { status: "failed", error: detail, answeredAt: now },
-        { restoreDelegation: true },
-      );
-      return "failed";
+    const agentId = persisted?.agentId ?? waiter?.question.agentId ?? options.fallbackAgentId;
+    if (agentId) {
+      removeFromQueue(agentId, questionId);
     }
-
-    const turn = result.success;
-    removeFromQueue(agent.id, question.id);
-    activeParentTurns.set(turn.id, { agentId: agent.id, questionId: question.id });
-    const refreshed = readQuestionById(db, question.id);
-    if (refreshed && refreshed.status === "pending") {
-      const linked: AgentDelegationQuestion = { ...refreshed, parentTurnId: turn.id };
-      updateQuestionRow(db, linked);
-      eventBus.publishSync({ kind: "agent.delegation.question.upserted", question: linked });
+    if (!persisted) {
+      if (!waiter) return null;
+      const fallback = applyQuestionPatch(waiter.question, patch);
+      resolveWaiter(questionId, fallback);
+      return fallback;
     }
-    return "dispatched";
+    resolveWaiter(questionId, persisted);
+    return persisted;
   };
 
-  const pumpAgentQueue = async (agentId: AgentId): Promise<void> => {
-    if (disposed || pumpingAgents.has(agentId) || hasActiveParentTurnForAgent(agentId)) return;
-    pumpingAgents.add(agentId);
-    let repump = false;
-    try {
-      while (!disposed && !hasActiveParentTurnForAgent(agentId)) {
-        const queue = queues.get(agentId);
-        if (!queue || queue.length === 0) break;
-
-        const question = readQuestionById(db, queue[0]!);
-        if (!question || question.status !== "pending") {
-          queue.shift();
-          if (queue.length === 0) queues.delete(agentId);
-          continue;
-        }
-
-        const agent = readAgentById(db, agentId);
-        if (!agent) {
-          failQueuedQuestions(agentId, `Agent "${agentId}" was not found.`);
-          break;
-        }
-        if (hasRunningTurnOnThread(db, agent.primaryThreadId)) break;
-
-        const outcome = await dispatchQueuedQuestion(agent, question);
-        if (outcome !== "failed") break;
-      }
-    } finally {
-      pumpingAgents.delete(agentId);
-      const remaining = queues.get(agentId);
-      const agent =
-        !disposed && remaining && remaining.length > 0 ? readAgentById(db, agentId) : null;
-      if (
-        agent &&
-        !hasActiveParentTurnForAgent(agentId) &&
-        !hasRunningTurnOnThread(db, agent.primaryThreadId)
-      ) {
-        repump = true;
-      }
+  const settleParentTurnQuestion = (
+    agentId: AgentId,
+    questionId: AgentDelegationQuestionId,
+    turn: ThreadTurn,
+  ) => {
+    const question = readQuestionById(db, questionId);
+    if (!question || question.status !== "pending") return;
+    const outcome = buildParentTurnOutcomePatch(turn);
+    if (!outcome.ok) {
+      markParentNeedsAttention(db, eventBus, agentId, outcome.completedAt);
     }
-    if (repump) {
-      queueMicrotask(() => {
-        void pumpAgentQueue(agentId);
-      });
+    settlePendingQuestion(question.id, outcome.patch, { restoreDelegation: true });
+  };
+
+  const { triggerPump } = makeAgentBounceDispatcher({
+    db,
+    eventBus,
+    queues,
+    activeParentTurns,
+    isDisposed: () => disposed,
+    removeFromQueue,
+    interruptTurn,
+    sendAgentTurn,
+    settlePendingQuestion,
+    settleParentTurnQuestion,
+  });
+
+  const cancelPendingQuestion = (
+    questionId: AgentDelegationQuestionId,
+    error: string,
+    options: {
+      readonly restoreDelegation: boolean;
+      readonly fallbackAgentId?: AgentId;
+      readonly pumpAfter?: boolean;
+    },
+  ): AgentDelegationQuestion | null => {
+    const interruptedAgentId = interruptActiveParentTurnForQuestion(questionId);
+    const settled = settlePendingQuestion(
+      questionId,
+      { status: "canceled", error, answeredAt: new Date().toISOString() },
+      options,
+    );
+    const agentId = settled?.agentId ?? interruptedAgentId ?? options.fallbackAgentId;
+    if (options.pumpAfter !== false && interruptedAgentId && agentId && !disposed) {
+      triggerPump(agentId);
     }
+    return settled;
+  };
+
+  const startQuestionTimer = (agentId: AgentId, questionId: AgentDelegationQuestionId) => {
+    if (askParentTimeoutMs <= 0 || !Number.isFinite(askParentTimeoutMs)) return;
+    clearQuestionTimer(questionId);
+    const timer = setTimeout(() => {
+      questionTimers.delete(questionId);
+      cancelPendingQuestion(
+        questionId,
+        `Timed out after ${askParentTimeoutMs}ms waiting for parent Agent.`,
+        { restoreDelegation: true, fallbackAgentId: agentId },
+      );
+    }, askParentTimeoutMs);
+    questionTimers.set(questionId, timer);
   };
 
   const askParent = Effect.fn("AgentService.askParent")(function* (
@@ -231,6 +212,10 @@ export const makeAgentBounceOps = (deps: {
     input: AskDelegationParentInput,
     options?: { readonly signal?: AbortSignal },
   ) {
+    const inputError = validateAskInput(input);
+    if (inputError !== null) {
+      return yield* new AgentServiceError({ reason: "invalid", detail: inputError });
+    }
     const agent = yield* requireAgent(agentId);
     const delegation = readDelegationById(db, agent.id, delegationId);
     if (!delegation) {
@@ -292,40 +277,32 @@ export const makeAgentBounceOps = (deps: {
     eventBus.publishSync({ kind: "agent.delegation.question.upserted", question });
 
     return yield* Effect.callback<AgentDelegationQuestion>((resume) => {
-      let settled = false;
-      let timer: ReturnType<typeof setTimeout> | undefined;
+      let detached = false;
 
-      const finish = (settledQuestion: AgentDelegationQuestion) => {
-        if (settled) return;
-        settled = true;
-        if (timer !== undefined) clearTimeout(timer);
+      const detachWaiter = (): boolean => {
+        if (detached) return false;
+        detached = true;
         options?.signal?.removeEventListener("abort", onAbort);
         waiters.delete(question.id);
+        return true;
+      };
+
+      const finish = (settledQuestion: AgentDelegationQuestion) => {
+        if (!detachWaiter()) return;
         resume(Effect.succeed(settledQuestion));
       };
 
-      const cancelNow = (reason: string) => {
-        const result = settlePendingQuestion(
-          question.id,
-          { status: "canceled", error: reason, answeredAt: new Date().toISOString() },
-          { restoreDelegation: true },
-        );
-        finish(
-          result ?? {
-            ...question,
-            status: "canceled",
-            error: reason,
-            answeredAt: new Date().toISOString(),
-          },
-        );
+      const onAbort = () => {
+        if (!detachWaiter()) return;
+        resume(Effect.succeed(readQuestionById(db, question.id) ?? question));
       };
 
-      const onAbort = () => cancelNow("Request aborted while waiting for parent Agent.");
-
-      waiters.set(question.id, finish);
+      waiters.set(question.id, { question, resolve: finish });
       const queue = queues.get(agent.id) ?? [];
       queue.push(question.id);
       queues.set(agent.id, queue);
+      startQuestionTimer(agent.id, question.id);
+      triggerPump(agent.id);
 
       if (options?.signal) {
         if (options.signal.aborted) {
@@ -335,29 +312,8 @@ export const makeAgentBounceOps = (deps: {
         options.signal.addEventListener("abort", onAbort, { once: true });
       }
 
-      if (askParentTimeoutMs > 0 && Number.isFinite(askParentTimeoutMs)) {
-        timer = setTimeout(() => {
-          cancelNow(`Timed out after ${askParentTimeoutMs}ms waiting for parent Agent.`);
-        }, askParentTimeoutMs);
-      }
-
-      void pumpAgentQueue(agent.id);
-
       return Effect.sync(() => {
-        if (settled) return;
-        settled = true;
-        if (timer !== undefined) clearTimeout(timer);
-        options?.signal?.removeEventListener("abort", onAbort);
-        waiters.delete(question.id);
-        settlePendingQuestion(
-          question.id,
-          {
-            status: "canceled",
-            error: "Interrupted while waiting for parent Agent.",
-            answeredAt: new Date().toISOString(),
-          },
-          { restoreDelegation: true },
-        );
+        detachWaiter();
       });
     });
   });
@@ -377,48 +333,18 @@ export const makeAgentBounceOps = (deps: {
     return listQuestionsForDelegation(db, agentId, delegationId);
   });
 
-  const settleParentTurnQuestion = (
-    agentId: AgentId,
-    questionId: AgentDelegationQuestionId,
-    turn: ThreadTurn,
-  ) => {
-    const question = readQuestionById(db, questionId);
-    if (!question || question.status !== "pending") return;
-    const completedAt = turn.completedAt ?? new Date().toISOString();
-    const answer = turn.assistantMessage.trim();
-    if (turn.status === "completed" && answer.length > 0) {
-      settlePendingQuestion(
-        question.id,
-        { status: "answered", answer, answeredAt: completedAt },
-        { restoreDelegation: true },
-      );
-      return;
-    }
-    const emptyReason =
-      turn.status === "completed"
-        ? "Parent agent returned an empty response."
-        : `Parent turn ${turn.status}.`;
-    const error = turn.error?.trim() || emptyReason;
-    markParentNeedsAttention(agentId, completedAt);
-    settlePendingQuestion(
-      question.id,
-      { status: "failed", error, answeredAt: completedAt },
-      { restoreDelegation: true },
-    );
-  };
-
   const handlePrimaryOrParentTurnSettled = (turn: ThreadTurn): boolean => {
     const active = activeParentTurns.get(turn.id);
     if (active) {
       activeParentTurns.delete(turn.id);
       settleParentTurnQuestion(active.agentId, active.questionId, turn);
-      void pumpAgentQueue(active.agentId);
+      triggerPump(active.agentId);
       return true;
     }
 
     const primaryAgent = readAgentByPrimaryThreadId(db, turn.threadId);
     if (!primaryAgent) return false;
-    void pumpAgentQueue(primaryAgent.id);
+    triggerPump(primaryAgent.id);
     return true;
   };
 
@@ -427,26 +353,51 @@ export const makeAgentBounceOps = (deps: {
     error: string,
     options?: { readonly restoreDelegation?: boolean },
   ) => {
-    const pending = readPendingQuestionForDelegation(db, delegationId);
-    if (!pending) return;
-    settlePendingQuestion(
-      pending.id,
-      { status: "canceled", error, answeredAt: new Date().toISOString() },
-      { restoreDelegation: options?.restoreDelegation ?? false },
-    );
+    const pendingId =
+      readPendingQuestionForDelegation(db, delegationId)?.id ??
+      Array.from(waiters.values()).find((w) => w.question.delegationId === delegationId)?.question
+        .id;
+    if (!pendingId) return;
+    cancelPendingQuestion(pendingId, error, {
+      restoreDelegation: options?.restoreDelegation ?? false,
+    });
+  };
+
+  const cancelPendingForAgent = (agentId: AgentId, reason: string) => {
+    const questionIds = new Set<AgentDelegationQuestionId>(queues.get(agentId) ?? []);
+    for (const entry of activeParentTurns.values()) {
+      if (entry.agentId === agentId) questionIds.add(entry.questionId);
+    }
+    for (const waiter of waiters.values()) {
+      if (waiter.question.agentId === agentId) questionIds.add(waiter.question.id);
+    }
+    for (const qid of listPendingQuestionIdsForAgent(db, agentId)) {
+      questionIds.add(qid);
+    }
+    for (const questionId of questionIds) {
+      cancelPendingQuestion(questionId, reason, {
+        restoreDelegation: false,
+        fallbackAgentId: agentId,
+        pumpAfter: false,
+      });
+    }
+    queues.delete(agentId);
   };
 
   const dispose = () => {
     disposed = true;
+    for (const timer of questionTimers.values()) {
+      clearTimeout(timer);
+    }
+    questionTimers.clear();
     const now = new Date().toISOString();
-    for (const [questionId, finish] of Array.from(waiters.entries())) {
+    for (const [questionId, waiter] of Array.from(waiters.entries())) {
       try {
-        const settled = settlePendingQuestion(
+        settlePendingQuestion(
           questionId,
           { status: "canceled", error: "Server shutting down.", answeredAt: now },
-          { restoreDelegation: true },
+          { restoreDelegation: true, fallbackAgentId: waiter.question.agentId },
         );
-        if (settled) finish(settled);
       } catch {
         waiters.delete(questionId);
       }
@@ -461,6 +412,7 @@ export const makeAgentBounceOps = (deps: {
     listQuestions,
     handlePrimaryOrParentTurnSettled,
     cancelForDelegation,
+    cancelPendingForAgent,
     dispose,
   };
 };

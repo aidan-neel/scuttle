@@ -143,11 +143,15 @@ export const buildDelegationBrief = (input: {
       "## Asking Your Parent Agent",
       `If you hit an unexpected failure, weird test error, missing context, plan conflict, or remain stuck after 2 failed attempts, ask your parent Agent instead of retrying blindly (budget: ${input.maxBounces} question(s) max):`,
       "```bash",
-      'curl -sS -X POST "$SCUTTLE_API_URL/api/agents/$SCUTTLE_AGENT_ID/delegations/$SCUTTLE_DELEGATION_ID/ask" \\',
+      'curl -sS --max-time 300 -X POST "$SCUTTLE_API_URL/api/agents/$SCUTTLE_AGENT_ID/delegations/$SCUTTLE_DELEGATION_ID/ask" \\',
       '  -H "Content-Type: application/json" \\',
       '  -d \'{"kind":"missing_context","question":"...","attempted":"...","context":"..."}\'',
       "```",
       "Valid `kind` values: `missing_context`, `test_failure`, `unexpected_error`, `plan_conflict`, `other`. This request blocks until the parent Agent replies in its primary thread and returns JSON with `status` and `answer`.",
+      "Rules for handling the response:",
+      '- Only follow `answer` when the JSON response has `"status": "answered"`.',
+      '- If `curl` times out or disconnects before the parent finishes, poll `GET "$SCUTTLE_API_URL/api/agents/$SCUTTLE_AGENT_ID/delegations/$SCUTTLE_DELEGATION_ID/questions"` to read the answer once settled instead of re-asking.',
+      '- If the response returns `"status": "canceled"`, `"status": "failed"`, or HTTP `422` (`{"error": "..."}`, e.g. bounce budget exhausted), stop retrying and report the blocker cleanly in your final response.',
     );
   }
 
@@ -178,7 +182,7 @@ export const buildParentQuestionPrompt = (input: {
   }
   lines.push(
     "",
-    "Reply concisely with the concrete answer, decision, or fix guidance. Your response goes straight back to the waiting worker so it can resume.",
+    "Reply directly in this message with the concrete answer, decision, or fix guidance, or tell the worker to stop cleanly. Do not call `POST .../cancel` from inside this reply turn; your response goes straight back to the waiting worker so it can resume.",
   );
   return lines.join("\n");
 };

@@ -13,7 +13,7 @@ import type {
   TurnOrigin,
   UpdateThreadInput,
 } from "@scuttle/contracts";
-import { type ApprovalId, ThreadId } from "@scuttle/shared/ids";
+import { type ApprovalId, ThreadId, type TurnId } from "@scuttle/shared/ids";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -69,7 +69,10 @@ export class ThreadService extends Context.Service<
       input: SendTurnInput,
       options?: { readonly origin?: TurnOrigin },
     ) => Effect.Effect<ThreadTurn, ThreadServiceError>;
-    readonly interrupt: (threadId: ThreadId) => Effect.Effect<void, ThreadServiceError>;
+    readonly interrupt: (
+      threadId: ThreadId,
+      expectedTurnId?: TurnId,
+    ) => Effect.Effect<void, ThreadServiceError>;
     readonly settle: (
       threadId: ThreadId,
       settled: boolean,
@@ -321,14 +324,20 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const interrupt = (threadId: ThreadId) =>
+  const interrupt = (threadId: ThreadId, expectedTurnId?: TurnId) =>
     Effect.sync(() => {
       const active = activeRuns.get(threadId);
+      if (expectedTurnId !== undefined && active?.turnId !== expectedTurnId) {
+        return;
+      }
       if (active) {
         active.controller.abort();
       }
       for (const [approvalId, pending] of pendingApprovals.entries()) {
-        if (pending.threadId === threadId) {
+        if (
+          pending.threadId === threadId &&
+          (expectedTurnId === undefined || pending.turnId === expectedTurnId)
+        ) {
           pending.resolve({ optionId: "decline" });
           pendingApprovals.delete(approvalId);
         }
