@@ -80,6 +80,9 @@ const DEFAULT_OPTIONS: AgentServiceOptions = {
   enableCheckInScheduler: true,
 };
 
+const toRejectedError = (err: { readonly message: string }) =>
+  new AgentServiceError({ reason: "rejected", detail: err.message });
+
 export class AgentService extends Context.Service<
   AgentService,
   {
@@ -214,11 +217,7 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
             branch: input.project.defaultBranch,
             modelSelection,
           })
-          .pipe(
-            Effect.mapError(
-              (err) => new AgentServiceError({ reason: "rejected", detail: err.message }),
-            ),
-          );
+          .pipe(Effect.mapError(toRejectedError));
 
         const now = new Date().toISOString();
         const agent: Agent = {
@@ -393,6 +392,15 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
             : input.checkInIntervalMinutes;
       const nextName = input.name?.trim() || existing.name;
       const nextModel = input.modelSelection ?? existing.modelSelection;
+      const nextRuntime = input.runtime ?? existing.runtime;
+      const runtimeChanged = input.runtime !== undefined && input.runtime !== existing.runtime;
+      const nameChanged = input.name !== undefined && nextName !== existing.name;
+      const modelChanged =
+        input.modelSelection !== undefined &&
+        (input.modelSelection.providerId !== existing.modelSelection.providerId ||
+          input.modelSelection.providerKind !== existing.modelSelection.providerKind ||
+          input.modelSelection.model !== existing.modelSelection.model ||
+          input.modelSelection.effort !== existing.modelSelection.effort);
       const updated: Agent = {
         id: existing.id,
         projectId: existing.projectId,
@@ -401,7 +409,7 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
         name: nextName,
         purpose: input.purpose !== undefined ? input.purpose : existing.purpose,
         primaryThreadId: existing.primaryThreadId,
-        runtime: input.runtime ?? existing.runtime,
+        runtime: nextRuntime,
         modelSelection: nextModel,
         modelStack: input.modelStack ?? existing.modelStack,
         instructionsMd:
@@ -414,21 +422,16 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
         createdAt: existing.createdAt,
         updatedAt: new Date().toISOString(),
       };
-      if (input.runtime !== undefined && input.runtime !== existing.runtime) {
+      if (runtimeChanged || nameChanged || modelChanged) {
         yield* threads
-          .update(existing.primaryThreadId, { runtime: input.runtime })
-          .pipe(
-            Effect.mapError(
-              (err) => new AgentServiceError({ reason: "rejected", detail: err.message }),
-            ),
-          );
+          .update(existing.primaryThreadId, {
+            ...(runtimeChanged ? { runtime: nextRuntime } : {}),
+            ...(nameChanged ? { title: nextName } : {}),
+            ...(modelChanged ? { modelSelection: nextModel } : {}),
+          })
+          .pipe(Effect.mapError(toRejectedError));
       }
       updateAgentRow(db, updated);
-      if (input.name !== undefined || input.modelSelection !== undefined) {
-        yield* threads
-          .update(existing.primaryThreadId, { title: nextName, modelSelection: nextModel })
-          .pipe(Effect.ignore);
-      }
       eventBus.publishSync({ kind: "agent.upserted", agent: updated });
       return updated;
     });

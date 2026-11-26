@@ -17,6 +17,7 @@ import * as EventBus from "../../src/services/EventBus.ts";
 import * as ProjectService from "../../src/services/ProjectService.ts";
 import * as ProviderService from "../../src/services/ProviderService.ts";
 import * as ThreadService from "../../src/services/ThreadService.ts";
+import { readAgentById } from "../../src/services/agent/agentStore.ts";
 import { listDelegations } from "../../src/services/agent/agentWorkStore.ts";
 import { readThreadById, readThreadContextHash } from "../../src/services/threadStore.ts";
 
@@ -174,6 +175,97 @@ describe("turn guards, deferred commit, and migration backfill", () => {
           const afterDisabled = readThreadById(db, created.thread.id)!;
           expect(afterDisabled.sessionEpoch).toBe(1);
           expect(afterDisabled.modelSelection.providerId).toBe(ProviderId.make("claude"));
+          unsub();
+        }),
+      );
+    } finally {
+      claudeSpy.mockRestore();
+      await runtime.dispose();
+    }
+  });
+
+  it("rejects AgentService.update modelSelection changes while primary thread is running and keeps agent and thread unchanged", async () => {
+    const { root, repo } = makeGitRepo();
+    tempRoots.push(root);
+
+    let releaseTurn!: () => void;
+    const turnGate = new Promise<void>((resolve) => {
+      releaseTurn = resolve;
+    });
+    let resolveTurnStarted!: () => void;
+    const turnStarted = new Promise<void>((resolve) => {
+      resolveTurnStarted = resolve;
+    });
+
+    const claudeSpy = spyOn(claudeAdapter, "runTurn").mockImplementation(
+      async (): Promise<HarnessTurnResult> => {
+        resolveTurnStarted();
+        await turnGate;
+        return {
+          finalText: "Agent turn completed",
+          providerSessionId: "agent-running-sess",
+        };
+      },
+    );
+
+    const runtime = ManagedRuntime.make(makeAppLayer({ dbPath: ":memory:" }));
+    const events: ServerPushEvent[] = [];
+
+    try {
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const eventBus = yield* EventBus.EventBus;
+          const unsub = eventBus.subscribe((e) => events.push(e));
+          const { db } = yield* Sqlite.SqliteDatabase;
+          const projects = yield* ProjectService.ProjectService;
+          const agents = yield* AgentService.AgentService;
+
+          const proj = yield* projects.create({ path: repo, name: "agent-guards-repo" });
+          const seeded = (yield* agents.list()).find((a) => a.projectId === proj.id)!;
+          const originalSelection = {
+            providerId: ProviderId.make("claude"),
+            providerKind: "claude" as const,
+            model: "claude-sonnet-4-5",
+          };
+          yield* agents.update(seeded.id, { modelSelection: originalSelection });
+
+          const runningTurn = yield* agents.sendTurn(seeded.id, {
+            prompt: "Active agent turn",
+          });
+          yield* Effect.promise(() => turnStarted);
+
+          const updateErr = yield* agents
+            .update(seeded.id, {
+              modelSelection: {
+                providerId: ProviderId.make("codex"),
+                providerKind: "codex",
+                model: "gpt-5-codex",
+              },
+            })
+            .pipe(Effect.flip);
+
+          expect(updateErr).toBeInstanceOf(AgentService.AgentServiceError);
+          expect(updateErr.reason).toBe("rejected");
+          expect(updateErr.message).toBe("Stop the running turn before changing runtime or model.");
+
+          const agentRow = readAgentById(db, seeded.id)!;
+          const threadRow = readThreadById(db, seeded.primaryThreadId)!;
+          expect(agentRow.modelSelection).toEqual(originalSelection);
+          expect(threadRow.modelSelection.providerId).toBe(ProviderId.make("claude"));
+          expect(threadRow.modelSelection.model).toBe("claude-sonnet-4-5");
+          expect(threadRow.sessionEpoch ?? 0).toBe(0);
+
+          releaseTurn();
+          yield* Effect.promise(() =>
+            waitUntil(() =>
+              events.some(
+                (e) =>
+                  e.kind === "turn.upserted" &&
+                  e.turn.id === runningTurn.id &&
+                  e.turn.status === "completed",
+              ),
+            ),
+          );
           unsub();
         }),
       );

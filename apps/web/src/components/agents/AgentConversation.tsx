@@ -1,5 +1,5 @@
 import { describeApiError } from "@scuttle/client-runtime";
-import type { Agent, ThreadDetail } from "@scuttle/contracts";
+import type { Agent, ModelSelection, ThreadDetail } from "@scuttle/contracts";
 import { AnimatePresence, motion } from "motion/react";
 import { useRef, useState } from "react";
 import { Composer, type ComposerSubmitPayload } from "@/components/home/Composer.tsx";
@@ -84,6 +84,15 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
       setSubmitError(describeApiError(error, "Failed to compact thread."));
     } finally {
       setCompacting(false);
+    }
+  };
+
+  const handleModelSelectionChange = async (modelSelection: ModelSelection) => {
+    setSubmitError(null);
+    try {
+      await updateAgent(agent.id, { modelSelection });
+    } catch (error) {
+      setSubmitError(describeApiError(error, "Could not update model."));
     }
   };
 
@@ -213,7 +222,7 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
             providers={providers}
             modelSelection={thread.modelSelection}
             onModelSelectionChange={(modelSelection) =>
-              void updateAgent(agent.id, { modelSelection })
+              void handleModelSelectionChange(modelSelection)
             }
             interactionMode={thread.interactionMode}
             onInteractionModeChange={(interactionMode) =>

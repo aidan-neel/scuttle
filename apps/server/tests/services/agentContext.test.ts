@@ -9,10 +9,15 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import { claudeAdapter } from "../../src/providers/claudeAdapter.ts";
 import type { HarnessTurnInput, HarnessTurnResult } from "../../src/providers/types.ts";
 import { makeAppLayer } from "../../src/server.ts";
+import * as ServerConfig from "../../src/config.ts";
+import * as Sqlite from "../../src/persistence/Sqlite.ts";
 import * as AgentService from "../../src/services/AgentService.ts";
 import * as EventBus from "../../src/services/EventBus.ts";
 import * as ProjectService from "../../src/services/ProjectService.ts";
+import { wrapPromptForThread } from "../../src/services/agent/agentContext.ts";
 import { isCheckInDue, runDueCheckIns } from "../../src/services/agent/agentCheckInScheduler.ts";
+import { listMemories } from "../../src/services/agent/agentStore.ts";
+import { readThreadById } from "../../src/services/threadStore.ts";
 
 const makeGitRepo = (): { root: string; repo: string } => {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scuttle-ctx-test-"));
@@ -85,11 +90,20 @@ describe("agentContext & check-in scheduler", () => {
         Effect.gen(function* () {
           const eventBus = yield* EventBus.EventBus;
           const unsub = eventBus.subscribe((e) => events.push(e));
+          const config = yield* ServerConfig.ServerConfig;
+          const { db } = yield* Sqlite.SqliteDatabase;
           const projects = yield* ProjectService.ProjectService;
           const agents = yield* AgentService.AgentService;
 
           const proj = yield* projects.create({ path: repo, name: "repo" });
           const agent = (yield* agents.list()).find((a) => a.projectId === proj.id)!;
+          const pinnedMemory = yield* agents.createMemory(agent.id, {
+            category: "fact",
+            title: "Pinned cache invariant",
+            content: "Keep prefix cache stable",
+            pinned: true,
+            source: "user",
+          });
 
           yield* agents.sendTurn(agent.id, { prompt: "First turn" });
           yield* Effect.promise(() =>
@@ -107,6 +121,9 @@ describe("agentContext & check-in scheduler", () => {
           expect(recordedPrompts[0]!.prompt).toContain("<scuttle_agent_context>");
           expect(recordedPrompts[0]!.prompt).toContain("First turn");
           expect(recordedPrompts[0]!.prompt).toContain("/memories?q=");
+          expect(
+            listMemories(db, agent.id, 10).find((m) => m.id === pinnedMemory.id)?.hitCount,
+          ).toBe(1);
 
           yield* agents.sendTurn(agent.id, { prompt: "Second turn unwrapped" });
           yield* Effect.promise(() =>
@@ -121,6 +138,9 @@ describe("agentContext & check-in scheduler", () => {
             ),
           );
           expect(recordedPrompts[1]!.prompt).toBe("Second turn unwrapped");
+          expect(
+            listMemories(db, agent.id, 10).find((m) => m.id === pinnedMemory.id)?.hitCount,
+          ).toBe(1);
 
           yield* agents.update(agent.id, { purpose: "Own context management" });
           yield* agents.sendTurn(agent.id, { prompt: "Third turn after profile change" });
@@ -137,6 +157,9 @@ describe("agentContext & check-in scheduler", () => {
           );
           expect(recordedPrompts[2]!.prompt).toContain("<scuttle_agent_context>");
           expect(recordedPrompts[2]!.prompt).toContain("Own context management");
+          expect(
+            listMemories(db, agent.id, 10).find((m) => m.id === pinnedMemory.id)?.hitCount,
+          ).toBe(2);
 
           const del = yield* agents.delegateTask(agent.id, {
             role: "fast",
@@ -155,6 +178,16 @@ describe("agentContext & check-in scheduler", () => {
               ),
             ),
           );
+
+          const deltaOnlyWrapped = wrapPromptForThread({
+            db,
+            thread: readThreadById(db, agent.primaryThreadId)!,
+            userPrompt: "Inspect resumed delta turn",
+            apiBaseUrl: config.apiBaseUrlRef.url,
+          });
+          expect(deltaOnlyWrapped.prompt).not.toContain("<scuttle_agent_context>");
+          expect(deltaOnlyWrapped.prompt).toContain("<scuttle_agent_delta");
+          expect(deltaOnlyWrapped.pendingAccessedMemoryIds).toEqual([]);
 
           yield* agents.sendTurn(agent.id, { prompt: "Fourth turn after delegation" });
           yield* Effect.promise(() =>
@@ -175,6 +208,9 @@ describe("agentContext & check-in scheduler", () => {
           expect(fourthPrompt).toContain("<scuttle_agent_delta");
           expect(fourthPrompt).toContain("Audit cache");
           expect(fourthPrompt).toContain("https://github.com/acme/repo/pull/99");
+          expect(
+            listMemories(db, agent.id, 10).find((m) => m.id === pinnedMemory.id)?.hitCount,
+          ).toBe(2);
 
           yield* agents.sendTurn(agent.id, { prompt: "Fifth turn clean" });
           yield* Effect.promise(() =>
@@ -192,6 +228,9 @@ describe("agentContext & check-in scheduler", () => {
             r.prompt.includes("Fifth turn clean"),
           )!.prompt;
           expect(fifthPrompt).toBe("Fifth turn clean");
+          expect(
+            listMemories(db, agent.id, 10).find((m) => m.id === pinnedMemory.id)?.hitCount,
+          ).toBe(2);
 
           unsub();
         }),

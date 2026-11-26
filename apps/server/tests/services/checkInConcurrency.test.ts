@@ -215,13 +215,15 @@ describe("check-in concurrency, profile preservation, and scheduler resilience",
     expect(count).toBe(1);
     expect(ran).toEqual(["a-2"]);
 
+    const intervalMs = 50;
     const ticks: number[] = [];
+    const startedAt = Date.now();
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           yield* forkCheckInScheduler({
             listAgents: () => [a2],
-            interval: "35 millis",
+            interval: `${intervalMs} millis`,
             runCheckIn: (id) => {
               ticks.push(Date.now());
               if (ticks.length === 1) return Effect.die(new Error("transient defect"));
@@ -241,6 +243,7 @@ describe("check-in concurrency, profile preservation, and scheduler resilience",
       ),
     );
     expect(ticks.length).toBeGreaterThanOrEqual(3);
-    expect(ticks[2]! - ticks[0]!).toBeLessThan(200);
+    expect(ticks[2]! - startedAt).toBeLessThan(intervalMs * 4.5);
+    expect(ticks[2]! - ticks[0]!).toBeLessThan(intervalMs * 3.2);
   });
 });

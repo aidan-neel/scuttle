@@ -270,7 +270,7 @@ export const wrapPromptForThread = (input: {
     agentId: agent.id,
     ...(needsFullContext ? { pendingContextHash: profileHash } : {}),
     pendingNotifiedDelegationIds: delta.surfacedDelegations.map((d) => d.id),
-    pendingAccessedMemoryIds: needsFullContext || isResumedSession ? pinnedIds : [],
+    pendingAccessedMemoryIds: needsFullContext ? pinnedIds : [],
   };
 };
 
