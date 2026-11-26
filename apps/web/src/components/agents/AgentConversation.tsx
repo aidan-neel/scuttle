@@ -1,6 +1,6 @@
 import { describeApiError } from "@scuttle/client-runtime";
 import type { Agent, ThreadDetail } from "@scuttle/contracts";
-import { motion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { useRef, useState } from "react";
 import { Composer, type ComposerSubmitPayload } from "@/components/home/Composer.tsx";
 import { COMPACT_PROMPT } from "@/components/home/ComposerSlashMenu.tsx";
@@ -20,24 +20,6 @@ interface AgentConversationProps {
   readonly agent: Agent;
   readonly detail: ThreadDetail;
   readonly onViewAgent: () => void;
-}
-
-function WaitingGlyph() {
-  return (
-    <svg
-      aria-hidden
-      width="12"
-      height="12"
-      viewBox="0 0 12 12"
-      className="size-3 shrink-0 text-fg-faint"
-    >
-      {[2, 6, 10].map((cy) =>
-        [2, 6, 10].map((cx) => (
-          <circle key={`${cx}-${cy}`} cx={cx} cy={cy} r="1" fill="currentColor" />
-        )),
-      )}
-    </svg>
-  );
 }
 
 export function AgentConversation({ agent, detail, onViewAgent }: AgentConversationProps) {
@@ -154,26 +136,37 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
               </div>
             )}
 
-            {needsPurpose && (
-              <div className="mt-8 flex flex-wrap items-center justify-center gap-1.5 text-center text-label text-fg-muted">
-                <WaitingGlyph />
-                <span>Waiting on</span>
-                <button
-                  type="button"
-                  onClick={focusComposer}
-                  className="cursor-pointer text-input outline-none hover:underline focus-visible:shadow-focus"
+            <AnimatePresence initial={false}>
+              {needsPurpose && (
+                <motion.div
+                  key="waiting-prompt"
+                  initial={{ opacity: 0, y: 4, height: 0 }}
+                  animate={{ opacity: 1, y: 0, height: "auto" }}
+                  exit={{ opacity: 0, y: -4, height: 0 }}
+                  transition={{ duration: 0.22, ease: easeOut }}
+                  className="overflow-hidden"
                 >
-                  you to tell {agent.name} its purpose and the first piece of work
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setWaitingDismissed(true)}
-                  className="ml-1.5 cursor-pointer text-fg-faint outline-none transition-colors hover:text-fg-muted focus-visible:shadow-focus"
-                >
-                  Dismiss
-                </button>
-              </div>
-            )}
+                  <div className="flex flex-wrap items-center justify-center gap-1.5 pt-8 text-center text-label text-fg-muted">
+                    <DotSpinner variant="thinking" label="Waiting" className="text-fg-muted" />
+                    <span>Waiting on</span>
+                    <button
+                      type="button"
+                      onClick={focusComposer}
+                      className="cursor-pointer text-input outline-none hover:underline focus-visible:shadow-focus"
+                    >
+                      you to tell {agent.name} its purpose and the first piece of work
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setWaitingDismissed(true)}
+                      className="ml-1.5 cursor-pointer text-fg-faint outline-none transition-colors hover:text-fg-muted focus-visible:shadow-focus"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
         <div
