@@ -61,9 +61,15 @@ export const parseClaudeUsage = (
   preferredModel?: string,
 ): TurnUsage | undefined => {
   const contextWindowTokens = extractClaudeModelContextWindow(parsed.modelUsage, preferredModel);
-  if (Array.isArray(parsed.iterations) && parsed.iterations.length > 0) {
-    for (let idx = parsed.iterations.length - 1; idx >= 0; idx -= 1) {
-      const entry = parsed.iterations[idx];
+  const iterations =
+    isObject(parsed.usage) && Array.isArray(parsed.usage.iterations)
+      ? parsed.usage.iterations
+      : Array.isArray(parsed.iterations)
+        ? parsed.iterations
+        : undefined;
+  if (iterations && iterations.length > 0) {
+    for (let idx = iterations.length - 1; idx >= 0; idx -= 1) {
+      const entry = iterations[idx];
       if (!isObject(entry)) continue;
       const candidate = isObject(entry.usage) ? entry.usage : entry;
       const usage = parseClaudeUsageRecord(candidate, contextWindowTokens);
@@ -131,29 +137,60 @@ export const parseCodexTokenUsage = (params: Record<string, unknown>): TurnUsage
 
 export const parseAcpUsage = (promptRes: Record<string, unknown>): TurnUsage | undefined => {
   const u = isObject(promptRes.usage) ? promptRes.usage : undefined;
-  if (!u) return undefined;
-  const inputTokens = asNonNegNumber(u.inputTokens) ?? asNonNegNumber(u.input_tokens);
-  const outputTokens = asNonNegNumber(u.outputTokens) ?? asNonNegNumber(u.output_tokens);
-  if (inputTokens === undefined && outputTokens === undefined) return undefined;
-  const cacheReadTokens =
-    asNonNegNumber(u.cachedReadTokens) ??
-    asNonNegNumber(u.cacheReadTokens) ??
-    asNonNegNumber(u.cache_read_input_tokens);
-  const cacheCreationTokens =
-    asNonNegNumber(u.cachedWriteTokens) ??
-    asNonNegNumber(u.cacheCreationTokens) ??
-    asNonNegNumber(u.cache_creation_input_tokens);
-  const contextWindowTokens =
-    asPositiveNumber(u.contextWindowTokens) ??
-    asPositiveNumber(u.contextWindow) ??
-    asPositiveNumber(promptRes.contextWindowTokens);
-  return {
-    inputTokens: inputTokens ?? 0,
-    outputTokens: outputTokens ?? 0,
-    ...(cacheReadTokens !== undefined && cacheReadTokens > 0 ? { cacheReadTokens } : {}),
-    ...(cacheCreationTokens !== undefined && cacheCreationTokens > 0
-      ? { cacheCreationTokens }
-      : {}),
-    ...(contextWindowTokens !== undefined ? { contextWindowTokens } : {}),
-  };
+  const size = asPositiveNumber(promptRes.size);
+  if (u) {
+    const rawInput = asNonNegNumber(u.inputTokens) ?? asNonNegNumber(u.input_tokens);
+    const outputTokens = asNonNegNumber(u.outputTokens) ?? asNonNegNumber(u.output_tokens);
+    if (rawInput !== undefined || outputTokens !== undefined) {
+      const cacheReadTokens =
+        asNonNegNumber(u.cachedReadTokens) ??
+        asNonNegNumber(u.cacheReadTokens) ??
+        asNonNegNumber(u.cache_read_input_tokens);
+      const cacheCreationTokens =
+        asNonNegNumber(u.cachedWriteTokens) ??
+        asNonNegNumber(u.cacheCreationTokens) ??
+        asNonNegNumber(u.cache_creation_input_tokens);
+      const contextWindowTokens =
+        asPositiveNumber(u.contextWindowTokens) ??
+        asPositiveNumber(u.contextWindow) ??
+        asPositiveNumber(promptRes.contextWindowTokens) ??
+        size;
+      const normalizedInput =
+        rawInput === undefined
+          ? 0
+          : cacheReadTokens !== undefined && rawInput >= cacheReadTokens
+            ? rawInput - cacheReadTokens
+            : rawInput;
+      return {
+        inputTokens: normalizedInput,
+        outputTokens: outputTokens ?? 0,
+        ...(cacheReadTokens !== undefined && cacheReadTokens > 0 ? { cacheReadTokens } : {}),
+        ...(cacheCreationTokens !== undefined && cacheCreationTokens > 0
+          ? { cacheCreationTokens }
+          : {}),
+        ...(contextWindowTokens !== undefined ? { contextWindowTokens } : {}),
+      };
+    }
+  }
+
+  const used = asNonNegNumber(promptRes.used);
+  if (used !== undefined) {
+    return {
+      inputTokens: used,
+      outputTokens: 0,
+      ...(size !== undefined ? { contextWindowTokens: size } : {}),
+    };
+  }
+  return undefined;
+};
+
+export const parseAcpCostUsd = (promptRes: unknown): number | undefined => {
+  if (!isObject(promptRes)) return undefined;
+  const costObj = isObject(promptRes.cost) ? promptRes.cost : undefined;
+  const usageObj = isObject(promptRes.usage) ? promptRes.usage : undefined;
+  const candidate =
+    asPositiveNumber(costObj?.totalUsd) ??
+    asPositiveNumber(usageObj?.costUsd) ??
+    asPositiveNumber(promptRes.total_cost_usd);
+  return candidate;
 };

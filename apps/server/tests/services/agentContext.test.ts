@@ -3,7 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import type { Agent, ServerPushEvent } from "@scuttle/contracts";
-import { AgentId, ProjectId, ProviderId, ThreadId } from "@scuttle/shared/ids";
+import { AgentCheckInId, AgentId, ProjectId, ProviderId, ThreadId } from "@scuttle/shared/ids";
 import * as Effect from "effect/Effect";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import { claudeAdapter } from "../../src/providers/claudeAdapter.ts";
@@ -108,7 +108,6 @@ describe("agentContext & check-in scheduler", () => {
           expect(recordedPrompts[0]!.prompt).toContain("First turn");
           expect(recordedPrompts[0]!.prompt).toContain("/memories?q=");
 
-          // Second turn with resumed session, unchanged profile, zero deltas -> unwrapped prompt.
           yield* agents.sendTurn(agent.id, { prompt: "Second turn unwrapped" });
           yield* Effect.promise(() =>
             waitUntil(() =>
@@ -123,7 +122,6 @@ describe("agentContext & check-in scheduler", () => {
           );
           expect(recordedPrompts[1]!.prompt).toBe("Second turn unwrapped");
 
-          // Update agent profile -> hash changes -> re-injects stable context on next turn.
           yield* agents.update(agent.id, { purpose: "Own context management" });
           yield* agents.sendTurn(agent.id, { prompt: "Third turn after profile change" });
           yield* Effect.promise(() =>
@@ -140,7 +138,6 @@ describe("agentContext & check-in scheduler", () => {
           expect(recordedPrompts[2]!.prompt).toContain("<scuttle_agent_context>");
           expect(recordedPrompts[2]!.prompt).toContain("Own context management");
 
-          // Delegate a task and wait for it to settle.
           const del = yield* agents.delegateTask(agent.id, {
             role: "fast",
             kind: "task",
@@ -159,7 +156,6 @@ describe("agentContext & check-in scheduler", () => {
             ),
           );
 
-          // Fourth turn surfaces newly settled delegation in delta header ONLY (no full context).
           yield* agents.sendTurn(agent.id, { prompt: "Fourth turn after delegation" });
           yield* Effect.promise(() =>
             waitUntil(() =>
@@ -180,7 +176,6 @@ describe("agentContext & check-in scheduler", () => {
           expect(fourthPrompt).toContain("Audit cache");
           expect(fourthPrompt).toContain("https://github.com/acme/repo/pull/99");
 
-          // Fifth turn must NOT repeat the already-notified settled delegation.
           yield* agents.sendTurn(agent.id, { prompt: "Fifth turn clean" });
           yield* Effect.promise(() =>
             waitUntil(() =>
@@ -263,7 +258,7 @@ describe("agentContext & check-in scheduler", () => {
         runCheckIn: (agentId) => {
           ranFor.push(agentId);
           return Effect.succeed({
-            id: "chk-1" as never,
+            id: AgentCheckInId.make("chk-1"),
             agentId,
             summary: "ok",
             activeDelegations: 0,

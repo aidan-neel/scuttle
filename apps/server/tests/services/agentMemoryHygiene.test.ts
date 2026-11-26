@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import { AgentMemoryId } from "@scuttle/shared/ids";
 import * as Effect from "effect/Effect";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import { makeAppLayer } from "../../src/server.ts";
@@ -59,7 +60,6 @@ describe("agent memory hygiene & FTS5", () => {
           const proj = yield* projects.create({ path: repo, name: "mem-repo" });
           const agent = (yield* agents.list()).find((a) => a.projectId === proj.id)!;
 
-          // Write dedup on same (agentId, category) + normalized title.
           const first = yield* agents.createMemory(agent.id, {
             category: "fact",
             title: "  API   Port ",
@@ -77,7 +77,6 @@ describe("agent memory hygiene & FTS5", () => {
           expect(merged.pinned).toBe(true);
           expect(yield* agents.listMemories(agent.id)).toHaveLength(1);
 
-          // Same title in a different category creates a separate memory.
           const decisionMem = yield* agents.createMemory(agent.id, {
             category: "decision",
             title: "api port",
@@ -86,19 +85,16 @@ describe("agent memory hygiene & FTS5", () => {
           });
           expect(decisionMem.id).not.toBe(first.id);
 
-          // Pin crowding: excludePinned omits pinned rows so unpinned matches surface.
           const unpinnedMatches = searchMemories(db, agent.id, "port", 10, {
             excludePinned: true,
           });
           expect(unpinnedMatches.map((m) => m.id)).toEqual([decisionMem.id]);
 
-          // Superseded rows are excluded from list and search.
           const supersededAt = new Date().toISOString();
           updateMemoryRow(db, { ...decisionMem, supersededAt, updatedAt: supersededAt });
           expect(listMemories(db, agent.id).map((m) => m.id)).toEqual([first.id]);
           expect(searchMemories(db, agent.id, "ephemeral", 10)).toHaveLength(0);
 
-          // Context retrieval increments hitCount and sets lastAccessedAt.
           expect(first.hitCount).toBe(0);
           const ctx = yield* agents.buildAgentContext(agent.id, "port");
           expect(ctx).toContain("api port");
@@ -106,11 +102,10 @@ describe("agent memory hygiene & FTS5", () => {
           expect(afterHit.hitCount).toBe(1);
           expect(afterHit.lastAccessedAt).toBeDefined();
 
-          // Transaction atomicity: insert + update + delete keep FTS5 in sync.
           const now = new Date().toISOString();
           const txMem = {
             ...first,
-            id: "mem-tx-1" as never,
+            id: AgentMemoryId.make("mem-tx-1"),
             title: "Atomic FTS check",
             content: "UniqueTokenAlpha",
             pinned: false,

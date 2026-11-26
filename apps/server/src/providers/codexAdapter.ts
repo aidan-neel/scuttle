@@ -413,6 +413,7 @@ export const codexAdapter: HarnessAdapter = {
       });
       rpc.notify("initialized");
 
+      let turnPrompt = input.prompt;
       if (providerThreadId) {
         const resumed = await rpc
           .request("thread/resume", {
@@ -425,6 +426,7 @@ export const codexAdapter: HarnessAdapter = {
           .catch(() => null);
         if (!isObject(resumed)) {
           providerThreadId = undefined;
+          turnPrompt = input.freshSessionPrompt ?? input.prompt;
         }
       }
 
@@ -449,7 +451,7 @@ export const codexAdapter: HarnessAdapter = {
 
       const turnStartRes = await rpc.request("turn/start", {
         threadId: providerThreadId,
-        input: [{ type: "text", text: input.prompt }],
+        input: [{ type: "text", text: turnPrompt }],
         model: input.model,
         ...(input.effort ? { effort: input.effort } : {}),
         cwd: input.cwd,

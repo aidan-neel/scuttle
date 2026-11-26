@@ -225,6 +225,22 @@ export const updateAgentRow = (db: Database, agent: Agent): void => {
   );
 };
 
+export const updateAgentCheckInMeta = (
+  db: Database,
+  agentId: string,
+  meta: {
+    readonly lastCheckInAt: string;
+    readonly lastSummary: string;
+    readonly updatedAt: string;
+  },
+): void => {
+  db.prepare(
+    `UPDATE agents
+     SET last_check_in_at = ?, last_summary = ?, updated_at = ?
+     WHERE id = ?`,
+  ).run(meta.lastCheckInAt, meta.lastSummary, meta.updatedAt, agentId);
+};
+
 export const deleteAgentRow = (db: Database, agentId: string): void => {
   db.transaction(() => {
     db.prepare("DELETE FROM agent_memories_fts WHERE agent_id = ?").run(agentId);

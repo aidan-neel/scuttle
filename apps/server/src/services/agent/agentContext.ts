@@ -7,6 +7,7 @@ import type {
   AgentModelRole,
   Thread,
 } from "@scuttle/contracts";
+import type * as EventBus from "../EventBus.ts";
 import {
   listMemories,
   readAgentByPrimaryThreadId,
@@ -19,8 +20,13 @@ import {
   listUnnotifiedSettledDelegations,
   markDelegationsParentNotified,
   readAgentIdForThread,
+  readDelegationById,
 } from "./agentWorkStore.ts";
-import { readThreadContextHash, updateThreadContextHash } from "../threadStore.ts";
+import {
+  hasCompletedTurnInEpoch,
+  readThreadContextHash,
+  updateThreadContextHash,
+} from "../threadStore.ts";
 
 const ROLES: ReadonlyArray<AgentModelRole> = [
   "agent",
@@ -190,31 +196,42 @@ export const buildAgentContextBlock = (input: {
 export const formatSessionHandoff = (activeSummary: string): string =>
   `<scuttle_session_handoff>\n${activeSummary}\n</scuttle_session_handoff>`;
 
+export interface WrappedThreadPrompt {
+  readonly prompt: string;
+  readonly freshSessionPrompt?: string;
+  readonly agentId?: string;
+  readonly pendingContextHash?: string;
+  readonly pendingNotifiedDelegationIds: ReadonlyArray<string>;
+  readonly pendingAccessedMemoryIds: ReadonlyArray<string>;
+}
+
 export const wrapPromptForThread = (input: {
   readonly db: Database;
   readonly thread: Thread;
   readonly userPrompt: string;
   readonly apiBaseUrl: string;
-}): {
-  readonly prompt: string;
-  readonly agentId?: string;
-  readonly notifiedDelegations: ReadonlyArray<AgentDelegation>;
-} => {
+}): WrappedThreadPrompt => {
   const { db, thread, userPrompt, apiBaseUrl } = input;
   const agent = readAgentByPrimaryThreadId(db, thread.id);
-  const isFreshProviderSession = !thread.providerSessionId;
-  const handoff =
-    isFreshProviderSession && thread.activeSummary?.trim()
-      ? formatSessionHandoff(thread.activeSummary.trim())
-      : "";
+  const sessionEpoch = thread.sessionEpoch ?? 0;
+  const hasCompletedTurn = hasCompletedTurnInEpoch(db, thread.id, sessionEpoch);
+  const isResumedSession = Boolean(thread.providerSessionId);
+  const isFreshProviderSession = !isResumedSession || !hasCompletedTurn;
+  const activeSummary = thread.activeSummary?.trim() ?? "";
+  const handoff = activeSummary.length > 0 ? formatSessionHandoff(activeSummary) : "";
 
   if (agent === null) {
     const agentId = readAgentIdForThread(db, thread.id) ?? undefined;
-    const prompt = handoff.length > 0 ? `${handoff}\n\n${userPrompt}` : userPrompt;
+    const prompt =
+      isFreshProviderSession && handoff.length > 0 ? `${handoff}\n\n${userPrompt}` : userPrompt;
+    const freshSessionPrompt =
+      isResumedSession && handoff.length > 0 ? `${handoff}\n\n${userPrompt}` : undefined;
     return {
       prompt,
+      ...(freshSessionPrompt !== undefined ? { freshSessionPrompt } : {}),
       ...(agentId ? { agentId } : {}),
-      notifiedDelegations: [],
+      pendingNotifiedDelegationIds: [],
+      pendingAccessedMemoryIds: [],
     };
   }
 
@@ -227,41 +244,73 @@ export const wrapPromptForThread = (input: {
   const previousHash = readThreadContextHash(db, thread.id);
   const needsFullContext = isFreshProviderSession || previousHash !== profileHash;
   const delta = assembleAgentDelta({ db, agentId: agent.id, profileHash });
-  const now = new Date().toISOString();
-
-  if (needsFullContext) {
-    updateThreadContextHash(db, thread.id, profileHash);
-    if (pinnedIds.length > 0) {
-      recordMemoryAccess(db, pinnedIds, now);
-    }
-  }
-
-  let notifiedDelegations: ReadonlyArray<AgentDelegation> = [];
-  if (delta.surfacedDelegations.length > 0) {
-    markDelegationsParentNotified(
-      db,
-      delta.surfacedDelegations.map((d) => d.id),
-      now,
-    );
-    notifiedDelegations = delta.surfacedDelegations.map((d) => ({
-      ...d,
-      parentNotifiedAt: now,
-    }));
-  }
 
   const sections: string[] = [];
   if (needsFullContext) {
     sections.push(stable);
-    if (handoff.length > 0) sections.push(handoff);
+    if (isFreshProviderSession && handoff.length > 0) sections.push(handoff);
   }
   if (delta.header.length > 0) {
     sections.push(delta.header);
   }
   sections.push(userPrompt);
 
+  const freshSessionPrompt = isResumedSession
+    ? [
+        stable,
+        ...(handoff.length > 0 ? [handoff] : []),
+        ...(delta.header.length > 0 ? [delta.header] : []),
+        userPrompt,
+      ].join("\n\n")
+    : undefined;
+
   return {
     prompt: sections.join("\n\n"),
+    ...(freshSessionPrompt !== undefined ? { freshSessionPrompt } : {}),
     agentId: agent.id,
-    notifiedDelegations,
+    ...(needsFullContext ? { pendingContextHash: profileHash } : {}),
+    pendingNotifiedDelegationIds: delta.surfacedDelegations.map((d) => d.id),
+    pendingAccessedMemoryIds: needsFullContext || isResumedSession ? pinnedIds : [],
   };
+};
+
+export const commitTurnContextEffects = (input: {
+  readonly db: Database;
+  readonly eventBus: EventBus.EventBus["Service"];
+  readonly threadId: string;
+  readonly sessionEpoch: number;
+  readonly completedAt: string;
+  readonly agentId?: string;
+  readonly pendingContextHash?: string;
+  readonly pendingNotifiedDelegationIds?: ReadonlyArray<string>;
+  readonly pendingAccessedMemoryIds?: ReadonlyArray<string>;
+}): void => {
+  const {
+    db,
+    eventBus,
+    threadId,
+    sessionEpoch,
+    completedAt,
+    agentId,
+    pendingContextHash,
+    pendingNotifiedDelegationIds,
+    pendingAccessedMemoryIds,
+  } = input;
+  if (pendingContextHash !== undefined) {
+    updateThreadContextHash(db, threadId, pendingContextHash, sessionEpoch);
+  }
+  if (pendingAccessedMemoryIds && pendingAccessedMemoryIds.length > 0) {
+    recordMemoryAccess(db, pendingAccessedMemoryIds, completedAt);
+  }
+  if (pendingNotifiedDelegationIds && pendingNotifiedDelegationIds.length > 0) {
+    markDelegationsParentNotified(db, pendingNotifiedDelegationIds, completedAt);
+    if (agentId) {
+      for (const id of pendingNotifiedDelegationIds) {
+        const delegation = readDelegationById(db, agentId, id);
+        if (delegation) {
+          eventBus.publishSync({ kind: "agent.delegation.upserted", delegation });
+        }
+      }
+    }
+  }
 };

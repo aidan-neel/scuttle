@@ -54,6 +54,7 @@ export interface HarnessTurnInput {
   readonly config: ProviderConfig;
   readonly cwd: string;
   readonly prompt: string;
+  readonly freshSessionPrompt?: string;
   readonly model: string;
   readonly effort?: EffortLevel;
   readonly runtimeMode: RuntimeMode;

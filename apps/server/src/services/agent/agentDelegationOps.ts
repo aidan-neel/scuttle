@@ -25,7 +25,13 @@ import type * as GitService from "../GitService.ts";
 import type * as ProjectService from "../ProjectService.ts";
 import type * as ThreadService from "../ThreadService.ts";
 import { buildCheckInPrompt, buildDelegationBrief } from "./agentPrompts.ts";
-import { insertCheckIn, listMemories, readAgentById, updateAgentRow } from "./agentStore.ts";
+import {
+  insertCheckIn,
+  listMemories,
+  readAgentById,
+  updateAgentCheckInMeta,
+  updateAgentRow,
+} from "./agentStore.ts";
 import {
   insertDelegation,
   listDelegations,
@@ -74,6 +80,7 @@ export const makeAgentDelegationOps = (deps: {
   ) => Effect.Effect<ThreadTurn, AgentServiceError>;
 }) => {
   const { db, eventBus, projects, threads, git, gitForge, requireAgent, sendAgentTurn } = deps;
+  const inFlightCheckIns = new Set<AgentId>();
 
   const handleTurnSettled = (turn: ThreadTurn) => {
     if (turn.status === "running") return;
@@ -297,57 +304,74 @@ export const makeAgentDelegationOps = (deps: {
     agentId: AgentId,
     input?: TriggerCheckInInput,
   ) {
-    const agent = yield* requireAgent(agentId);
-    const delegations = listDelegations(db, agent.id, 50);
-    const issues = listIssues(db, agent.id);
-    const activeDelegations = delegations.filter((d) => d.status === "running").length;
-    const openIssues = issues.filter(
-      (issue) => issue.state !== "done" && issue.state !== "canceled",
-    ).length;
-
-    const repoStatus = yield* git.status(agent.projectPath, { github: [], gitlab: [] });
-    const prList = yield* gitForge
-      .listPullRequests({ projectId: agent.projectId, threadId: null })
-      .pipe(Effect.option);
-    const openPrs = prList._tag === "Some" ? prList.value.items.length : 0;
-
-    const gitPart =
-      repoStatus.kind === "repo"
-        ? `branch ${repoStatus.branch ?? "detached"}, ${repoStatus.summary.changed} dirty file(s)`
-        : "not a git repo";
-    const focusPart = input?.focus?.trim() ? ` Focus: ${input.focus.trim()}.` : "";
-    const summary = `${agent.name} check-in (${gitPart}): ${activeDelegations} active delegation(s), ${openPrs} open PR(s), ${openIssues} open issue(s).${focusPart}`;
-
-    const now = new Date().toISOString();
-    const checkIn: AgentCheckIn = {
-      id: AgentCheckInId.make(crypto.randomUUID()),
-      agentId: agent.id,
-      summary,
-      activeDelegations,
-      openPrs,
-      openIssues,
-      createdAt: now,
-    };
-    insertCheckIn(db, checkIn);
-
-    const nextAgent: Agent = {
-      ...agent,
-      lastCheckInAt: now,
-      lastSummary: summary,
-      updatedAt: now,
-    };
-    updateAgentRow(db, nextAgent);
-    eventBus.publishSync({ kind: "agent.checkin.created", checkIn });
-    eventBus.publishSync({ kind: "agent.upserted", agent: nextAgent });
-
-    if (input?.promptAgent === true) {
-      yield* sendAgentTurn(
-        agent.id,
-        { prompt: buildCheckInPrompt(checkIn, input.focus) },
-        { origin: "system" },
-      );
+    if (inFlightCheckIns.has(agentId)) {
+      return yield* new AgentServiceError({
+        reason: "rejected",
+        detail: "A check-in is already running for this agent.",
+      });
     }
-    return checkIn;
+    inFlightCheckIns.add(agentId);
+    return yield* Effect.gen(function* () {
+      const agent = yield* requireAgent(agentId);
+      const delegations = listDelegations(db, agent.id, 50);
+      const issues = listIssues(db, agent.id);
+      const activeDelegations = delegations.filter((d) => d.status === "running").length;
+      const openIssues = issues.filter(
+        (issue) => issue.state !== "done" && issue.state !== "canceled",
+      ).length;
+
+      const repoStatus = yield* git.status(agent.projectPath, { github: [], gitlab: [] });
+      const prList = yield* gitForge
+        .listPullRequests({ projectId: agent.projectId, threadId: null })
+        .pipe(Effect.option);
+      const openPrs = prList._tag === "Some" ? prList.value.items.length : 0;
+
+      const latestBeforeWrite = readAgentById(db, agent.id) ?? agent;
+      const gitPart =
+        repoStatus.kind === "repo"
+          ? `branch ${repoStatus.branch ?? "detached"}, ${repoStatus.summary.changed} dirty file(s)`
+          : "not a git repo";
+      const focusPart = input?.focus?.trim() ? ` Focus: ${input.focus.trim()}.` : "";
+      const summary = `${latestBeforeWrite.name} check-in (${gitPart}): ${activeDelegations} active delegation(s), ${openPrs} open PR(s), ${openIssues} open issue(s).${focusPart}`;
+
+      const now = new Date().toISOString();
+      const checkIn: AgentCheckIn = {
+        id: AgentCheckInId.make(crypto.randomUUID()),
+        agentId: agent.id,
+        summary,
+        activeDelegations,
+        openPrs,
+        openIssues,
+        createdAt: now,
+      };
+      insertCheckIn(db, checkIn);
+      updateAgentCheckInMeta(db, agent.id, {
+        lastCheckInAt: now,
+        lastSummary: summary,
+        updatedAt: now,
+      });
+
+      const refreshedAgent = readAgentById(db, agent.id);
+      eventBus.publishSync({ kind: "agent.checkin.created", checkIn });
+      if (refreshedAgent) {
+        eventBus.publishSync({ kind: "agent.upserted", agent: refreshedAgent });
+      }
+
+      if (input?.promptAgent === true) {
+        yield* sendAgentTurn(
+          agent.id,
+          { prompt: buildCheckInPrompt(checkIn, input.focus) },
+          { origin: "system" },
+        );
+      }
+      return checkIn;
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          inFlightCheckIns.delete(agentId);
+        }),
+      ),
+    );
   });
 
   return {

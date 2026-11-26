@@ -319,7 +319,8 @@ export const listUnnotifiedSettledDelegations = (
     .query<DelegationRow, [string]>(
       `SELECT * FROM agent_delegations
        WHERE agent_id = ? AND status != 'running' AND parent_notified_at IS NULL
-       ORDER BY completed_at ASC, created_at ASC`,
+       ORDER BY completed_at ASC, created_at ASC
+       LIMIT 10`,
     )
     .all(agentId)
     .map(rowToDelegation);

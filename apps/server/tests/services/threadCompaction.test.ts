@@ -2,12 +2,13 @@ import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { CompactThreadResult, type ServerPushEvent } from "@scuttle/contracts";
-import { ProviderId } from "@scuttle/shared/ids";
+import { CompactThreadResult, type ServerPushEvent, type ThreadTurn } from "@scuttle/contracts";
+import { ProviderId, TurnId } from "@scuttle/shared/ids";
 import * as Effect from "effect/Effect";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
 import { handleApiRequest } from "../../src/httpRoutes.ts";
+import * as Sqlite from "../../src/persistence/Sqlite.ts";
 import { claudeAdapter } from "../../src/providers/claudeAdapter.ts";
 import { codexAdapter } from "../../src/providers/codexAdapter.ts";
 import type { HarnessTurnInput, HarnessTurnResult } from "../../src/providers/types.ts";
@@ -16,6 +17,8 @@ import * as AgentService from "../../src/services/AgentService.ts";
 import * as EventBus from "../../src/services/EventBus.ts";
 import * as ProjectService from "../../src/services/ProjectService.ts";
 import * as ThreadService from "../../src/services/ThreadService.ts";
+import { buildCompactionSummary } from "../../src/services/threadCompaction.ts";
+import { readThreadById } from "../../src/services/threadStore.ts";
 
 const makeGitRepo = (): { root: string; repo: string } => {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scuttle-compact-test-"));
@@ -268,6 +271,115 @@ describe("thread compaction and session rollover", () => {
     } finally {
       claudeSpy.mockRestore();
       codexSpy.mockRestore();
+      await runtime.dispose();
+    }
+  });
+
+  it("preserves existing handoff verbatim on double /compact and preserves newest turns plus pinned memories and open issues under large histories", async () => {
+    const { root, repo } = makeGitRepo();
+    tempRoots.push(root);
+
+    const claudeSpy = spyOn(claudeAdapter, "runTurn").mockImplementation(
+      async (input: HarnessTurnInput): Promise<HarnessTurnResult> => {
+        input.emit({ kind: "session", providerSessionId: "claude-sess-double" });
+        return {
+          finalText: "Completed auth module and DB indices.",
+          providerSessionId: "claude-sess-double",
+        };
+      },
+    );
+
+    const runtime = ManagedRuntime.make(makeAppLayer({ dbPath: ":memory:" }));
+    const events: ServerPushEvent[] = [];
+
+    try {
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const eventBus = yield* EventBus.EventBus;
+          const unsub = eventBus.subscribe((e) => events.push(e));
+          const { db } = yield* Sqlite.SqliteDatabase;
+          const projects = yield* ProjectService.ProjectService;
+          const agents = yield* AgentService.AgentService;
+          const threads = yield* ThreadService.ThreadService;
+
+          const proj = yield* projects.create({ path: repo, name: "budget-repo" });
+          const agent = (yield* agents.list()).find((a) => a.projectId === proj.id)!;
+
+          yield* agents.createMemory(agent.id, {
+            category: "convention",
+            title: "Critical Pinned Invariant",
+            content: "Never drop pinned memories during compaction.",
+            pinned: true,
+          });
+          yield* agents.createIssue(agent.id, {
+            title: "Survive large compaction summary",
+            description: "Ensure open issues stay in handoff",
+          });
+
+          const turn0 = yield* agents.sendTurn(agent.id, { prompt: "Initial turn to compact" });
+          yield* Effect.promise(() =>
+            waitUntil(() =>
+              events.some(
+                (e) =>
+                  e.kind === "turn.upserted" &&
+                  e.turn.id === turn0.id &&
+                  e.turn.status === "completed",
+              ),
+            ),
+          );
+
+          const firstCompact = yield* threads.compact(agent.primaryThreadId, {
+            focus: "Auth and indices",
+          });
+          const secondCompactSame = yield* threads.compact(agent.primaryThreadId);
+          expect(secondCompactSame.sessionEpoch).toBe(firstCompact.sessionEpoch + 1);
+          expect(secondCompactSame.summary).toBe(firstCompact.summary);
+          expect(secondCompactSame.summary).toContain("Initial turn to compact");
+          expect(secondCompactSame.summary).toContain("Critical Pinned Invariant");
+
+          const thirdCompactNewFocus = yield* threads.compact(agent.primaryThreadId, {
+            focus: "Updated focus for next step",
+          });
+          expect(thirdCompactNewFocus.summary).toContain("Focus: Updated focus for next step");
+          expect(thirdCompactNewFocus.summary).not.toContain("Focus: Auth and indices");
+          expect(thirdCompactNewFocus.summary).toContain("Initial turn to compact");
+          expect(thirdCompactNewFocus.summary).toContain("Survive large compaction summary");
+
+          const currentThread = readThreadById(db, agent.primaryThreadId)!;
+          const syntheticTurns: ThreadTurn[] = Array.from({ length: 15 }, (_, index) => ({
+            id: TurnId.make(`turn-synth-${index}`),
+            threadId: currentThread.id,
+            sessionEpoch: currentThread.sessionEpoch ?? 0,
+            userMessage: `TURN_USER_${index} ` + "x".repeat(220),
+            assistantMessage: `TURN_ASST_${index} ` + "y".repeat(300),
+            thinkingText: "",
+            status: "completed",
+            startedAt: "2026-11-25T00:00:00Z",
+            completedAt: "2026-11-25T00:01:00Z",
+            modelSelection: currentThread.modelSelection,
+            activities: [],
+            approvals: [],
+          }));
+
+          const largeSummary = buildCompactionSummary({
+            db,
+            thread: { ...currentThread, activeSummary: "PRIOR_HANDOFF " + "p".repeat(2_000) },
+            turns: syntheticTurns,
+          });
+          expect(largeSummary.length).toBeLessThanOrEqual(8_000);
+          expect(largeSummary).toContain("TURN_USER_14");
+          expect(largeSummary).toContain("TURN_ASST_14");
+          expect(largeSummary).not.toContain("TURN_USER_0 ");
+          expect(largeSummary).toContain("Pinned Memories:");
+          expect(largeSummary).toContain("Critical Pinned Invariant");
+          expect(largeSummary).toContain("Open Issues:");
+          expect(largeSummary).toContain("Survive large compaction summary");
+
+          unsub();
+        }),
+      );
+    } finally {
+      claudeSpy.mockRestore();
       await runtime.dispose();
     }
   });

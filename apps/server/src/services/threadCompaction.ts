@@ -6,6 +6,10 @@ import { readThreadById, readTurnsForThread } from "./threadStore.ts";
 
 const MAX_SUMMARY_CHARS = 8_000;
 const MAX_TURNS_IN_HANDOFF = 12;
+const PRIOR_HANDOFF_BUDGET = 1_200;
+const MEMORIES_BUDGET = 1_200;
+const DELEGATIONS_BUDGET = 1_100;
+const ISSUES_BUDGET = 1_100;
 
 const singleLine = (text: string, maxChars: number): string => {
   const compact = text.trim().replace(/\s+/g, " ");
@@ -14,6 +18,93 @@ const singleLine = (text: string, maxChars: number): string => {
 
 const truncateBlock = (text: string, maxChars: number): string =>
   text.length <= maxChars ? text : `${text.slice(0, maxChars - 3)}...`;
+
+const formatSectionWithBudget = (
+  heading: string,
+  lines: ReadonlyArray<string>,
+  maxChars: number,
+): string => {
+  if (lines.length === 0) return "";
+  const kept: string[] = [heading];
+  let used = heading.length;
+  for (const line of lines) {
+    const nextLen = used + 1 + line.length;
+    if (nextLen <= maxChars) {
+      kept.push(line);
+      used = nextLen;
+      continue;
+    }
+    if (kept.length === 1) {
+      const remaining = Math.max(40, maxChars - used - 1);
+      kept.push(truncateBlock(line, remaining));
+    }
+    break;
+  }
+  return kept.join("\n");
+};
+
+const formatTurnBlock = (turn: ThreadTurn): string => {
+  const lines = [`- User: ${singleLine(turn.userMessage, 240)}`];
+  if (turn.assistantMessage.trim().length > 0) {
+    lines.push(`  Assistant: ${singleLine(turn.assistantMessage, 320)}`);
+  } else if (turn.error) {
+    lines.push(`  Error (${turn.status}): ${singleLine(turn.error, 200)}`);
+  }
+  if (turn.activities.length > 0) {
+    const labels = turn.activities.slice(-5).map((a) => a.label);
+    lines.push(`  Tools: ${labels.join(", ")}`);
+  }
+  return lines.join("\n");
+};
+
+const formatRecentTurnsSection = (
+  epochTurns: ReadonlyArray<ThreadTurn>,
+  currentEpoch: number,
+  budget: number,
+): string => {
+  if (epochTurns.length === 0) {
+    return `Recent Turns: (none in epoch ${currentEpoch})`;
+  }
+  const heading = `Recent Turns (${epochTurns.length} in epoch ${currentEpoch}):`;
+  const candidates = epochTurns.slice(-MAX_TURNS_IN_HANDOFF);
+  const kept: string[] = [];
+  let used = heading.length;
+
+  for (let idx = candidates.length - 1; idx >= 0; idx -= 1) {
+    const block = formatTurnBlock(candidates[idx]!);
+    const nextLen = used + 1 + block.length;
+    if (nextLen <= budget) {
+      kept.unshift(block);
+      used = nextLen;
+      continue;
+    }
+    if (kept.length === 0) {
+      const remaining = Math.max(120, budget - heading.length - 1);
+      kept.unshift(truncateBlock(block, remaining));
+    }
+    break;
+  }
+  return `${heading}\n${kept.join("\n")}`;
+};
+
+const preserveExistingSummary = (existingSummary: string, focus?: string): string => {
+  const trimmedFocus = focus ? singleLine(focus, 400) : "";
+  if (trimmedFocus.length === 0) return existingSummary;
+  const focusLine = `Focus: ${trimmedFocus}`;
+  if (existingSummary.includes(focusLine)) return existingSummary;
+  const lines = existingSummary.split("\n");
+  const focusIdx = lines.findIndex((line) => line.startsWith("Focus: "));
+  if (focusIdx !== -1) {
+    lines[focusIdx] = focusLine;
+    return lines.join("\n");
+  }
+  const threadIdx = lines.findIndex((line) => line.startsWith("Thread: "));
+  if (threadIdx !== -1) {
+    lines.splice(threadIdx + 1, 0, focusLine);
+    return lines.join("\n");
+  }
+  return `${focusLine}\n${existingSummary}`;
+};
 
 export const buildCompactionSummary = (input: {
   readonly db: Database;
@@ -24,76 +115,87 @@ export const buildCompactionSummary = (input: {
   const { db, thread, turns, focus } = input;
   const currentEpoch = thread.sessionEpoch ?? 0;
   const epochTurns = turns.filter((t) => (t.sessionEpoch ?? 0) === currentEpoch);
-  const recentTurns = epochTurns.slice(-MAX_TURNS_IN_HANDOFF);
 
-  const sections: string[] = [
+  const headerLines = [
     `Session handoff (epoch ${currentEpoch} -> ${currentEpoch + 1})`,
-    `Thread: ${thread.title} (${thread.projectName}, branch ${thread.branch}, runtime ${thread.runtime})`,
+    `Thread: ${singleLine(thread.title, 120)} (${singleLine(thread.projectName, 60)}, branch ${singleLine(thread.branch, 80)}, runtime ${thread.runtime})`,
   ];
-
   if (focus && focus.trim().length > 0) {
-    sections.push(`Focus: ${singleLine(focus, 400)}`);
+    headerLines.push(`Focus: ${singleLine(focus, 400)}`);
   }
+  const headerSection = headerLines.join("\n");
 
-  if (thread.activeSummary && thread.activeSummary.trim().length > 0) {
-    sections.push("", "Prior Handoff:", truncateBlock(thread.activeSummary.trim(), 1_400));
-  }
+  const priorHandoffSection =
+    thread.activeSummary && thread.activeSummary.trim().length > 0
+      ? `Prior Handoff:\n${truncateBlock(thread.activeSummary.trim(), PRIOR_HANDOFF_BUDGET - "Prior Handoff:\n".length)}`
+      : "";
 
-  if (recentTurns.length > 0) {
-    sections.push("", `Recent Turns (${epochTurns.length} in epoch ${currentEpoch}):`);
-    for (const turn of recentTurns) {
-      sections.push(`- User: ${singleLine(turn.userMessage, 240)}`);
-      if (turn.assistantMessage.trim().length > 0) {
-        sections.push(`  Assistant: ${singleLine(turn.assistantMessage, 320)}`);
-      } else if (turn.error) {
-        sections.push(`  Error (${turn.status}): ${singleLine(turn.error, 200)}`);
-      }
-      if (turn.activities.length > 0) {
-        const labels = turn.activities.slice(-5).map((a) => a.label);
-        sections.push(`  Tools: ${labels.join(", ")}`);
-      }
-    }
-  } else {
-    sections.push("", `Recent Turns: (none in epoch ${currentEpoch})`);
-  }
+  let memoriesSection = "";
+  let delegationsSection = "";
+  let issuesSection = "";
 
   const agent = readAgentByPrimaryThreadId(db, thread.id);
   if (agent) {
     const pinnedMemories = listMemories(db, agent.id, 50)
       .filter((m) => m.pinned)
       .slice(0, 6);
-    if (pinnedMemories.length > 0) {
-      sections.push("", "Pinned Memories:");
-      for (const mem of pinnedMemories) {
-        sections.push(`- [${mem.category}] ${mem.title}: ${singleLine(mem.content, 200)}`);
-      }
-    }
-
-    const relevantDelegations = listDelegations(db, agent.id, 30).filter(
-      (d) => d.status === "running" || d.parentNotifiedAt === undefined,
+    memoriesSection = formatSectionWithBudget(
+      "Pinned Memories:",
+      pinnedMemories.map(
+        (mem) => `- [${mem.category}] ${mem.title}: ${singleLine(mem.content, 200)}`,
+      ),
+      MEMORIES_BUDGET,
     );
-    if (relevantDelegations.length > 0) {
-      sections.push("", "Active & Unnotified Delegations:");
-      for (const d of relevantDelegations.slice(0, 10)) {
+
+    const relevantDelegations = listDelegations(db, agent.id, 30)
+      .filter((d) => d.status === "running" || d.parentNotifiedAt === undefined)
+      .slice(0, 10);
+    delegationsSection = formatSectionWithBudget(
+      "Active & Unnotified Delegations:",
+      relevantDelegations.map((d) => {
         const pr = d.prUrl ? ` (${d.prUrl})` : "";
         const summary = d.resultSummary ? ` — ${singleLine(d.resultSummary, 160)}` : "";
-        sections.push(`- [${d.status}] ${d.title}${pr}${summary}`);
-      }
-    }
+        return `- [${d.status}] ${d.title}${pr}${summary}`;
+      }),
+      DELEGATIONS_BUDGET,
+    );
 
     const openIssues = listIssues(db, agent.id)
       .filter((i) => i.state !== "done" && i.state !== "canceled")
       .slice(0, 10);
-    if (openIssues.length > 0) {
-      sections.push("", "Open Issues:");
-      for (const issue of openIssues) {
+    issuesSection = formatSectionWithBudget(
+      "Open Issues:",
+      openIssues.map((issue) => {
         const pr = issue.prUrl ? ` (${issue.prUrl})` : "";
-        sections.push(`- [${issue.state}] ${issue.key}: ${issue.title}${pr}`);
-      }
-    }
+        return `- [${issue.state}] ${issue.key}: ${issue.title}${pr}`;
+      }),
+      ISSUES_BUDGET,
+    );
   }
 
-  return truncateBlock(sections.join("\n"), MAX_SUMMARY_CHARS);
+  const fixedSections = [
+    headerSection,
+    priorHandoffSection,
+    memoriesSection,
+    delegationsSection,
+    issuesSection,
+  ].filter((s) => s.length > 0);
+  const fixedChars = fixedSections.reduce((sum, s) => sum + s.length, 0) + fixedSections.length * 2;
+  const turnsBudget = Math.max(800, MAX_SUMMARY_CHARS - fixedChars);
+  const turnsSection = formatRecentTurnsSection(epochTurns, currentEpoch, turnsBudget);
+
+  const combined = [
+    headerSection,
+    priorHandoffSection,
+    turnsSection,
+    memoriesSection,
+    delegationsSection,
+    issuesSection,
+  ]
+    .filter((s) => s.length > 0)
+    .join("\n\n");
+
+  return truncateBlock(combined, MAX_SUMMARY_CHARS);
 };
 
 export const rolloverThreadSession = (input: {
@@ -106,11 +208,18 @@ export const rolloverThreadSession = (input: {
   const currentEpoch = thread.sessionEpoch ?? 0;
   const turns = readTurnsForThread(db, thread);
   const currentEpochTurns = turns.filter((t) => (t.sessionEpoch ?? 0) === currentEpoch);
+  const existingSummary = thread.activeSummary?.trim() ?? "";
 
-  const summary =
-    currentEpochTurns.length > 0 || forceSummary
-      ? buildCompactionSummary({ db, thread, turns, ...(focus ? { focus } : {}) })
-      : (thread.activeSummary ?? "");
+  let summary: string;
+  if (currentEpochTurns.length > 0) {
+    summary = buildCompactionSummary({ db, thread, turns, ...(focus ? { focus } : {}) });
+  } else if (existingSummary.length > 0) {
+    summary = preserveExistingSummary(thread.activeSummary!, focus);
+  } else if (forceSummary) {
+    summary = buildCompactionSummary({ db, thread, turns, ...(focus ? { focus } : {}) });
+  } else {
+    summary = "";
+  }
 
   const nextEpoch = currentEpoch + 1;
   const now = new Date().toISOString();

@@ -1,10 +1,12 @@
 import type { Database } from "bun:sqlite";
 
-const ensureColumn = (db: Database, table: string, column: string, definition: string): void => {
+const ensureColumn = (db: Database, table: string, column: string, definition: string): boolean => {
   const columns = db.query<{ readonly name: string }, []>(`PRAGMA table_info(${table})`).all();
   if (!columns.some((col) => col.name === column)) {
     db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
+    return true;
   }
+  return false;
 };
 
 export const applyScuttleMigrations = (db: Database): void => {
@@ -284,7 +286,13 @@ export const applyScuttleMigrations = (db: Database): void => {
     ON agent_delegations(child_thread_id);
   `);
 
-  ensureColumn(db, "agent_delegations", "parent_notified_at", "TEXT");
+  if (ensureColumn(db, "agent_delegations", "parent_notified_at", "TEXT")) {
+    db.run(`
+      UPDATE agent_delegations
+      SET parent_notified_at = COALESCE(completed_at, created_at)
+      WHERE status != 'running' AND parent_notified_at IS NULL;
+    `);
+  }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS agent_checkins (

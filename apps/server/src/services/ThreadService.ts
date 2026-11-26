@@ -2,6 +2,7 @@ import type {
   CompactThreadInput,
   CompactThreadResult,
   CreateThreadInput,
+  ProviderConfig,
   RespondApprovalInput,
   SendTurnInput,
   Thread,
@@ -145,15 +146,40 @@ const make = Effect.gen(function* () {
     isDisposed: () => disposed,
   };
 
-  const list = () => Effect.sync(() => listAllThreads(db));
-
-  const getDetail = Effect.fn("ThreadService.getDetail")(function* (threadId: ThreadId) {
+  const requireThread = Effect.fn("ThreadService.requireThread")(function* (threadId: ThreadId) {
     const thread = readThreadById(db, threadId);
     if (!thread) {
       return yield* new ThreadServiceError({ detail: `Thread "${threadId}" was not found.` });
     }
+    return thread;
+  });
+
+  const list = () => Effect.sync(() => listAllThreads(db));
+
+  const getDetail = Effect.fn("ThreadService.getDetail")(function* (threadId: ThreadId) {
+    const thread = yield* requireThread(threadId);
     const turns = readTurnsForThread(db, thread);
     return { thread, turns };
+  });
+
+  const ensureTurnStartable = Effect.fn("ThreadService.ensureTurnStartable")(function* (
+    threadId: ThreadId,
+    providerId: Thread["modelSelection"]["providerId"],
+  ) {
+    if (activeRuns.has(threadId)) {
+      return yield* new ThreadServiceError({
+        detail: "This thread already has a turn running. Stop it before sending another message.",
+      });
+    }
+    const providerConfig = yield* providers
+      .getConfig(providerId)
+      .pipe(Effect.mapError((err) => new ThreadServiceError({ detail: err.message })));
+    if (!providerConfig.enabled) {
+      return yield* new ThreadServiceError({
+        detail: `Provider "${providerConfig.name}" is disabled. Enable it in Settings.`,
+      });
+    }
+    return providerConfig;
   });
 
   const startTurnInternal = Effect.fn("ThreadService.startTurnInternal")(function* (
@@ -161,21 +187,10 @@ const make = Effect.gen(function* () {
     prompt: string,
     attachments: ReadonlyArray<ThreadAttachment> | undefined,
     origin: TurnOrigin = "user",
+    resolvedConfig?: ProviderConfig,
   ) {
-    if (activeRuns.has(thread.id)) {
-      return yield* new ThreadServiceError({
-        detail: "This thread already has a turn running. Stop it before sending another message.",
-      });
-    }
-
-    const providerConfig = yield* providers
-      .getConfig(thread.modelSelection.providerId)
-      .pipe(Effect.mapError((err) => new ThreadServiceError({ detail: err.message })));
-    if (!providerConfig.enabled) {
-      return yield* new ThreadServiceError({
-        detail: `Provider "${providerConfig.name}" is disabled. Enable it in Settings.`,
-      });
-    }
+    const providerConfig =
+      resolvedConfig ?? (yield* ensureTurnStartable(thread.id, thread.modelSelection.providerId));
 
     return dispatchThreadTurn({
       db,
@@ -283,12 +298,11 @@ const make = Effect.gen(function* () {
     input: SendTurnInput,
     options?: { readonly origin?: TurnOrigin },
   ) {
-    const existing = readThreadById(db, threadId);
-    if (!existing) {
-      return yield* new ThreadServiceError({ detail: `Thread "${threadId}" was not found.` });
-    }
+    const existing = yield* requireThread(threadId);
 
     const nextSelection = input.modelSelection ?? existing.modelSelection;
+    const providerConfig = yield* ensureTurnStartable(threadId, nextSelection.providerId);
+
     const selectionChanged =
       nextSelection.providerId !== existing.modelSelection.providerId ||
       nextSelection.model !== existing.modelSelection.model;
@@ -320,7 +334,13 @@ const make = Effect.gen(function* () {
     const thread = readThreadById(db, threadId) ?? rolledThread;
     eventBus.publishSync({ kind: "thread.upserted", thread });
 
-    return yield* startTurnInternal(thread, input.prompt, input.attachments, options?.origin);
+    return yield* startTurnInternal(
+      thread,
+      input.prompt,
+      input.attachments,
+      options?.origin,
+      providerConfig,
+    );
   });
 
   const interrupt = (threadId: ThreadId) =>
@@ -341,20 +361,14 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
     settled: boolean,
   ) {
-    const existing = readThreadById(db, threadId);
-    if (!existing) {
-      return yield* new ThreadServiceError({ detail: `Thread "${threadId}" was not found.` });
-    }
+    yield* requireThread(threadId);
     const now = new Date().toISOString();
     db.prepare("UPDATE threads SET settled_at = ?, updated_at = ? WHERE id = ?").run(
       settled ? now : null,
       now,
       threadId,
     );
-    const updated = readThreadById(db, threadId);
-    if (!updated) {
-      return yield* new ThreadServiceError({ detail: `Thread "${threadId}" was not found.` });
-    }
+    const updated = yield* requireThread(threadId);
     eventBus.publishSync({ kind: "thread.upserted", thread: updated });
     return updated;
   });
@@ -368,10 +382,7 @@ const make = Effect.gen(function* () {
         detail: "Stop the running turn before compacting this thread.",
       });
     }
-    const existing = readThreadById(db, threadId);
-    if (!existing) {
-      return yield* new ThreadServiceError({ detail: `Thread "${threadId}" was not found.` });
-    }
+    const existing = yield* requireThread(threadId);
     const result = rolloverThreadSession({
       db,
       thread: existing,
@@ -386,14 +397,15 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
     input: UpdateThreadInput,
   ) {
-    const existing = readThreadById(db, threadId);
-    if (!existing) {
-      return yield* new ThreadServiceError({ detail: `Thread "${threadId}" was not found.` });
-    }
+    const existing = yield* requireThread(threadId);
     const nextRuntime = input.runtime ?? existing.runtime;
-    if (nextRuntime !== existing.runtime && activeRuns.has(threadId)) {
+    const nextSelection = input.modelSelection ?? existing.modelSelection;
+    const selectionChanged =
+      nextSelection.providerId !== existing.modelSelection.providerId ||
+      nextSelection.model !== existing.modelSelection.model;
+    if ((nextRuntime !== existing.runtime || selectionChanged) && activeRuns.has(threadId)) {
       return yield* new ThreadServiceError({
-        detail: "Stop the running turn before changing runtime.",
+        detail: "Stop the running turn before changing runtime or model.",
       });
     }
     const project = yield* projects
@@ -406,10 +418,6 @@ const make = Effect.gen(function* () {
       requestedBranch: input.branch,
       git,
     }).pipe(Effect.mapError((detail) => new ThreadServiceError({ detail })));
-    const nextSelection = input.modelSelection ?? existing.modelSelection;
-    const selectionChanged =
-      nextSelection.providerId !== existing.modelSelection.providerId ||
-      nextSelection.model !== existing.modelSelection.model;
     const shouldRollover =
       location.resetSession || selectionChanged || nextRuntime !== existing.runtime;
     const { thread: rolledThread, rolledOver } = maybeRolloverThreadSession({
@@ -439,10 +447,7 @@ const make = Effect.gen(function* () {
   });
 
   const remove = Effect.fn("ThreadService.remove")(function* (threadId: ThreadId) {
-    const existing = readThreadById(db, threadId);
-    if (!existing) {
-      return yield* new ThreadServiceError({ detail: `Thread "${threadId}" was not found.` });
-    }
+    const existing = yield* requireThread(threadId);
     yield* interrupt(threadId);
     if (existing.worktreePath) {
       const project = yield* projects.get(existing.projectId).pipe(Effect.option);

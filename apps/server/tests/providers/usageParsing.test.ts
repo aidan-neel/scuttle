@@ -37,7 +37,45 @@ describe("provider usage parsing and turnRunner persistence", () => {
     }
   });
 
-  it("parses Claude result usage preferring final iterations[] entry and modelUsage.contextWindow", () => {
+  it("parses Claude result usage preferring usage.iterations[], falling back to top-level iterations[] and aggregate usage", () => {
+    const nestedIterations = parseClaudeUsage(
+      {
+        type: "result",
+        usage: {
+          input_tokens: 9000,
+          output_tokens: 900,
+          cache_read_input_tokens: 4000,
+          cache_creation_input_tokens: 1000,
+          iterations: [
+            {
+              type: "message",
+              input_tokens: 1000,
+              output_tokens: 200,
+              cache_read_input_tokens: 500,
+            },
+            {
+              type: "message",
+              input_tokens: 450,
+              output_tokens: 180,
+              cache_read_input_tokens: 3400,
+              cache_creation_input_tokens: 700,
+            },
+          ],
+        },
+        modelUsage: {
+          "claude-opus-4-5[1m]": { contextWindow: 1_000_000 },
+        },
+      },
+      "claude-opus-4-5[1m]",
+    );
+    expect(nestedIterations).toEqual({
+      inputTokens: 450,
+      outputTokens: 180,
+      cacheReadTokens: 3400,
+      cacheCreationTokens: 700,
+      contextWindowTokens: 1_000_000,
+    });
+
     const withIterations = parseClaudeUsage(
       {
         type: "result",
@@ -123,7 +161,7 @@ describe("provider usage parsing and turnRunner persistence", () => {
     });
   });
 
-  it("parses ACP session/prompt usage variants", () => {
+  it("parses ACP session/prompt and usage_update without double-counting cached reads", () => {
     const usage = parseAcpUsage({
       usage: {
         inputTokens: 1800,
@@ -134,11 +172,35 @@ describe("provider usage parsing and turnRunner persistence", () => {
       },
     });
     expect(usage).toEqual({
-      inputTokens: 1800,
+      inputTokens: 900,
       outputTokens: 350,
       cacheReadTokens: 900,
       cacheCreationTokens: 250,
       contextWindowTokens: 1_000_000,
+    });
+
+    const disjoint = parseAcpUsage({
+      usage: {
+        inputTokens: 300,
+        outputTokens: 120,
+        cachedReadTokens: 900,
+      },
+    });
+    expect(disjoint).toEqual({
+      inputTokens: 300,
+      outputTokens: 120,
+      cacheReadTokens: 900,
+    });
+
+    const liveOccupancy = parseAcpUsage({
+      sessionUpdate: "usage_update",
+      used: 42_000,
+      size: 1_048_576,
+    });
+    expect(liveOccupancy).toEqual({
+      inputTokens: 42_000,
+      outputTokens: 0,
+      contextWindowTokens: 1_048_576,
     });
   });
 

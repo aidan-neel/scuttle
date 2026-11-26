@@ -274,6 +274,19 @@ export const readTurnsForThread = (db: Database, thread: Thread): ReadonlyArray<
   });
 };
 
+export const hasCompletedTurnInEpoch = (
+  db: Database,
+  threadId: string,
+  sessionEpoch: number,
+): boolean => {
+  const row = db
+    .query<{ readonly present: number }, [string, number]>(
+      "SELECT 1 AS present FROM turns WHERE thread_id = ? AND session_epoch = ? AND status = 'completed' LIMIT 1",
+    )
+    .get(threadId, sessionEpoch);
+  return row !== null;
+};
+
 export const readThreadContextHash = (db: Database, threadId: string): string | null => {
   const row = db
     .query<{ readonly last_context_hash: string | null }, [string]>(
@@ -287,7 +300,16 @@ export const updateThreadContextHash = (
   db: Database,
   threadId: string,
   hash: string | null,
+  expectedSessionEpoch?: number,
 ): void => {
+  if (expectedSessionEpoch !== undefined) {
+    db.prepare("UPDATE threads SET last_context_hash = ? WHERE id = ? AND session_epoch = ?").run(
+      hash,
+      threadId,
+      expectedSessionEpoch,
+    );
+    return;
+  }
   db.prepare("UPDATE threads SET last_context_hash = ? WHERE id = ?").run(hash, threadId);
 };
 
@@ -306,6 +328,39 @@ export const insertTurnRow = (db: Database, seq: number, turn: ThreadTurn): void
     turn.startedAt,
     JSON.stringify(turn.modelSelection),
   );
+};
+
+export const updateTurnOutcomeRow = (
+  db: Database,
+  threadId: string,
+  turnEpoch: number,
+  next: ThreadTurn,
+): void => {
+  db.prepare(
+    `UPDATE turns
+     SET assistant_message = ?, thinking_text = ?, status = ?, completed_at = ?, duration_ms = ?, cost_usd = ?, error = ?, usage_json = ?
+     WHERE id = ?`,
+  ).run(
+    next.assistantMessage,
+    next.thinkingText,
+    next.status,
+    next.completedAt ?? null,
+    next.durationMs ?? null,
+    next.costUsd ?? 0,
+    next.error ?? null,
+    next.usage ? JSON.stringify(next.usage) : null,
+    next.id,
+  );
+  if (next.usage) {
+    db.prepare(
+      "UPDATE threads SET last_usage_json = ?, updated_at = ? WHERE id = ? AND session_epoch = ?",
+    ).run(
+      JSON.stringify(next.usage),
+      next.completedAt ?? new Date().toISOString(),
+      threadId,
+      turnEpoch,
+    );
+  }
 };
 
 export const recoverInterruptedThreads = (db: Database): void => {

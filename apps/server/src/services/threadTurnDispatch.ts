@@ -79,15 +79,23 @@ export const dispatchThreadTurn = (input: {
 
   const refreshed = readThreadById(db, thread.id) ?? thread;
   const wrapped = wrapPromptForThread({ db, thread: refreshed, userPrompt: prompt, apiBaseUrl });
-  for (const delegation of wrapped.notifiedDelegations) {
-    eventBus.publishSync({ kind: "agent.delegation.upserted", delegation });
-  }
   const fullPrompt = formatPromptWithAttachments(wrapped.prompt, attachments);
+  const freshSessionPrompt = wrapped.freshSessionPrompt
+    ? formatPromptWithAttachments(wrapped.freshSessionPrompt, attachments)
+    : undefined;
   const extraEnv: Record<string, string> = {
     SCUTTLE_API_URL: apiBaseUrl,
     ...(wrapped.agentId ? { SCUTTLE_AGENT_ID: wrapped.agentId } : {}),
   };
-  launchTurnExecution(runnerDeps, refreshed, turn, fullPrompt, providerConfig, extraEnv);
+  launchTurnExecution(runnerDeps, refreshed, turn, fullPrompt, providerConfig, extraEnv, {
+    ...(freshSessionPrompt !== undefined ? { freshSessionPrompt } : {}),
+    ...(wrapped.agentId !== undefined ? { agentId: wrapped.agentId } : {}),
+    ...(wrapped.pendingContextHash !== undefined
+      ? { pendingContextHash: wrapped.pendingContextHash }
+      : {}),
+    pendingNotifiedDelegationIds: wrapped.pendingNotifiedDelegationIds,
+    pendingAccessedMemoryIds: wrapped.pendingAccessedMemoryIds,
+  });
   return turn;
 };
 
