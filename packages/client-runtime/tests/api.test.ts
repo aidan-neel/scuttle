@@ -142,4 +142,58 @@ describe("client-runtime Agent API", () => {
       "POST /api/agents/agent-1/setup/start",
     ]);
   });
+
+  it("calls POST /api/threads/:id/compact and decodes CompactThreadResult with TurnUsage", async () => {
+    const usage = {
+      inputTokens: 1200,
+      outputTokens: 300,
+      cacheReadTokens: 800,
+      contextWindowTokens: 200_000,
+    };
+    const thread = {
+      id: AGENT.primaryThreadId,
+      projectId: AGENT.projectId,
+      projectName: AGENT.projectName,
+      title: "Scuttle",
+      runtime: "local" as const,
+      branch: "main",
+      cwd: "/repo",
+      modelSelection: MODEL,
+      runtimeMode: "auto" as const,
+      interactionMode: "default" as const,
+      status: { kind: "idle" as const },
+      sessionEpoch: 1,
+      activeSummary: "Compacted summary",
+      lastUsage: usage,
+      createdAt: "2026-11-25T00:00:00Z",
+      updatedAt: "2026-11-25T00:00:00Z",
+    };
+
+    const calls: { url: string; method: string; body: string | undefined }[] = [];
+    Object.assign(globalThis, {
+      fetch: async (input: string | URL | Request, init?: RequestInit) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        calls.push({
+          url: new URL(url).pathname,
+          method: init?.method ?? "GET",
+          body: typeof init?.body === "string" ? init.body : undefined,
+        });
+        return Response.json({ thread, summary: "Compacted summary", sessionEpoch: 1 });
+      },
+    });
+
+    const client = createScuttleApiClient("http://127.0.0.1:4310");
+    const result = await client.compactThread(thread.id, { focus: "Auth flow" });
+    expect(result.sessionEpoch).toBe(1);
+    expect(result.summary).toBe("Compacted summary");
+    expect(result.thread.lastUsage).toEqual(usage);
+    expect(calls).toEqual([
+      {
+        url: "/api/threads/thread-1/compact",
+        method: "POST",
+        body: JSON.stringify({ focus: "Auth flow" }),
+      },
+    ]);
+  });
 });

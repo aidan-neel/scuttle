@@ -7,6 +7,8 @@ import {
   AgentMemory,
   type AssignAgentIssueInput,
   AssignAgentIssueResult,
+  type CompactThreadInput,
+  CompactThreadResult,
   type CreateAgentInput,
   type CreateIssueInput,
   type CreateMemoryInput,
@@ -66,6 +68,7 @@ const decodeProviders = Schema.decodeUnknownEffect(Schema.Array(ProviderSnapshot
 const decodeProvider = Schema.decodeUnknownEffect(ProviderSnapshot);
 const decodeThread = Schema.decodeUnknownEffect(Thread);
 const decodeThreadDetail = Schema.decodeUnknownEffect(ThreadDetail);
+const decodeCompactThreadResult = Schema.decodeUnknownEffect(CompactThreadResult);
 const decodeTurn = Schema.decodeUnknownEffect(ThreadTurn);
 const decodeForges = Schema.decodeUnknownEffect(Schema.Array(ForgeStatus));
 const decodeForge = Schema.decodeUnknownEffect(ForgeStatus);
@@ -235,6 +238,10 @@ export interface ScuttleApiClient {
   readonly sendTurn: (threadId: string, input: SendTurnInput) => Promise<ThreadTurn>;
   readonly interruptTurn: (threadId: string) => Promise<void>;
   readonly settleThread: (threadId: string, input: SettleThreadInput) => Promise<Thread>;
+  readonly compactThread: (
+    threadId: string,
+    input?: CompactThreadInput,
+  ) => Promise<CompactThreadResult>;
   readonly updateThread: (threadId: string, input: UpdateThreadInput) => Promise<Thread>;
   readonly deleteThread: (threadId: string) => Promise<void>;
   readonly respondApproval: (
@@ -326,6 +333,12 @@ export const createScuttleApiClient = (baseUrl?: string): ScuttleApiClient => {
       empty(`/api/threads/${encodeURIComponent(threadId)}/interrupt`, postJson()),
     settleThread: (threadId, input) =>
       json(`/api/threads/${encodeURIComponent(threadId)}/settle`, postJson(input), decodeThread),
+    compactThread: (threadId, input) =>
+      json(
+        `/api/threads/${encodeURIComponent(threadId)}/compact`,
+        postJson(input ?? {}),
+        decodeCompactThreadResult,
+      ),
     updateThread: (threadId, input) =>
       json(
         `/api/threads/${encodeURIComponent(threadId)}`,

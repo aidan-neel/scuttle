@@ -1,11 +1,11 @@
 import { StopIcon } from "@hugeicons/core-free-icons";
+import { describeApiError } from "@scuttle/client-runtime";
 import type { ModelSelection, ThreadDetail } from "@scuttle/contracts";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { ThreadGitPopover } from "@/components/git/ThreadGitPopover.tsx";
 import { Composer, type ComposerSubmitPayload } from "@/components/home/Composer.tsx";
-import { COMPACT_PROMPT } from "@/components/home/ComposerSlashMenu.tsx";
 import { estimateContextUsage } from "@/components/home/contextUsage.ts";
 import { useThreadLocationControls } from "@/components/home/useThreadLocationControls.ts";
 import { ScrollRuler } from "@/components/thread/ScrollRuler.tsx";
@@ -67,13 +67,22 @@ function ThreadPage() {
 }
 
 function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
-  const { providers, sendTurn, interruptTurn, updateThread, respondApproval } = useWorkspace();
+  const { providers, sendTurn, interruptTurn, updateThread, compactThread, respondApproval } =
+    useWorkspace();
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [compacting, setCompacting] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const { thread, turns } = detail;
   const { isAtBottom, scrollToBottom } = useStickToBottom(scrollRef, turns, thread.id);
   const isRunning = thread.status.kind === "running" || thread.status.kind === "needs-input";
+  const contextUsage = estimateContextUsage({
+    turns,
+    model: thread.modelSelection.model,
+    ...(thread.lastUsage ? { lastUsage: thread.lastUsage } : {}),
+    ...(thread.sessionEpoch !== undefined ? { sessionEpoch: thread.sessionEpoch } : {}),
+    ...(thread.activeSummary ? { activeSummary: thread.activeSummary } : {}),
+  });
 
   const status = useThreadLocationControls({
     thread,
@@ -95,7 +104,20 @@ function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
         ...(payload.attachments.length > 0 ? { attachments: [...payload.attachments] } : {}),
       });
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : "Failed to send message.");
+      setSubmitError(describeApiError(error, "Failed to send message."));
+    }
+  };
+
+  const handleCompact = async () => {
+    if (compacting || isRunning) return;
+    setSubmitError(null);
+    setCompacting(true);
+    try {
+      await compactThread(thread.id);
+    } catch (error) {
+      setSubmitError(describeApiError(error, "Failed to compact thread."));
+    } finally {
+      setCompacting(false);
     }
   };
 
@@ -171,16 +193,10 @@ function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
             onInteractionModeChange={(interactionMode) =>
               void updateThread(thread.id, { interactionMode })
             }
-            onCompact={() =>
-              void handleSubmit({
-                prompt: COMPACT_PROMPT,
-                modelSelection: thread.modelSelection,
-                attachments: [],
-              })
-            }
+            {...(compacting ? {} : { onCompact: () => void handleCompact() })}
             filesRoot={thread.cwd}
             status={status}
-            contextUsage={estimateContextUsage({ turns, model: thread.modelSelection.model })}
+            contextUsage={contextUsage}
           />
         </div>
       </div>
