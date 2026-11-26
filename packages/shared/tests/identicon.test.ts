@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { IDENTICON_GRID, identicon } from "../src/identicon.ts";
+import { dicebearIdenticonUrl, IDENTICON_GRID, identicon } from "../src/identicon.ts";
 
 describe("identicon", () => {
   test("returns the same identicon for the same name", () => {
@@ -26,5 +26,14 @@ describe("identicon", () => {
         expect(row).toEqual([...row].reverse());
       }
     }
+  });
+
+  test("builds encoded DiceBear identicon URLs", () => {
+    expect(dicebearIdenticonUrl("scuttle")).toBe(
+      "https://api.dicebear.com/10.x/identicon/svg?seed=scuttle&scale=0.72",
+    );
+    expect(dicebearIdenticonUrl("My Agent")).toBe(
+      "https://api.dicebear.com/10.x/identicon/svg?seed=My%20Agent&scale=0.72",
+    );
   });
 });
