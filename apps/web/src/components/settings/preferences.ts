@@ -11,14 +11,20 @@ export type EnterBehavior = typeof EnterBehavior.Type;
 const StoredPreferences = Schema.Struct({
   enterBehavior: Schema.optionalKey(EnterBehavior),
   ditherBackground: Schema.optionalKey(Schema.Boolean),
+  compactAtByWindow: Schema.optionalKey(Schema.Record(Schema.String, Schema.Number)),
 });
 
 export interface Preferences {
   readonly enterBehavior: EnterBehavior;
   readonly ditherBackground: boolean;
+  readonly compactAtByWindow: Readonly<Record<string, number>>;
 }
 
-const DEFAULTS: Preferences = { enterBehavior: "enter", ditherBackground: true };
+const DEFAULTS: Preferences = {
+  enterBehavior: "enter",
+  ditherBackground: true,
+  compactAtByWindow: {},
+};
 
 const decodeStored = Schema.decodeUnknownOption(StoredPreferences);
 
@@ -77,6 +83,22 @@ export const usePreferences = (): Preferences =>
   useSyncExternalStore(subscribe, readPreferences, () => DEFAULTS);
 
 export const useDitherBackground = (): boolean => usePreferences().ditherBackground;
+
+export const useCompactAtOverride = (windowTokens: number): number | null => {
+  const value = usePreferences().compactAtByWindow[String(windowTokens)];
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+};
+
+export const writeCompactAtOverride = (windowTokens: number, tokens: number | null): void => {
+  const current = { ...readPreferences().compactAtByWindow };
+  const key = String(windowTokens);
+  if (tokens === null) {
+    delete current[key];
+  } else {
+    current[key] = Math.round(tokens);
+  }
+  writePreference("compactAtByWindow", current);
+};
 
 export interface SubmitKeyEvent {
   readonly key: string;

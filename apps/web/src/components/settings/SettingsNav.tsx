@@ -1,7 +1,6 @@
-import { ArrowLeft01Icon } from "@hugeicons/core-free-icons";
+import { ArrowLeft02Icon } from "@hugeicons/core-free-icons";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
-import { buttonClass } from "@/components/ui/Button.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { cn } from "@/lib/utils";
 import { SearchField } from "./primitives.tsx";
@@ -17,7 +16,7 @@ export function SettingsSidebarNav({ active }: { readonly active: SectionId }) {
   const first = groups[0]?.sections[0];
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3">
+    <div className="flex min-h-0 flex-1 flex-col gap-1.5">
       <SearchField
         value={query}
         onChange={setQuery}
@@ -29,11 +28,11 @@ export function SettingsSidebarNav({ active }: { readonly active: SectionId }) {
       />
       <nav
         aria-label="Settings"
-        className="scrollbar-none flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto mask-[linear-gradient(to_bottom,transparent,black_8px,black_calc(100%-24px),transparent)]"
+        className="scrollbar-none flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pt-2 pb-4 mask-[linear-gradient(to_bottom,transparent,black_8px,black_calc(100%-24px),transparent)]"
       >
         {groups.map((group) => (
           <div key={group.label} className="flex flex-col gap-px">
-            <div className="px-2 pb-1 text-meta font-medium text-fg-faint">{group.label}</div>
+            <div className="px-2 pb-1 text-meta font-medium text-fg-muted">{group.label}</div>
             {group.sections.map((section) => {
               const selected = section.id === active;
               return (
@@ -71,12 +70,13 @@ const revealInline = (node: HTMLAnchorElement | null) => {
 export function SettingsNavCompact({ active }: { readonly active: SectionId }) {
   return (
     <div className="flex shrink-0 flex-col gap-2 border-b border-line px-2 py-2 md:hidden">
-      <div className="flex items-center gap-1">
-        <Link to="/" aria-label="Back" className={buttonClass("ghost", "icon-sm")}>
-          <Icon icon={ArrowLeft01Icon} />
-        </Link>
-        <span className="text-[15px] font-semibold tracking-tight text-fg">Settings</span>
-      </div>
+      <Link
+        to="/"
+        className="flex h-8 w-full items-center gap-2 rounded-row px-2 text-[15px] font-medium tracking-tight text-fg-secondary outline-none transition-colors duration-(--dur-hover) ease-hover hover:bg-(--wash) hover:text-fg focus-visible:shadow-focus"
+      >
+        <Icon icon={ArrowLeft02Icon} className="size-4 shrink-0" />
+        <span>Settings</span>
+      </Link>
       <nav
         aria-label="Settings"
         className="scrollbar-none flex gap-1 overflow-x-auto px-0.5 pb-0.5"

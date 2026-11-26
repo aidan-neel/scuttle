@@ -1,8 +1,7 @@
 import { ComputerIcon, GitBranchIcon } from "@hugeicons/core-free-icons";
-import type { GitBranchInfo, ThreadRuntime, ThreadStatus } from "@scuttle/contracts";
+import type { GitBranchInfo, ThreadRuntime } from "@scuttle/contracts";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { Picker } from "@/components/ui/Picker.tsx";
-import { cn } from "@/lib/utils";
 import { BranchPicker, RUNTIMES } from "./ComposerContextBar.tsx";
 import { ComposerContextPopover } from "./ComposerContextPopover.tsx";
 import type { ComposerContextUsage } from "./contextUsage.ts";
@@ -10,7 +9,6 @@ import type { ComposerContextUsage } from "./contextUsage.ts";
 export interface ComposerStatus {
   readonly runtime: ThreadRuntime;
   readonly branch: string;
-  readonly state: ThreadStatus["kind"];
   readonly branches?: ReadonlyArray<GitBranchInfo>;
   readonly busy?: boolean;
   readonly disabled?: boolean;
@@ -20,20 +18,12 @@ export interface ComposerStatus {
 
 const RUNTIME_LABEL: Record<ThreadRuntime, string> = { local: "Local", worktree: "Worktree" };
 
-const STATE_DOT: Record<ThreadStatus["kind"], { readonly tone: string; readonly label: string }> = {
-  idle: { tone: "bg-success", label: "Ready" },
-  running: { tone: "bg-success", label: "Working" },
-  "needs-input": { tone: "bg-warning", label: "Needs input" },
-  error: { tone: "bg-danger", label: "Error" },
-};
-
 interface ComposerBottomBarProps {
   readonly status: ComposerStatus | undefined;
   readonly contextUsage: ComposerContextUsage | undefined;
 }
 
 export function ComposerBottomBar({ status, contextUsage }: ComposerBottomBarProps) {
-  const dot = status ? STATE_DOT[status.state] : null;
   const controlsDisabled = Boolean(status?.disabled || status?.busy);
   const branches: ReadonlyArray<GitBranchInfo> =
     status && status.branches && status.branches.length > 0
@@ -44,7 +34,7 @@ export function ComposerBottomBar({ status, contextUsage }: ComposerBottomBarPro
 
   return (
     <div className="flex h-7 items-center gap-0.5 px-1 pt-1">
-      {status && dot && (
+      {status && (
         <div className="flex min-w-0 items-center gap-0.5">
           {status.onRuntimeChange ? (
             <Picker
@@ -82,9 +72,6 @@ export function ComposerBottomBar({ status, contextUsage }: ComposerBottomBarPro
               <span className="min-w-0 truncate">{status.branch}</span>
             </span>
           )}
-
-          <span title={dot.label} className={cn("ml-1 size-1.5 shrink-0 rounded-full", dot.tone)} />
-          <span className="sr-only">{dot.label}</span>
         </div>
       )}
       <span className="min-w-2 flex-1" />

@@ -1,5 +1,5 @@
 import {
-  ArrowLeft01Icon,
+  ArrowLeft02Icon,
   PencilEdit02Icon,
   Search01Icon,
   Settings01Icon,
@@ -70,13 +70,15 @@ export function Sidebar({
         className="flex h-full shrink-0 flex-col px-2 py-3"
       >
         {isSettings ? (
-          <div className="flex h-9 items-center gap-1 pr-1 pl-0.5">
-            <Button variant="ghost" size="icon" aria-label="Back" onClick={leaveSettings}>
-              <Icon icon={ArrowLeft01Icon} />
-            </Button>
-            <span className="flex-1 text-[15px] font-semibold tracking-tight text-fg">
-              Settings
-            </span>
+          <div className="flex h-9 items-center gap-1 pr-1">
+            <button
+              type="button"
+              onClick={leaveSettings}
+              className="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-row px-2 text-left text-[15px] font-medium tracking-tight text-fg-secondary outline-none transition-colors duration-(--dur-hover) ease-hover hover:bg-(--wash) hover:text-fg focus-visible:shadow-focus"
+            >
+              <Icon icon={ArrowLeft02Icon} className="size-4 shrink-0" />
+              <span className="truncate">Settings</span>
+            </button>
             <Button variant="ghost" size="icon" aria-label="Collapse sidebar" onClick={onCollapse}>
               <Icon icon={SidebarLeftIcon} />
             </Button>
@@ -182,7 +184,7 @@ export function Sidebar({
         </Button>
         {isSettings ? (
           <Button variant="ghost" size="icon" aria-label="Back" onClick={leaveSettings}>
-            <Icon icon={ArrowLeft01Icon} />
+            <Icon icon={ArrowLeft02Icon} />
           </Button>
         ) : (
           <>

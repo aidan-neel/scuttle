@@ -1,9 +1,12 @@
 /// <reference types="bun" />
 import { describe, expect, test } from "bun:test";
 import {
+  clampCompactAt,
+  compactAtBounds,
   contextWindowFor,
   estimateContextUsage,
   formatTokens,
+  parseCompactAtInput,
 } from "../../../src/components/home/contextUsage.ts";
 
 const turn = (userMessage: string, assistantMessage: string, detail: string) => ({
@@ -54,5 +57,20 @@ describe("formatTokens", () => {
     expect(formatTokens(279_700)).toBe("279.7K");
     expect(formatTokens(400_000)).toBe("400K");
     expect(formatTokens(1_000_000)).toBe("1M");
+  });
+});
+
+describe("parseCompactAtInput", () => {
+  test("parses K, M, raw integers, and percentages clamped to window bounds", () => {
+    expect(parseCompactAtInput("120K", 200_000)).toBe(120_000);
+    expect(parseCompactAtInput("400k", 1_000_000)).toBe(400_000);
+    expect(parseCompactAtInput("0.5M", 1_000_000)).toBe(500_000);
+    expect(parseCompactAtInput("150,000", 200_000)).toBe(150_000);
+    expect(parseCompactAtInput("60%", 200_000)).toBe(120_000);
+    expect(parseCompactAtInput("999M", 200_000)).toBe(200_000);
+    expect(parseCompactAtInput("1k", 200_000)).toBe(compactAtBounds(200_000).min);
+    expect(clampCompactAt(500_000, 200_000)).toBe(200_000);
+    expect(parseCompactAtInput("nope", 200_000)).toBeNull();
+    expect(parseCompactAtInput("", 200_000)).toBeNull();
   });
 });
