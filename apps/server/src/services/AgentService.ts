@@ -40,11 +40,12 @@ import * as GitService from "./GitService.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as ProviderService from "./ProviderService.ts";
 import * as ThreadService from "./ThreadService.ts";
+import { forkCheckInScheduler } from "./agent/agentCheckInScheduler.ts";
+import { buildAgentContextBlock } from "./agent/agentContext.ts";
 import { makeAgentDelegationOps } from "./agent/agentDelegationOps.ts";
 import { makeAgentIssueOps } from "./agent/agentIssueOps.ts";
 import { makeAgentMemoryOps } from "./agent/agentMemoryOps.ts";
 import {
-  buildAgentContextBlock,
   buildSetupStartPrompt,
   defaultInstructionsMd,
   formatAgentName,
@@ -70,11 +71,13 @@ export { AgentServiceError } from "./agent/errors.ts";
 export interface AgentServiceOptions {
   readonly runner: CommandRunner;
   readonly fetch: FetchFn;
+  readonly enableCheckInScheduler?: boolean;
 }
 
 const DEFAULT_OPTIONS: AgentServiceOptions = {
   runner: runCommand,
   fetch: (input, init) => fetch(input, init),
+  enableCheckInScheduler: true,
 };
 
 export class AgentService extends Context.Service<
@@ -304,6 +307,13 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
       ),
       (unsubscribe) => Effect.sync(unsubscribe),
     );
+
+    if (options.enableCheckInScheduler ?? true) {
+      yield* forkCheckInScheduler({
+        listAgents: () => listAgents(db),
+        runCheckIn: delegationOps.runCheckIn,
+      });
+    }
 
     const list = Effect.fn("AgentService.list")(function* () {
       yield* ensureSeeded();
