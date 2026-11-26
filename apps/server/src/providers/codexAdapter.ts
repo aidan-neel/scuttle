@@ -5,6 +5,7 @@ import type {
   ProviderModel,
   ProviderSnapshot,
   RuntimeMode,
+  TurnUsage,
 } from "@scuttle/contracts";
 import * as Effect from "effect/Effect";
 import {
@@ -22,6 +23,7 @@ import type {
   HarnessTurnInput,
   HarnessTurnResult,
 } from "./types.ts";
+import { parseCodexTokenUsage } from "./usageParsing.ts";
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -215,6 +217,7 @@ export const codexAdapter: HarnessAdapter = {
     let activeTurnId: string | undefined;
     let streamedAssistant = "";
     let finalAssistantText: string | undefined;
+    let latestUsage: TurnUsage | undefined;
 
     let resolveDone!: () => void;
     let rejectDone!: (error: Error) => void;
@@ -298,6 +301,15 @@ export const codexAdapter: HarnessAdapter = {
             key: itemId,
             status: failed ? "failed" : "completed",
           });
+          return;
+        }
+
+        if (method === "thread/tokenUsage/updated") {
+          const usage = parseCodexTokenUsage(params);
+          if (usage) {
+            latestUsage = usage;
+            input.emit({ kind: "usage", usage });
+          }
           return;
         }
 
@@ -463,6 +475,7 @@ export const codexAdapter: HarnessAdapter = {
       ...(finalAssistantText ? { finalText: finalAssistantText } : {}),
       ...(providerThreadId ? { providerSessionId: providerThreadId } : {}),
       ...(input.signal.aborted ? { interrupted: true } : {}),
+      ...(latestUsage ? { usage: latestUsage } : {}),
     };
   },
 };

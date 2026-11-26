@@ -6,6 +6,7 @@ import type {
   Thread,
   ThreadStatus,
   ThreadTurn,
+  TurnUsage,
 } from "@scuttle/contracts";
 import { ActivityId, ApprovalId, type ThreadId, type TurnId } from "@scuttle/shared/ids";
 import { getHarnessAdapter } from "../providers/registry.ts";
@@ -64,11 +65,12 @@ export const launchTurnExecution = (
   const activitiesByKey = new Map<string, ActivityItem>();
   let thinkingActivityKey: string | null = null;
   let currentPhase: "thinking" | "working" = "thinking";
+  let latestUsage: TurnUsage | undefined;
 
   const persistTurn = (next: ThreadTurn) => {
     db.prepare(
       `UPDATE turns
-       SET assistant_message = ?, thinking_text = ?, status = ?, completed_at = ?, duration_ms = ?, cost_usd = ?, error = ?
+       SET assistant_message = ?, thinking_text = ?, status = ?, completed_at = ?, duration_ms = ?, cost_usd = ?, error = ?, usage_json = ?
        WHERE id = ?`,
     ).run(
       next.assistantMessage,
@@ -78,8 +80,16 @@ export const launchTurnExecution = (
       next.durationMs ?? null,
       next.costUsd ?? 0,
       next.error ?? null,
+      next.usage ? JSON.stringify(next.usage) : null,
       next.id,
     );
+    if (next.usage) {
+      db.prepare("UPDATE threads SET last_usage_json = ?, updated_at = ? WHERE id = ?").run(
+        JSON.stringify(next.usage),
+        next.completedAt ?? new Date().toISOString(),
+        thread.id,
+      );
+    }
     eventBus.publishSync({ kind: "turn.upserted", turn: next });
   };
 
@@ -318,6 +328,24 @@ export const launchTurnExecution = (
         updateThreadStatus(thread.id, { kind: "needs-input", approvalId });
         return;
       }
+      case "usage": {
+        latestUsage = event.usage;
+        const encoded = JSON.stringify(event.usage);
+        const now = new Date().toISOString();
+        db.prepare("UPDATE turns SET usage_json = ? WHERE id = ?").run(encoded, turn.id);
+        db.prepare("UPDATE threads SET last_usage_json = ?, updated_at = ? WHERE id = ?").run(
+          encoded,
+          now,
+          thread.id,
+        );
+        const refreshed = readThreadById(db, thread.id);
+        if (refreshed) {
+          eventBus.publishSync({ kind: "thread.upserted", thread: refreshed });
+          const currentTurn = readTurnsForThread(db, refreshed).find((t) => t.id === turn.id);
+          if (currentTurn) eventBus.publishSync({ kind: "turn.upserted", turn: currentTurn });
+        }
+        return;
+      }
     }
   };
 
@@ -396,6 +424,7 @@ export const launchTurnExecution = (
       const finalMessage =
         assistantText.length > 0 ? assistantText : (result.finalText ?? assistantText);
       const { activities, approvals } = readLatestTurnChildren();
+      const finalUsage = result.usage ?? latestUsage;
       persistTurn({
         ...turn,
         assistantMessage: finalMessage,
@@ -404,6 +433,7 @@ export const launchTurnExecution = (
         completedAt,
         durationMs,
         ...(result.costUsd !== undefined && result.costUsd > 0 ? { costUsd: result.costUsd } : {}),
+        ...(finalUsage ? { usage: finalUsage } : {}),
         activities,
         approvals,
       });
@@ -426,6 +456,7 @@ export const launchTurnExecution = (
         status: controller.signal.aborted ? "interrupted" : "failed",
         completedAt,
         durationMs,
+        ...(latestUsage ? { usage: latestUsage } : {}),
         ...(controller.signal.aborted ? {} : { error: errorMessage }),
         activities,
         approvals,

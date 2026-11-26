@@ -22,6 +22,7 @@ import type {
   HarnessTurnInput,
   HarnessTurnResult,
 } from "./types.ts";
+import { parseAcpUsage } from "./usageParsing.ts";
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -444,7 +445,12 @@ export const createAcpAdapter = (kind: AcpProviderKind): HarnessAdapter => ({
         30 * 60 * 1000,
       );
       let costUsd: number | undefined;
+      let usage: ReturnType<typeof parseAcpUsage>;
       if (isObject(promptRes)) {
+        usage = parseAcpUsage(promptRes);
+        if (usage) {
+          input.emit({ kind: "usage", usage });
+        }
         const costObj = isObject(promptRes.cost) ? promptRes.cost : undefined;
         const usageObj = isObject(promptRes.usage) ? promptRes.usage : undefined;
         const candidate =
@@ -463,6 +469,7 @@ export const createAcpAdapter = (kind: AcpProviderKind): HarnessAdapter => ({
         ...(sessionId ? { providerSessionId: sessionId } : {}),
         ...(input.signal.aborted ? { interrupted: true } : {}),
         ...(costUsd !== undefined ? { costUsd } : {}),
+        ...(usage ? { usage } : {}),
       };
     } finally {
       input.signal.removeEventListener("abort", onAbort);

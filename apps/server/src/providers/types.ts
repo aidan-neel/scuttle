@@ -8,6 +8,7 @@ import type {
   ProviderKind,
   ProviderSnapshot,
   RuntimeMode,
+  TurnUsage,
 } from "@scuttle/contracts";
 import type * as Effect from "effect/Effect";
 
@@ -41,7 +42,8 @@ export type HarnessEvent =
       readonly command?: string;
       readonly options: ReadonlyArray<ApprovalOption>;
       readonly resolve: (decision: ApprovalDecision) => void;
-    };
+    }
+  | { readonly kind: "usage"; readonly usage: TurnUsage };
 
 export interface ApprovalDecision {
   readonly optionId: string;
@@ -67,6 +69,7 @@ export interface HarnessTurnResult {
   readonly providerSessionId?: string;
   readonly interrupted?: boolean;
   readonly costUsd?: number;
+  readonly usage?: TurnUsage;
 }
 
 export interface HarnessAdapter {
