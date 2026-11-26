@@ -5,6 +5,7 @@ import {
   AgentModelStack,
   ModelSelection,
   ThreadRuntime,
+  type UpdateAgentInput,
 } from "@scuttle/contracts";
 import { AgentCheckInId, AgentId, ProjectId, ProviderId, ThreadId } from "@scuttle/shared/ids";
 import * as Schema from "effect/Schema";
@@ -274,4 +275,35 @@ export const insertCheckIn = (db: Database, checkIn: AgentCheckIn): void => {
     checkIn.openIssues,
     checkIn.createdAt,
   );
+};
+
+export const buildUpdatedAgent = (existing: Agent, input: UpdateAgentInput): Agent => {
+  const nextInterval =
+    input.checkInIntervalMinutes === undefined
+      ? existing.checkInIntervalMinutes
+      : input.checkInIntervalMinutes === null
+        ? undefined
+        : input.checkInIntervalMinutes;
+  const nextName = input.name?.trim() || existing.name;
+  return {
+    id: existing.id,
+    projectId: existing.projectId,
+    projectName: existing.projectName,
+    projectPath: existing.projectPath,
+    name: nextName,
+    purpose: input.purpose !== undefined ? input.purpose : existing.purpose,
+    primaryThreadId: existing.primaryThreadId,
+    runtime: input.runtime ?? existing.runtime,
+    modelSelection: input.modelSelection ?? existing.modelSelection,
+    modelStack: input.modelStack ?? existing.modelStack,
+    instructionsMd:
+      input.instructionsMd !== undefined ? input.instructionsMd : existing.instructionsMd,
+    ...(nextInterval !== undefined ? { checkInIntervalMinutes: nextInterval } : {}),
+    ...(existing.lastCheckInAt !== undefined ? { lastCheckInAt: existing.lastCheckInAt } : {}),
+    ...(existing.lastSummary !== undefined ? { lastSummary: existing.lastSummary } : {}),
+    pinned: input.pinned ?? existing.pinned,
+    needsAttention: input.needsAttention ?? existing.needsAttention,
+    createdAt: existing.createdAt,
+    updatedAt: new Date().toISOString(),
+  };
 };

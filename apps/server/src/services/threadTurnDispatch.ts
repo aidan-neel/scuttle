@@ -86,6 +86,7 @@ export const dispatchThreadTurn = (input: {
   const extraEnv: Record<string, string> = {
     SCUTTLE_API_URL: apiBaseUrl,
     ...(wrapped.agentId ? { SCUTTLE_AGENT_ID: wrapped.agentId } : {}),
+    ...(wrapped.delegationId ? { SCUTTLE_DELEGATION_ID: wrapped.delegationId } : {}),
   };
   launchTurnExecution(runnerDeps, refreshed, turn, fullPrompt, providerConfig, extraEnv, {
     ...(freshSessionPrompt !== undefined ? { freshSessionPrompt } : {}),

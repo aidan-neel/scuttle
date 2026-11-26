@@ -178,6 +178,12 @@ export const startScuttleServer = async (
       }
 
       if (url.pathname.startsWith("/api/")) {
+        if (
+          request.method.toUpperCase() === "POST" &&
+          /^\/api\/agents\/[^/]+\/delegations\/[^/]+\/ask$/.test(url.pathname)
+        ) {
+          bunServer.timeout(request, 0);
+        }
         const apiResponse = await runtime.runPromise(handleApiRequest(request, url));
         if (apiResponse !== null) {
           return withCors(apiResponse, origin);

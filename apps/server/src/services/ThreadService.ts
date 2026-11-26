@@ -25,15 +25,13 @@ import * as GitService from "./GitService.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as ProviderService from "./ProviderService.ts";
 import { maybeRolloverThreadSession, rolloverThreadSession } from "./threadCompaction.ts";
-import { resolveThreadLocation } from "./threadRuntime.ts";
+import { createThreadWithLocation, resolveThreadLocation } from "./threadRuntime.ts";
 import {
   deriveThreadInputTitle,
-  insertThreadRow,
   listAllThreads,
   readThreadById,
   readTurnsForThread,
   recoverInterruptedThreads,
-  TITLE_LIMIT,
   updateThreadRow,
 } from "./threadStore.ts";
 import { dispatchThreadTurn, resolvePendingApproval } from "./threadTurnDispatch.ts";
@@ -64,6 +62,7 @@ export class ThreadService extends Context.Service<
       readonly modelSelection: CreateThreadInput["modelSelection"];
       readonly runtimeMode?: CreateThreadInput["runtimeMode"];
       readonly interactionMode?: CreateThreadInput["interactionMode"];
+      readonly setupWorktree?: boolean;
     }) => Effect.Effect<Thread, ThreadServiceError>;
     readonly sendTurn: (
       threadId: ThreadId,
@@ -206,6 +205,38 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const insertThreadWithLocation = Effect.fn("ThreadService.insertThreadWithLocation")(
+    function* (input: {
+      readonly projectId: CreateThreadInput["projectId"];
+      readonly title: string;
+      readonly runtime: CreateThreadInput["runtime"];
+      readonly branch: string;
+      readonly modelSelection: CreateThreadInput["modelSelection"];
+      readonly runtimeMode?: CreateThreadInput["runtimeMode"];
+      readonly interactionMode?: CreateThreadInput["interactionMode"];
+      readonly setupWorktree?: boolean;
+      readonly initialStatus: ThreadStatus;
+    }) {
+      const project = yield* projects
+        .get(input.projectId)
+        .pipe(Effect.mapError((err) => new ThreadServiceError({ detail: err.message })));
+      return yield* createThreadWithLocation({
+        db,
+        eventBus,
+        git,
+        project,
+        title: input.title,
+        runtime: input.runtime,
+        branch: input.branch,
+        modelSelection: input.modelSelection,
+        ...(input.runtimeMode ? { runtimeMode: input.runtimeMode } : {}),
+        ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
+        ...(input.setupWorktree ? { setupWorktree: true } : {}),
+        initialStatus: input.initialStatus,
+      }).pipe(Effect.mapError((detail) => new ThreadServiceError({ detail })));
+    },
+  );
+
   const createIdle = Effect.fn("ThreadService.createIdle")(function* (input: {
     readonly projectId: CreateThreadInput["projectId"];
     readonly title: string;
@@ -214,82 +245,29 @@ const make = Effect.gen(function* () {
     readonly modelSelection: CreateThreadInput["modelSelection"];
     readonly runtimeMode?: CreateThreadInput["runtimeMode"];
     readonly interactionMode?: CreateThreadInput["interactionMode"];
+    readonly setupWorktree?: boolean;
   }) {
-    const project = yield* projects
-      .get(input.projectId)
-      .pipe(Effect.mapError((err) => new ThreadServiceError({ detail: err.message })));
-
-    const threadId = ThreadId.make(crypto.randomUUID());
-    const now = new Date().toISOString();
-    const thread = insertThreadRow(db, {
-      id: threadId,
-      projectId: project.id,
-      projectName: project.name,
-      title: input.title.trim().slice(0, TITLE_LIMIT) || project.name,
-      runtime: input.runtime,
-      branch: input.branch,
-      cwd: project.path,
-      modelSelection: input.modelSelection,
-      runtimeMode: input.runtimeMode ?? "auto",
-      interactionMode: input.interactionMode ?? "default",
-      status: { kind: "idle" },
-      now,
+    return yield* insertThreadWithLocation({
+      ...input,
+      initialStatus: { kind: "idle" },
     });
-    if (!thread) {
-      return yield* new ThreadServiceError({ detail: "Failed to persist thread." });
-    }
-    eventBus.publishSync({ kind: "thread.upserted", thread });
-    return thread;
   });
 
   const create = Effect.fn("ThreadService.create")(function* (input: CreateThreadInput) {
-    const project = yield* projects
-      .get(input.projectId)
-      .pipe(Effect.mapError((err) => new ThreadServiceError({ detail: err.message })));
-
-    const threadId = ThreadId.make(crypto.randomUUID());
     const title = deriveThreadInputTitle(input.prompt, input.title);
-    let cwd = project.path;
-    let branch = input.branch;
-    let worktreePath: string | undefined;
-
-    if (input.runtime === "worktree") {
-      const created = yield* git
-        .createWorktree({
-          repoPath: project.path,
-          baseBranch: input.branch,
-          titleHint: title,
-          threadId,
-        })
-        .pipe(Effect.mapError((err) => new ThreadServiceError({ detail: err.message })));
-      cwd = created.worktreePath;
-      worktreePath = created.worktreePath;
-      branch = created.branch;
-    }
-
-    const now = new Date().toISOString();
-    const thread = insertThreadRow(db, {
-      id: threadId,
-      projectId: project.id,
-      projectName: project.name,
+    const thread = yield* insertThreadWithLocation({
+      projectId: input.projectId,
       title,
       runtime: input.runtime,
-      branch,
-      ...(worktreePath ? { worktreePath } : {}),
-      cwd,
+      branch: input.branch,
       modelSelection: input.modelSelection,
-      runtimeMode: input.runtimeMode ?? "auto",
-      interactionMode: input.interactionMode ?? "default",
-      status: { kind: "running", startedAt: now, phase: "thinking" },
-      now,
+      runtimeMode: input.runtimeMode,
+      interactionMode: input.interactionMode,
+      setupWorktree: true,
+      initialStatus: { kind: "running", startedAt: new Date().toISOString(), phase: "thinking" },
     });
-    if (!thread) {
-      return yield* new ThreadServiceError({ detail: "Failed to persist thread." });
-    }
-    eventBus.publishSync({ kind: "thread.upserted", thread });
-
     const turn = yield* startTurnInternal(thread, input.prompt, input.attachments);
-    const updatedThread = readThreadById(db, threadId) ?? thread;
+    const updatedThread = readThreadById(db, thread.id) ?? thread;
     return { thread: updatedThread, turns: [turn] };
   });
 

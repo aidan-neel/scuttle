@@ -19,6 +19,7 @@ import {
   listIssues,
   listUnnotifiedSettledDelegations,
   markDelegationsParentNotified,
+  readActiveDelegationByChildThread,
   readAgentIdForThread,
   readDelegationById,
 } from "./agentWorkStore.ts";
@@ -130,7 +131,7 @@ const assembleAgentDelta = (input: {
   const { db, agentId, profileHash } = input;
   const unnotified = listUnnotifiedSettledDelegations(db, agentId);
   const runningCount = listDelegations(db, agentId, 100).filter(
-    (d) => d.status === "running",
+    (d) => d.status === "running" || d.status === "waiting_parent",
   ).length;
   const openIssueCount = listIssues(db, agentId).filter(
     (i) => i.state !== "done" && i.state !== "canceled",
@@ -200,6 +201,7 @@ export interface WrappedThreadPrompt {
   readonly prompt: string;
   readonly freshSessionPrompt?: string;
   readonly agentId?: string;
+  readonly delegationId?: string;
   readonly pendingContextHash?: string;
   readonly pendingNotifiedDelegationIds: ReadonlyArray<string>;
   readonly pendingAccessedMemoryIds: ReadonlyArray<string>;
@@ -221,7 +223,9 @@ export const wrapPromptForThread = (input: {
   const handoff = activeSummary.length > 0 ? formatSessionHandoff(activeSummary) : "";
 
   if (agent === null) {
-    const agentId = readAgentIdForThread(db, thread.id) ?? undefined;
+    const activeDelegation = readActiveDelegationByChildThread(db, thread.id);
+    const agentId = activeDelegation?.agentId ?? readAgentIdForThread(db, thread.id) ?? undefined;
+    const delegationId = activeDelegation?.id;
     const prompt =
       isFreshProviderSession && handoff.length > 0 ? `${handoff}\n\n${userPrompt}` : userPrompt;
     const freshSessionPrompt =
@@ -230,6 +234,7 @@ export const wrapPromptForThread = (input: {
       prompt,
       ...(freshSessionPrompt !== undefined ? { freshSessionPrompt } : {}),
       ...(agentId ? { agentId } : {}),
+      ...(delegationId ? { delegationId } : {}),
       pendingNotifiedDelegationIds: [],
       pendingAccessedMemoryIds: [],
     };

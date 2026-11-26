@@ -2,9 +2,11 @@ import type {
   Agent,
   AgentCheckIn,
   AgentDelegation,
+  AgentDelegationQuestion,
   AgentDetail,
   AgentIssue,
   AgentMemory,
+  AskDelegationParentInput,
   AssignAgentIssueInput,
   AssignAgentIssueResult,
   CreateAgentInput,
@@ -40,6 +42,7 @@ import * as GitService from "./GitService.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as ProviderService from "./ProviderService.ts";
 import * as ThreadService from "./ThreadService.ts";
+import { makeAgentBounceOps } from "./agent/agentBounceOps.ts";
 import { forkCheckInScheduler } from "./agent/agentCheckInScheduler.ts";
 import { buildAgentContextBlock } from "./agent/agentContext.ts";
 import { makeAgentDelegationOps } from "./agent/agentDelegationOps.ts";
@@ -52,6 +55,7 @@ import {
   pickDefaultModelSelection,
 } from "./agent/agentPrompts.ts";
 import {
+  buildUpdatedAgent,
   deleteAgentRow,
   insertAgent,
   listAgents,
@@ -72,6 +76,7 @@ export interface AgentServiceOptions {
   readonly runner: CommandRunner;
   readonly fetch: FetchFn;
   readonly enableCheckInScheduler?: boolean;
+  readonly askParentTimeoutMs?: number;
 }
 
 const DEFAULT_OPTIONS: AgentServiceOptions = {
@@ -82,6 +87,9 @@ const DEFAULT_OPTIONS: AgentServiceOptions = {
 
 const toRejectedError = (err: { readonly message: string }) =>
   new AgentServiceError({ reason: "rejected", detail: err.message });
+
+const toNotFoundError = (err: { readonly message: string }) =>
+  new AgentServiceError({ reason: "not-found", detail: err.message });
 
 export class AgentService extends Context.Service<
   AgentService,
@@ -161,6 +169,16 @@ export class AgentService extends Context.Service<
       agentId: AgentId,
       delegationId: AgentDelegationId,
     ) => Effect.Effect<AgentDelegation, AgentServiceError>;
+    readonly askParent: (
+      agentId: AgentId,
+      delegationId: AgentDelegationId,
+      input: AskDelegationParentInput,
+      options?: { readonly signal?: AbortSignal },
+    ) => Effect.Effect<AgentDelegationQuestion, AgentServiceError>;
+    readonly listDelegationQuestions: (
+      agentId: AgentId,
+      delegationId: AgentDelegationId,
+    ) => Effect.Effect<ReadonlyArray<AgentDelegationQuestion>, AgentServiceError>;
     readonly runCheckIn: (
       agentId: AgentId,
       input?: TriggerCheckInInput,
@@ -269,11 +287,7 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
       const agent = yield* requireAgent(agentId);
       return yield* threads
         .sendTurn(agent.primaryThreadId, input, options)
-        .pipe(
-          Effect.mapError(
-            (err) => new AgentServiceError({ reason: "rejected", detail: err.message }),
-          ),
-        );
+        .pipe(Effect.mapError(toRejectedError));
     });
 
     const memoryOps = makeAgentMemoryOps({ db, eventBus, requireAgent });
@@ -285,6 +299,15 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
       fetch: options.fetch,
       requireAgent,
     });
+    const bounceOps = makeAgentBounceOps({
+      db,
+      eventBus,
+      requireAgent,
+      sendAgentTurn: sendTurn,
+      ...(options.askParentTimeoutMs !== undefined
+        ? { askParentTimeoutMs: options.askParentTimeoutMs }
+        : {}),
+    });
     const delegationOps = makeAgentDelegationOps({
       db,
       eventBus,
@@ -294,6 +317,7 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
       gitForge,
       requireAgent,
       sendAgentTurn: sendTurn,
+      bounceOps,
     });
 
     yield* Effect.acquireRelease(
@@ -304,7 +328,11 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
           }
         }),
       ),
-      (unsubscribe) => Effect.sync(unsubscribe),
+      (unsubscribe) =>
+        Effect.sync(() => {
+          unsubscribe();
+          bounceOps.dispose();
+        }),
     );
 
     if (options.enableCheckInScheduler ?? true) {
@@ -324,11 +352,7 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
       const agent = yield* requireAgent(agentId);
       const primaryThread = yield* threads
         .getDetail(agent.primaryThreadId)
-        .pipe(
-          Effect.mapError(
-            (err) => new AgentServiceError({ reason: "not-found", detail: err.message }),
-          ),
-        );
+        .pipe(Effect.mapError(toNotFoundError));
       return {
         agent,
         primaryThread,
@@ -347,13 +371,7 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
         });
       }
       const project = input.projectId
-        ? yield* projects
-            .get(input.projectId)
-            .pipe(
-              Effect.mapError(
-                (err) => new AgentServiceError({ reason: "not-found", detail: err.message }),
-              ),
-            )
+        ? yield* projects.get(input.projectId).pipe(Effect.mapError(toNotFoundError))
         : yield* projects
             .create({ path: input.path! })
             .pipe(
@@ -384,45 +402,16 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
       input: UpdateAgentInput,
     ) {
       const existing = yield* requireAgent(agentId);
-      const nextInterval =
-        input.checkInIntervalMinutes === undefined
-          ? existing.checkInIntervalMinutes
-          : input.checkInIntervalMinutes === null
-            ? undefined
-            : input.checkInIntervalMinutes;
-      const nextName = input.name?.trim() || existing.name;
-      const nextModel = input.modelSelection ?? existing.modelSelection;
-      const nextRuntime = input.runtime ?? existing.runtime;
+      const updated = buildUpdatedAgent(existing, input);
       const runtimeChanged = input.runtime !== undefined && input.runtime !== existing.runtime;
-      const nameChanged = input.name !== undefined && nextName !== existing.name;
+      const nameChanged = input.name !== undefined && updated.name !== existing.name;
       const modelProvided = input.modelSelection !== undefined;
-      const updated: Agent = {
-        id: existing.id,
-        projectId: existing.projectId,
-        projectName: existing.projectName,
-        projectPath: existing.projectPath,
-        name: nextName,
-        purpose: input.purpose !== undefined ? input.purpose : existing.purpose,
-        primaryThreadId: existing.primaryThreadId,
-        runtime: nextRuntime,
-        modelSelection: nextModel,
-        modelStack: input.modelStack ?? existing.modelStack,
-        instructionsMd:
-          input.instructionsMd !== undefined ? input.instructionsMd : existing.instructionsMd,
-        ...(nextInterval !== undefined ? { checkInIntervalMinutes: nextInterval } : {}),
-        ...(existing.lastCheckInAt !== undefined ? { lastCheckInAt: existing.lastCheckInAt } : {}),
-        ...(existing.lastSummary !== undefined ? { lastSummary: existing.lastSummary } : {}),
-        pinned: input.pinned ?? existing.pinned,
-        needsAttention: input.needsAttention ?? existing.needsAttention,
-        createdAt: existing.createdAt,
-        updatedAt: new Date().toISOString(),
-      };
       if (runtimeChanged || nameChanged || modelProvided) {
         yield* threads
           .update(existing.primaryThreadId, {
-            ...(runtimeChanged ? { runtime: nextRuntime } : {}),
-            ...(nameChanged ? { title: nextName } : {}),
-            ...(modelProvided ? { modelSelection: nextModel } : {}),
+            ...(runtimeChanged ? { runtime: updated.runtime } : {}),
+            ...(nameChanged ? { title: updated.name } : {}),
+            ...(modelProvided ? { modelSelection: updated.modelSelection } : {}),
           })
           .pipe(Effect.mapError(toRejectedError));
       }
@@ -482,6 +471,8 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
       assignIssue: delegationOps.assignIssue,
       delegateTask: delegationOps.delegateTask,
       cancelDelegation: delegationOps.cancelDelegation,
+      askParent: bounceOps.askParent,
+      listDelegationQuestions: bounceOps.listQuestions,
       runCheckIn: delegationOps.runCheckIn,
     });
   });

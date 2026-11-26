@@ -25,6 +25,7 @@ import type * as GitService from "../GitService.ts";
 import type * as ProjectService from "../ProjectService.ts";
 import type * as ThreadService from "../ThreadService.ts";
 import { buildCheckInPrompt, buildDelegationBrief } from "./agentPrompts.ts";
+import type { makeAgentBounceOps } from "./agentBounceOps.ts";
 import {
   insertCheckIn,
   listMemories,
@@ -36,9 +37,9 @@ import {
   insertDelegation,
   listDelegations,
   listIssues,
+  readActiveDelegationByChildThread,
   readDelegationById,
   readIssueById,
-  readRunningDelegationByChildThread,
   updateDelegationRow,
   updateIssueRow,
 } from "./agentWorkStore.ts";
@@ -78,14 +79,26 @@ export const makeAgentDelegationOps = (deps: {
     input: SendTurnInput,
     options?: { readonly origin?: TurnOrigin },
   ) => Effect.Effect<ThreadTurn, AgentServiceError>;
+  readonly bounceOps: Pick<
+    ReturnType<typeof makeAgentBounceOps>,
+    "handlePrimaryOrParentTurnSettled" | "cancelForDelegation"
+  >;
 }) => {
-  const { db, eventBus, projects, threads, git, gitForge, requireAgent, sendAgentTurn } = deps;
+  const { db, eventBus, projects, threads, git, gitForge, requireAgent, sendAgentTurn, bounceOps } =
+    deps;
   const inFlightCheckIns = new Set<AgentId>();
 
   const handleTurnSettled = (turn: ThreadTurn) => {
     if (turn.status === "running") return;
-    const delegation = readRunningDelegationByChildThread(db, turn.threadId);
+    if (bounceOps.handlePrimaryOrParentTurnSettled(turn)) return;
+    const delegation = readActiveDelegationByChildThread(db, turn.threadId);
     if (!delegation) return;
+
+    bounceOps.cancelForDelegation(delegation.id, "Child thread settled before parent answered.", {
+      restoreDelegation: false,
+    });
+    const latestDelegation =
+      readDelegationById(db, delegation.agentId, delegation.id) ?? delegation;
 
     const status =
       turn.status === "completed" ? "completed" : turn.status === "failed" ? "failed" : "canceled";
@@ -93,11 +106,15 @@ export const makeAgentDelegationOps = (deps: {
     const resultSummary = summarizeTurnOutput(turn, status);
     const pr = extractPrFromText(turn.assistantMessage);
     const nextDelegation: AgentDelegation = {
-      ...delegation,
+      ...latestDelegation,
       status,
       resultSummary,
       completedAt,
-      ...(pr.url ? { prUrl: pr.url } : delegation.prUrl ? { prUrl: delegation.prUrl } : {}),
+      ...(pr.url
+        ? { prUrl: pr.url }
+        : latestDelegation.prUrl
+          ? { prUrl: latestDelegation.prUrl }
+          : {}),
     };
     updateDelegationRow(db, nextDelegation);
     eventBus.publishSync({ kind: "agent.delegation.upserted", delegation: nextDelegation });
@@ -167,9 +184,28 @@ export const makeAgentDelegationOps = (deps: {
       }
     }
 
+    const maxBounces = input.maxBounces ?? 3;
+    const delegationId = AgentDelegationId.make(crypto.randomUUID());
+    const childThread = yield* threads
+      .createIdle({
+        projectId: agent.projectId,
+        title: input.title,
+        runtime,
+        branch: project.defaultBranch,
+        modelSelection,
+        setupWorktree: runtime === "worktree",
+      })
+      .pipe(
+        Effect.mapError(
+          (err) => new AgentServiceError({ reason: "rejected", detail: err.message }),
+        ),
+      );
+
     const pinnedMemories = listMemories(db, agent.id, 30).filter((m) => m.pinned);
     const fullBrief = buildDelegationBrief({
       agent,
+      delegationId,
+      maxBounces,
       role: input.role,
       kind: input.kind,
       title: input.title,
@@ -178,42 +214,46 @@ export const makeAgentDelegationOps = (deps: {
       issue: linkedIssue,
     });
 
-    const childDetail = yield* threads
-      .create({
-        projectId: agent.projectId,
-        title: input.title,
-        prompt: fullBrief,
-        runtime,
-        branch: project.defaultBranch,
-        modelSelection,
-      })
-      .pipe(
-        Effect.mapError(
-          (err) => new AgentServiceError({ reason: "rejected", detail: err.message }),
-        ),
-      );
-
     const now = new Date().toISOString();
     const delegation: AgentDelegation = {
-      id: AgentDelegationId.make(crypto.randomUUID()),
+      id: delegationId,
       agentId: agent.id,
       parentThreadId: agent.primaryThreadId,
-      childThreadId: childDetail.thread.id,
+      childThreadId: childThread.id,
       role: input.role,
       kind: input.kind,
       title: input.title,
       brief: input.brief,
       modelSelection,
       status: "running",
+      bounceCount: 0,
+      maxBounces,
       ...(linkedIssue ? { issueId: linkedIssue.id } : {}),
       createdAt: now,
     };
     insertDelegation(db, delegation);
 
+    const sendResult = yield* threads
+      .sendTurn(childThread.id, { prompt: fullBrief })
+      .pipe(Effect.result);
+    if (sendResult._tag === "Failure") {
+      updateDelegationRow(db, {
+        ...delegation,
+        status: "failed",
+        resultSummary: sendResult.failure.message,
+        completedAt: new Date().toISOString(),
+      });
+      yield* threads.remove(childThread.id).pipe(Effect.ignore);
+      return yield* new AgentServiceError({
+        reason: "rejected",
+        detail: sendResult.failure.message,
+      });
+    }
+
     if (linkedIssue) {
       const updatedIssue: AgentIssue = {
         ...linkedIssue,
-        assignedThreadId: childDetail.thread.id,
+        assignedThreadId: childThread.id,
         state: linkedIssue.state === "backlog" ? "in_progress" : linkedIssue.state,
         updatedAt: now,
       };
@@ -286,9 +326,12 @@ export const makeAgentDelegationOps = (deps: {
         detail: `Delegation "${delegationId}" was not found.`,
       });
     }
+    bounceOps.cancelForDelegation(delegationId, "Delegation canceled.", {
+      restoreDelegation: false,
+    });
     yield* threads.interrupt(existing.childThreadId).pipe(Effect.ignore);
     const latest = readDelegationById(db, agentId, delegationId) ?? existing;
-    if (latest.status !== "running") return latest;
+    if (latest.status !== "running" && latest.status !== "waiting_parent") return latest;
     const canceled: AgentDelegation = {
       ...latest,
       status: "canceled",
@@ -315,7 +358,9 @@ export const makeAgentDelegationOps = (deps: {
       const agent = yield* requireAgent(agentId);
       const delegations = listDelegations(db, agent.id, 50);
       const issues = listIssues(db, agent.id);
-      const activeDelegations = delegations.filter((d) => d.status === "running").length;
+      const activeDelegations = delegations.filter(
+        (d) => d.status === "running" || d.status === "waiting_parent",
+      ).length;
       const openIssues = issues.filter(
         (issue) => issue.state !== "done" && issue.state !== "canceled",
       ).length;
