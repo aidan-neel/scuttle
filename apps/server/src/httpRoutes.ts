@@ -1,4 +1,5 @@
 import {
+  CompactThreadInput,
   CreateProjectInput,
   CreateThreadInput,
   ProviderConfigPatch,
@@ -11,7 +12,7 @@ import { ApprovalId, ProjectId, ProviderId, ThreadId } from "@scuttle/shared/ids
 import * as Effect from "effect/Effect";
 import { handleAgentApiRequest } from "./agentRoutes.ts";
 import { handleGitApiRequest } from "./gitRoutes.ts";
-import { jsonError, matchRoute, readAndDecode } from "./httpHelpers.ts";
+import { jsonError, matchRoute, readAndDecode, readOptionalAndDecode } from "./httpHelpers.ts";
 import * as AgentService from "./services/AgentService.ts";
 import type * as GitForgeService from "./services/GitForgeService.ts";
 import * as HealthService from "./services/HealthService.ts";
@@ -175,6 +176,16 @@ export const handleApiRequest = (
           threadService.settle(ThreadId.make(threadSettle[0]!), input.settled),
         ),
         Effect.map((thread) => Response.json(thread)),
+        Effect.catch((err) => Effect.succeed(jsonError(err.message, 400))),
+      );
+    }
+
+    const threadCompact = matchRoute(pathname, /^\/api\/threads\/([^/]+)\/compact$/);
+    if (method === "POST" && threadCompact !== null) {
+      const threadService = yield* ThreadService.ThreadService;
+      return yield* readOptionalAndDecode(request, CompactThreadInput, {}).pipe(
+        Effect.flatMap((input) => threadService.compact(ThreadId.make(threadCompact[0]!), input)),
+        Effect.map((result) => Response.json(result)),
         Effect.catch((err) => Effect.succeed(jsonError(err.message, 400))),
       );
     }
