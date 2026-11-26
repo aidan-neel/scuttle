@@ -5,6 +5,7 @@ import type {
   ProviderKind,
   ProviderModel,
   ProviderSnapshot,
+  TurnUsage,
 } from "@scuttle/contracts";
 import * as Effect from "effect/Effect";
 import {
@@ -22,6 +23,7 @@ import type {
   HarnessTurnInput,
   HarnessTurnResult,
 } from "./types.ts";
+import { parseAcpCostUsd, parseAcpUsage } from "./usageParsing.ts";
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -258,6 +260,7 @@ export const createAcpAdapter = (kind: AcpProviderKind): HarnessAdapter => ({
     }
 
     let sessionId = input.providerSessionId;
+    let latestUsage: TurnUsage | undefined;
     const seenToolIds = new Set<string>();
 
     const rpc = new StdioJsonRpcProcess({
@@ -279,6 +282,15 @@ export const createAcpAdapter = (kind: AcpProviderKind): HarnessAdapter => ({
         if (kindTag === "agent_thought_chunk") {
           const text = extractContentText(update.content);
           if (text.length > 0) input.emit({ kind: "thinking.delta", text });
+          return;
+        }
+
+        if (kindTag === "usage_update") {
+          const updateUsage = parseAcpUsage(update);
+          if (updateUsage) {
+            latestUsage = updateUsage;
+            input.emit({ kind: "usage", usage: updateUsage });
+          }
           return;
         }
 
@@ -380,6 +392,7 @@ export const createAcpAdapter = (kind: AcpProviderKind): HarnessAdapter => ({
         clientCapabilities: {},
       });
 
+      let turnPrompt = input.prompt;
       let sessionResult: unknown = null;
       if (sessionId) {
         sessionResult = await rpc
@@ -391,6 +404,7 @@ export const createAcpAdapter = (kind: AcpProviderKind): HarnessAdapter => ({
           );
         if (sessionResult === null) {
           sessionId = undefined;
+          turnPrompt = input.freshSessionPrompt ?? input.prompt;
         }
       }
 
@@ -439,30 +453,28 @@ export const createAcpAdapter = (kind: AcpProviderKind): HarnessAdapter => ({
         "session/prompt",
         {
           sessionId,
-          prompt: [{ type: "text", text: input.prompt }],
+          prompt: [{ type: "text", text: turnPrompt }],
         },
         30 * 60 * 1000,
       );
-      let costUsd: number | undefined;
-      if (isObject(promptRes)) {
-        const costObj = isObject(promptRes.cost) ? promptRes.cost : undefined;
-        const usageObj = isObject(promptRes.usage) ? promptRes.usage : undefined;
-        const candidate =
-          typeof costObj?.totalUsd === "number"
-            ? costObj.totalUsd
-            : typeof usageObj?.costUsd === "number"
-              ? usageObj.costUsd
-              : typeof promptRes.total_cost_usd === "number"
-                ? promptRes.total_cost_usd
-                : undefined;
-        if (candidate !== undefined && Number.isFinite(candidate) && candidate > 0) {
-          costUsd = candidate;
-        }
+      const costUsd = parseAcpCostUsd(promptRes);
+      const promptUsage = isObject(promptRes) ? parseAcpUsage(promptRes) : undefined;
+      let usage = promptUsage ?? latestUsage;
+      if (
+        promptUsage &&
+        promptUsage.contextWindowTokens === undefined &&
+        latestUsage?.contextWindowTokens !== undefined
+      ) {
+        usage = { ...promptUsage, contextWindowTokens: latestUsage.contextWindowTokens };
+      }
+      if (promptUsage && usage) {
+        input.emit({ kind: "usage", usage });
       }
       return {
         ...(sessionId ? { providerSessionId: sessionId } : {}),
         ...(input.signal.aborted ? { interrupted: true } : {}),
         ...(costUsd !== undefined ? { costUsd } : {}),
+        ...(usage ? { usage } : {}),
       };
     } finally {
       input.signal.removeEventListener("abort", onAbort);

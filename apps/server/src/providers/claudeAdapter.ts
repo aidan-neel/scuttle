@@ -1,7 +1,7 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import type { ProviderConfig, ProviderSnapshot } from "@scuttle/contracts";
+import type { ProviderConfig, ProviderSnapshot, TurnUsage } from "@scuttle/contracts";
 import * as Effect from "effect/Effect";
 import {
   getBuiltInProviderSpec,
@@ -12,6 +12,7 @@ import {
 } from "./catalog.ts";
 import { presentToolActivity } from "./toolLabel.ts";
 import type { HarnessAdapter, HarnessTurnInput, HarnessTurnResult } from "./types.ts";
+import { parseClaudeUsage } from "./usageParsing.ts";
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -166,6 +167,7 @@ export const claudeAdapter: HarnessAdapter = {
     let finalResultText: string | undefined;
     let resultError: string | undefined;
     let costUsd: number | undefined;
+    let turnUsage: TurnUsage | undefined;
     const seenToolIds = new Set<string>();
     let stderrText = "";
 
@@ -284,6 +286,11 @@ export const claudeAdapter: HarnessAdapter = {
         if (typeof parsed.total_cost_usd === "number" && Number.isFinite(parsed.total_cost_usd)) {
           costUsd = parsed.total_cost_usd;
         }
+        const parsedUsage = parseClaudeUsage(parsed, input.model);
+        if (parsedUsage) {
+          turnUsage = parsedUsage;
+          input.emit({ kind: "usage", usage: parsedUsage });
+        }
         if (parsed.is_error === true) {
           resultError = asString(parsed.result) ?? "Claude Code returned an error.";
         } else if (typeof parsed.result === "string" && parsed.result.length > 0) {
@@ -344,6 +351,7 @@ export const claudeAdapter: HarnessAdapter = {
       ...(finalResultText ? { finalText: finalResultText } : {}),
       ...(providerSessionId ? { providerSessionId } : {}),
       ...(costUsd !== undefined && costUsd > 0 ? { costUsd } : {}),
+      ...(turnUsage ? { usage: turnUsage } : {}),
     };
   },
 };

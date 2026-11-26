@@ -1,4 +1,3 @@
-import type { Database } from "bun:sqlite";
 import type {
   Agent,
   AgentCheckIn,
@@ -10,8 +9,8 @@ import type {
   ProviderSnapshot,
 } from "@scuttle/contracts";
 import { ProviderId } from "@scuttle/shared/ids";
-import { listMemories, readAgentByPrimaryThreadId, searchMemories } from "./agentStore.ts";
-import { listDelegations, listIssues } from "./agentWorkStore.ts";
+
+export { buildAgentContextBlock } from "./agentContext.ts";
 
 const FALLBACK_SELECTION: ModelSelection = {
   providerId: ProviderId.make("claude"),
@@ -54,15 +53,6 @@ export const formatAgentName = (projectName: string): string => {
   return words.length > 0 ? words.join(" ") : "Agent";
 };
 
-const ROLES: ReadonlyArray<AgentModelRole> = [
-  "agent",
-  "workhorse",
-  "design",
-  "review",
-  "fast",
-  "large",
-];
-
 export const defaultInstructionsMd = (
   agentName: string,
   projectName: string,
@@ -89,134 +79,6 @@ You are **${agentName}**, a persistent Agent for **${projectName}** (\`${project
 
 const truncate = (text: string, maxChars: number): string =>
   text.length <= maxChars ? text : `${text.slice(0, maxChars - 3)}...`;
-
-const formatModelStack = (agent: Agent): string => {
-  const lines = ROLES.map((role) => {
-    const sel = agent.modelStack[role];
-    if (!sel) return null;
-    return `- ${role}: ${sel.providerKind}/${sel.model}${sel.effort ? ` (${sel.effort})` : ""}`;
-  }).filter((line): line is string => line !== null);
-  if (lines.length === 0) {
-    const d = agent.modelSelection;
-    return `- default: ${d.providerKind}/${d.model}${d.effort ? ` (${d.effort})` : ""}`;
-  }
-  return lines.join("\n");
-};
-
-const selectContextMemories = (
-  db: Database,
-  agentId: string,
-  userPrompt: string,
-): ReadonlyArray<AgentMemory> => {
-  const all = listMemories(db, agentId, 50);
-  const pinned = all.filter((m) => m.pinned).slice(0, 6);
-  const matched = searchMemories(db, agentId, userPrompt, 8);
-  const combined: AgentMemory[] = [];
-  const seen = new Set<string>();
-  for (const mem of [...pinned, ...matched]) {
-    if (seen.has(mem.id) || combined.length >= 10) continue;
-    seen.add(mem.id);
-    combined.push(mem);
-  }
-  return combined;
-};
-
-export const buildAgentContextBlock = (input: {
-  readonly db: Database;
-  readonly agent: Agent;
-  readonly userPrompt: string;
-  readonly apiBaseUrl: string;
-}): string => {
-  const { db, agent, userPrompt, apiBaseUrl } = input;
-  const memories = selectContextMemories(db, agent.id, userPrompt);
-  const delegations = listDelegations(db, agent.id, 10).filter((d) => d.status === "running");
-  const openIssues = listIssues(db, agent.id)
-    .filter((issue) => issue.state !== "done" && issue.state !== "canceled")
-    .slice(0, 12);
-
-  const memoryLines =
-    memories.length > 0
-      ? memories
-          .map(
-            (m) =>
-              `- [${m.category}${m.pinned ? ", pinned" : ""}] (${m.id}) ${m.title}: ${truncate(m.content, 240)}`,
-          )
-          .join("\n")
-      : "(none yet)";
-
-  const delegationLines =
-    delegations.length > 0
-      ? delegations
-          .map((d) => `- [${d.role}/${d.kind}] (${d.id}) ${d.title} -> thread ${d.childThreadId}`)
-          .join("\n")
-      : "(none running)";
-
-  const issueLines =
-    openIssues.length > 0
-      ? openIssues
-          .map(
-            (i) =>
-              `- [${i.state}] ${i.key} (${i.id}): ${i.title}${i.prUrl ? ` (PR: ${i.prUrl})` : ""}`,
-          )
-          .join("\n")
-      : "(none open)";
-
-  const purposeLine =
-    agent.purpose.trim().length > 0
-      ? truncate(agent.purpose, 400)
-      : "(not set yet — once the user tells you your purpose, save it via PATCH)";
-
-  const agentBase = `${apiBaseUrl}/api/agents/${agent.id}`;
-  return [
-    "<scuttle_agent_context>",
-    `Agent: ${agent.name} (${agent.id})`,
-    `Project: ${agent.projectName} (${agent.projectPath})`,
-    `Purpose: ${purposeLine}`,
-    "",
-    "Instructions (instructionsMd):",
-    truncate(agent.instructionsMd, 4000),
-    "",
-    "Model Stack:",
-    formatModelStack(agent),
-    "",
-    "Memories (pinned + query-matched):",
-    memoryLines,
-    "",
-    "Active Delegations:",
-    delegationLines,
-    "",
-    "Open Issues:",
-    issueLines,
-    "",
-    "Scuttle Agent REST Bridge (also exported as SCUTTLE_API_URL and SCUTTLE_AGENT_ID):",
-    `- Update agent profile (name, purpose, instructionsMd, modelStack): curl -sS -X PATCH "${agentBase}" -H "Content-Type: application/json" -d '{"purpose":"...","instructionsMd":"..."}'`,
-    `- List available providers and models: curl -sS "${apiBaseUrl}/api/providers"`,
-    `- Save memory: curl -sS -X POST "${agentBase}/memories" -H "Content-Type: application/json" -d '{"category":"fact","title":"...","content":"...","pinned":false,"source":"agent"}'`,
-    `- Delegate worker: curl -sS -X POST "${agentBase}/delegations" -H "Content-Type: application/json" -d '{"role":"workhorse","kind":"pr","title":"...","brief":"...","runtime":"worktree"}'`,
-    `- Create/update issue: POST "${agentBase}/issues" or PATCH "${agentBase}/issues/<issueId>"`,
-    `- Trigger check-in: POST "${agentBase}/checkins"`,
-    "</scuttle_agent_context>",
-  ].join("\n");
-};
-
-export const maybeWrapAgentPrompt = (
-  db: Database,
-  threadId: string,
-  userPrompt: string,
-  apiBaseUrl: string,
-): { readonly prompt: string; readonly agentId?: string } => {
-  const agent = readAgentByPrimaryThreadId(db, threadId);
-  if (agent !== null) {
-    const context = buildAgentContextBlock({ db, agent, userPrompt, apiBaseUrl });
-    return { prompt: `${context}\n\n${userPrompt}`, agentId: agent.id };
-  }
-  const child = db
-    .query<{ readonly agent_id: string }, [string]>(
-      "SELECT agent_id FROM agent_delegations WHERE child_thread_id = ? ORDER BY created_at DESC LIMIT 1",
-    )
-    .get(threadId);
-  return child ? { prompt: userPrompt, agentId: child.agent_id } : { prompt: userPrompt };
-};
 
 export const buildDelegationBrief = (input: {
   readonly agent: Agent;

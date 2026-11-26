@@ -15,6 +15,28 @@ export const readAndDecode = <A>(request: Request, schema: Schema.Decoder<A>) =>
     );
   });
 
+export const readOptionalAndDecode = <A>(
+  request: Request,
+  schema: Schema.Decoder<A>,
+  fallback: A,
+): Effect.Effect<A, Error> =>
+  Effect.gen(function* () {
+    const text = yield* Effect.tryPromise({
+      try: () => request.text(),
+      catch: () => new Error("Failed to read request body."),
+    });
+    if (text.trim().length === 0) return fallback;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(text);
+    } catch {
+      return yield* Effect.fail(new Error("Request body must be valid JSON."));
+    }
+    return yield* Schema.decodeUnknownEffect(schema)(raw).pipe(
+      Effect.mapError(() => new Error("Request body did not match expected schema.")),
+    );
+  });
+
 export const matchRoute = (pathname: string, pattern: RegExp): ReadonlyArray<string> | null => {
   const match = pattern.exec(pathname);
   if (!match) return null;

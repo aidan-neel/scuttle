@@ -2,22 +2,25 @@ import type { Database } from "bun:sqlite";
 import {
   type Agent,
   type AgentCheckIn,
-  type AgentMemory,
-  AgentMemoryCategory,
-  AgentMemorySource,
   AgentModelStack,
   ModelSelection,
   ThreadRuntime,
 } from "@scuttle/contracts";
-import {
-  AgentCheckInId,
-  AgentId,
-  AgentMemoryId,
-  ProjectId,
-  ProviderId,
-  ThreadId,
-} from "@scuttle/shared/ids";
+import { AgentCheckInId, AgentId, ProjectId, ProviderId, ThreadId } from "@scuttle/shared/ids";
 import * as Schema from "effect/Schema";
+
+export {
+  deleteMemoryRow,
+  findActiveMemoryByNormalizedTitle,
+  insertMemory,
+  listMemories,
+  normalizeMemoryTitle,
+  readMemoryById,
+  recordMemoryAccess,
+  searchMemories,
+  toFtsMatchQuery,
+  updateMemoryRow,
+} from "./agentMemoryStore.ts";
 
 interface AgentJoinRow {
   readonly id: string;
@@ -40,18 +43,6 @@ interface AgentJoinRow {
   readonly updated_at: string;
 }
 
-interface MemoryRow {
-  readonly id: string;
-  readonly agent_id: string;
-  readonly category: string;
-  readonly title: string;
-  readonly content: string;
-  readonly pinned: number;
-  readonly source: string;
-  readonly created_at: string;
-  readonly updated_at: string;
-}
-
 interface CheckInRow {
   readonly id: string;
   readonly agent_id: string;
@@ -65,8 +56,6 @@ interface CheckInRow {
 const decodeRuntime = Schema.decodeUnknownOption(ThreadRuntime);
 const decodeModelSelection = Schema.decodeUnknownOption(ModelSelection);
 const decodeModelStack = Schema.decodeUnknownOption(AgentModelStack);
-const decodeMemoryCategory = Schema.decodeUnknownOption(AgentMemoryCategory);
-const decodeMemorySource = Schema.decodeUnknownOption(AgentMemorySource);
 
 const FALLBACK_MODEL: ModelSelection = {
   providerId: ProviderId.make("claude"),
@@ -121,22 +110,6 @@ const rowToAgent = (row: AgentJoinRow): Agent => {
     ...(row.last_summary !== null ? { lastSummary: row.last_summary } : {}),
     pinned: row.pinned === 1,
     needsAttention: row.needs_attention === 1,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-};
-
-const rowToMemory = (row: MemoryRow): AgentMemory => {
-  const categoryOpt = decodeMemoryCategory(row.category);
-  const sourceOpt = decodeMemorySource(row.source);
-  return {
-    id: AgentMemoryId.make(row.id),
-    agentId: AgentId.make(row.agent_id),
-    category: categoryOpt._tag === "Some" ? categoryOpt.value : "fact",
-    title: row.title,
-    content: row.content,
-    pinned: row.pinned === 1,
-    source: sourceOpt._tag === "Some" ? sourceOpt.value : "user",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -252,148 +225,27 @@ export const updateAgentRow = (db: Database, agent: Agent): void => {
   );
 };
 
+export const updateAgentCheckInMeta = (
+  db: Database,
+  agentId: string,
+  meta: {
+    readonly lastCheckInAt: string;
+    readonly lastSummary: string;
+    readonly updatedAt: string;
+  },
+): void => {
+  db.prepare(
+    `UPDATE agents
+     SET last_check_in_at = ?, last_summary = ?, updated_at = ?
+     WHERE id = ?`,
+  ).run(meta.lastCheckInAt, meta.lastSummary, meta.updatedAt, agentId);
+};
+
 export const deleteAgentRow = (db: Database, agentId: string): void => {
-  db.prepare("DELETE FROM agent_memories_fts WHERE agent_id = ?").run(agentId);
-  db.prepare("DELETE FROM agents WHERE id = ?").run(agentId);
-};
-
-export const listMemories = (
-  db: Database,
-  agentId: string,
-  limit = 100,
-): ReadonlyArray<AgentMemory> =>
-  db
-    .query<MemoryRow, [string, number]>(
-      `SELECT * FROM agent_memories
-       WHERE agent_id = ?
-       ORDER BY pinned DESC, updated_at DESC
-       LIMIT ?`,
-    )
-    .all(agentId, limit)
-    .map(rowToMemory);
-
-const toFtsMatchQuery = (raw: string): string | null => {
-  const tokens = raw
-    .trim()
-    .split(/[^a-zA-Z0-9_]+/)
-    .filter((token) => token.length > 0)
-    .slice(0, 8);
-  if (tokens.length === 0) return null;
-  return tokens.map((token) => `${token}*`).join(" OR ");
-};
-
-export const searchMemories = (
-  db: Database,
-  agentId: string,
-  query: string,
-  limit = 20,
-): ReadonlyArray<AgentMemory> => {
-  const trimmed = query.trim();
-  if (trimmed.length === 0) return listMemories(db, agentId, limit);
-
-  const results: AgentMemory[] = [];
-  const seen = new Set<string>();
-  const ftsQuery = toFtsMatchQuery(trimmed);
-
-  if (ftsQuery !== null) {
-    try {
-      const ftsRows = db
-        .query<MemoryRow, [string, string, number]>(
-          `SELECT m.*
-           FROM agent_memories_fts f
-           JOIN agent_memories m ON m.id = f.id
-           WHERE f.agent_id = ? AND agent_memories_fts MATCH ?
-           ORDER BY m.pinned DESC, bm25(agent_memories_fts) ASC, m.updated_at DESC
-           LIMIT ?`,
-        )
-        .all(agentId, ftsQuery, limit);
-      for (const row of ftsRows) {
-        seen.add(row.id);
-        results.push(rowToMemory(row));
-      }
-    } catch {
-      // Fall back to LIKE search below if FTS5 rejects an edge-case query.
-    }
-  }
-
-  if (results.length < limit) {
-    const pattern = `%${trimmed.toLowerCase()}%`;
-    const fallbackRows = db
-      .query<MemoryRow, [string, string, string, number]>(
-        `SELECT * FROM agent_memories
-         WHERE agent_id = ? AND (LOWER(title) LIKE ? OR LOWER(content) LIKE ?)
-         ORDER BY pinned DESC, updated_at DESC
-         LIMIT ?`,
-      )
-      .all(agentId, pattern, pattern, limit);
-    for (const row of fallbackRows) {
-      if (!seen.has(row.id) && results.length < limit) {
-        seen.add(row.id);
-        results.push(rowToMemory(row));
-      }
-    }
-  }
-
-  return results;
-};
-
-export const readMemoryById = (
-  db: Database,
-  agentId: string,
-  memoryId: string,
-): AgentMemory | null => {
-  const row = db
-    .query<MemoryRow, [string, string]>(
-      "SELECT * FROM agent_memories WHERE id = ? AND agent_id = ?",
-    )
-    .get(memoryId, agentId);
-  return row ? rowToMemory(row) : null;
-};
-
-export const insertMemory = (db: Database, memory: AgentMemory): void => {
-  db.prepare(
-    `INSERT INTO agent_memories
-       (id, agent_id, category, title, content, pinned, source, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    memory.id,
-    memory.agentId,
-    memory.category,
-    memory.title,
-    memory.content,
-    memory.pinned ? 1 : 0,
-    memory.source,
-    memory.createdAt,
-    memory.updatedAt,
-  );
-  db.prepare(
-    "INSERT INTO agent_memories_fts (id, agent_id, title, content) VALUES (?, ?, ?, ?)",
-  ).run(memory.id, memory.agentId, memory.title, memory.content);
-};
-
-export const updateMemoryRow = (db: Database, memory: AgentMemory): void => {
-  db.prepare(
-    `UPDATE agent_memories
-     SET category = ?, title = ?, content = ?, pinned = ?, updated_at = ?
-     WHERE id = ? AND agent_id = ?`,
-  ).run(
-    memory.category,
-    memory.title,
-    memory.content,
-    memory.pinned ? 1 : 0,
-    memory.updatedAt,
-    memory.id,
-    memory.agentId,
-  );
-  db.prepare("DELETE FROM agent_memories_fts WHERE id = ?").run(memory.id);
-  db.prepare(
-    "INSERT INTO agent_memories_fts (id, agent_id, title, content) VALUES (?, ?, ?, ?)",
-  ).run(memory.id, memory.agentId, memory.title, memory.content);
-};
-
-export const deleteMemoryRow = (db: Database, agentId: string, memoryId: string): void => {
-  db.prepare("DELETE FROM agent_memories_fts WHERE id = ?").run(memoryId);
-  db.prepare("DELETE FROM agent_memories WHERE id = ? AND agent_id = ?").run(memoryId, agentId);
+  db.transaction(() => {
+    db.prepare("DELETE FROM agent_memories_fts WHERE agent_id = ?").run(agentId);
+    db.prepare("DELETE FROM agents WHERE id = ?").run(agentId);
+  })();
 };
 
 export const listCheckIns = (

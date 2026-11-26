@@ -47,6 +47,7 @@ interface DelegationRow {
   readonly issue_id: string | null;
   readonly pr_url: string | null;
   readonly result_summary: string | null;
+  readonly parent_notified_at: string | null;
   readonly created_at: string;
   readonly completed_at: string | null;
 }
@@ -114,6 +115,7 @@ const rowToDelegation = (row: DelegationRow): AgentDelegation => {
     ...(row.issue_id !== null ? { issueId: AgentIssueId.make(row.issue_id) } : {}),
     ...(row.pr_url !== null ? { prUrl: row.pr_url } : {}),
     ...(row.result_summary !== null ? { resultSummary: row.result_summary } : {}),
+    ...(row.parent_notified_at !== null ? { parentNotifiedAt: row.parent_notified_at } : {}),
     createdAt: row.created_at,
     ...(row.completed_at !== null ? { completedAt: row.completed_at } : {}),
   };
@@ -307,6 +309,36 @@ export const updateDelegationRow = (db: Database, delegation: AgentDelegation): 
     delegation.id,
     delegation.agentId,
   );
+};
+
+export const listUnnotifiedSettledDelegations = (
+  db: Database,
+  agentId: string,
+): ReadonlyArray<AgentDelegation> =>
+  db
+    .query<DelegationRow, [string]>(
+      `SELECT * FROM agent_delegations
+       WHERE agent_id = ? AND status != 'running' AND parent_notified_at IS NULL
+       ORDER BY completed_at ASC, created_at ASC
+       LIMIT 10`,
+    )
+    .all(agentId)
+    .map(rowToDelegation);
+
+export const markDelegationsParentNotified = (
+  db: Database,
+  delegationIds: ReadonlyArray<string>,
+  notifiedAt: string,
+): void => {
+  if (delegationIds.length === 0) return;
+  db.transaction(() => {
+    const stmt = db.prepare(
+      "UPDATE agent_delegations SET parent_notified_at = ? WHERE id = ? AND parent_notified_at IS NULL",
+    );
+    for (const id of delegationIds) {
+      stmt.run(notifiedAt, id);
+    }
+  })();
 };
 
 export const recoverStaleDelegations = (db: Database): void => {

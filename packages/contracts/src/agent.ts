@@ -76,6 +76,10 @@ export const AgentMemory = Schema.Struct({
   content: Schema.String,
   pinned: Schema.Boolean,
   source: AgentMemorySource,
+  lastAccessedAt: Schema.optionalKey(Schema.String),
+  hitCount: Schema.optionalKey(Schema.Number),
+  supersedesId: Schema.optionalKey(AgentMemoryId),
+  supersededAt: Schema.optionalKey(Schema.String),
   createdAt: Schema.String,
   updatedAt: Schema.String,
 });
@@ -132,6 +136,7 @@ export const AgentDelegation = Schema.Struct({
   issueId: Schema.optionalKey(AgentIssueId),
   prUrl: Schema.optionalKey(Schema.String),
   resultSummary: Schema.optionalKey(Schema.String),
+  parentNotifiedAt: Schema.optionalKey(Schema.String),
   createdAt: Schema.String,
   completedAt: Schema.optionalKey(Schema.String),
 });

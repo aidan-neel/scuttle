@@ -6,13 +6,15 @@ import type {
   Thread,
   ThreadStatus,
   ThreadTurn,
+  TurnUsage,
 } from "@scuttle/contracts";
 import { ActivityId, ApprovalId, type ThreadId, type TurnId } from "@scuttle/shared/ids";
 import { getHarnessAdapter } from "../providers/registry.ts";
 import type { ApprovalDecision, HarnessEvent } from "../providers/types.ts";
 import type * as EventBus from "./EventBus.ts";
+import { commitTurnContextEffects } from "./agent/agentContext.ts";
 import { readAgentByPrimaryThreadId } from "./agent/agentStore.ts";
-import { readThreadById, readTurnsForThread } from "./threadStore.ts";
+import { readThreadById, readTurnsForThread, updateTurnOutcomeRow } from "./threadStore.ts";
 import { deriveThreadTitle, shouldRefreshThreadTitle } from "./threadTitle.ts";
 
 export interface ActiveRun {
@@ -36,6 +38,14 @@ export interface TurnRunnerDeps {
   readonly isDisposed?: () => boolean;
 }
 
+export interface TurnLaunchOptions {
+  readonly freshSessionPrompt?: string;
+  readonly agentId?: string;
+  readonly pendingContextHash?: string;
+  readonly pendingNotifiedDelegationIds?: ReadonlyArray<string>;
+  readonly pendingAccessedMemoryIds?: ReadonlyArray<string>;
+}
+
 export const launchTurnExecution = (
   deps: TurnRunnerDeps,
   thread: Thread,
@@ -43,6 +53,7 @@ export const launchTurnExecution = (
   fullPrompt: string,
   providerConfig: ProviderConfig,
   extraEnv?: Readonly<Record<string, string>>,
+  launchOptions?: TurnLaunchOptions,
 ): void => {
   const {
     db,
@@ -54,6 +65,7 @@ export const launchTurnExecution = (
     isDisposed,
   } = deps;
   const isClosed = () => isDisposed?.() === true;
+  const turnEpoch = turn.sessionEpoch ?? thread.sessionEpoch ?? 0;
   const controller = new AbortController();
   activeRuns.set(thread.id, { turnId: turn.id, controller });
 
@@ -64,22 +76,10 @@ export const launchTurnExecution = (
   const activitiesByKey = new Map<string, ActivityItem>();
   let thinkingActivityKey: string | null = null;
   let currentPhase: "thinking" | "working" = "thinking";
+  let latestUsage: TurnUsage | undefined;
 
   const persistTurn = (next: ThreadTurn) => {
-    db.prepare(
-      `UPDATE turns
-       SET assistant_message = ?, thinking_text = ?, status = ?, completed_at = ?, duration_ms = ?, cost_usd = ?, error = ?
-       WHERE id = ?`,
-    ).run(
-      next.assistantMessage,
-      next.thinkingText,
-      next.status,
-      next.completedAt ?? null,
-      next.durationMs ?? null,
-      next.costUsd ?? 0,
-      next.error ?? null,
-      next.id,
-    );
+    updateTurnOutcomeRow(db, thread.id, turnEpoch, next);
     eventBus.publishSync({ kind: "turn.upserted", turn: next });
   };
 
@@ -143,13 +143,15 @@ export const launchTurnExecution = (
     if (isClosed()) return;
     switch (event.kind) {
       case "session": {
-        db.prepare("UPDATE threads SET provider_session_id = ?, updated_at = ? WHERE id = ?").run(
-          event.providerSessionId,
-          new Date().toISOString(),
-          thread.id,
-        );
-        const refreshed = readThreadById(db, thread.id);
-        if (refreshed) eventBus.publishSync({ kind: "thread.upserted", thread: refreshed });
+        const res = db
+          .prepare(
+            "UPDATE threads SET provider_session_id = ?, updated_at = ? WHERE id = ? AND session_epoch = ?",
+          )
+          .run(event.providerSessionId, new Date().toISOString(), thread.id, turnEpoch);
+        if (res.changes > 0) {
+          const refreshed = readThreadById(db, thread.id);
+          if (refreshed) eventBus.publishSync({ kind: "thread.upserted", thread: refreshed });
+        }
         return;
       }
       case "thinking.delta": {
@@ -318,6 +320,22 @@ export const launchTurnExecution = (
         updateThreadStatus(thread.id, { kind: "needs-input", approvalId });
         return;
       }
+      case "usage": {
+        latestUsage = event.usage;
+        const encoded = JSON.stringify(event.usage);
+        const now = new Date().toISOString();
+        db.prepare("UPDATE turns SET usage_json = ? WHERE id = ?").run(encoded, turn.id);
+        db.prepare(
+          "UPDATE threads SET last_usage_json = ?, updated_at = ? WHERE id = ? AND session_epoch = ?",
+        ).run(encoded, now, thread.id, turnEpoch);
+        const refreshed = readThreadById(db, thread.id);
+        if (refreshed) {
+          eventBus.publishSync({ kind: "thread.upserted", thread: refreshed });
+          const currentTurn = readTurnsForThread(db, refreshed).find((t) => t.id === turn.id);
+          if (currentTurn) eventBus.publishSync({ kind: "turn.upserted", turn: currentTurn });
+        }
+        return;
+      }
     }
   };
 
@@ -373,20 +391,25 @@ export const launchTurnExecution = (
   };
 
   const adapter = getHarnessAdapter(thread.modelSelection.providerKind);
-  void adapter
-    .runTurn({
-      config: providerConfig,
-      cwd: thread.cwd,
-      prompt: fullPrompt,
-      model: thread.modelSelection.model,
-      ...(thread.modelSelection.effort ? { effort: thread.modelSelection.effort } : {}),
-      runtimeMode: thread.runtimeMode,
-      interactionMode: thread.interactionMode,
-      ...(thread.providerSessionId ? { providerSessionId: thread.providerSessionId } : {}),
-      ...(extraEnv ? { extraEnv } : {}),
-      signal: controller.signal,
-      emit: handleEvent,
-    })
+  void Promise.resolve()
+    .then(() =>
+      adapter.runTurn({
+        config: providerConfig,
+        cwd: thread.cwd,
+        prompt: fullPrompt,
+        ...(launchOptions?.freshSessionPrompt
+          ? { freshSessionPrompt: launchOptions.freshSessionPrompt }
+          : {}),
+        model: thread.modelSelection.model,
+        ...(thread.modelSelection.effort ? { effort: thread.modelSelection.effort } : {}),
+        runtimeMode: thread.runtimeMode,
+        interactionMode: thread.interactionMode,
+        ...(thread.providerSessionId ? { providerSessionId: thread.providerSessionId } : {}),
+        ...(extraEnv ? { extraEnv } : {}),
+        signal: controller.signal,
+        emit: handleEvent,
+      }),
+    )
     .then((result) => {
       if (isClosed()) return;
       closeThinkingIfOpen();
@@ -396,6 +419,7 @@ export const launchTurnExecution = (
       const finalMessage =
         assistantText.length > 0 ? assistantText : (result.finalText ?? assistantText);
       const { activities, approvals } = readLatestTurnChildren();
+      const finalUsage = result.usage ?? latestUsage;
       persistTurn({
         ...turn,
         assistantMessage: finalMessage,
@@ -404,10 +428,30 @@ export const launchTurnExecution = (
         completedAt,
         durationMs,
         ...(result.costUsd !== undefined && result.costUsd > 0 ? { costUsd: result.costUsd } : {}),
+        ...(finalUsage ? { usage: finalUsage } : {}),
         activities,
         approvals,
       });
-      if (!result.interrupted) refreshThreadTitle();
+      if (!result.interrupted) {
+        commitTurnContextEffects({
+          db,
+          eventBus,
+          threadId: thread.id,
+          sessionEpoch: turnEpoch,
+          completedAt,
+          ...(launchOptions?.agentId !== undefined ? { agentId: launchOptions.agentId } : {}),
+          ...(launchOptions?.pendingContextHash !== undefined
+            ? { pendingContextHash: launchOptions.pendingContextHash }
+            : {}),
+          ...(launchOptions?.pendingNotifiedDelegationIds !== undefined
+            ? { pendingNotifiedDelegationIds: launchOptions.pendingNotifiedDelegationIds }
+            : {}),
+          ...(launchOptions?.pendingAccessedMemoryIds !== undefined
+            ? { pendingAccessedMemoryIds: launchOptions.pendingAccessedMemoryIds }
+            : {}),
+        });
+        refreshThreadTitle();
+      }
       updateThreadStatus(thread.id, { kind: "idle" });
       onProjectActivity(thread, finalMessage.trim() || turn.userMessage);
     })
@@ -426,6 +470,7 @@ export const launchTurnExecution = (
         status: controller.signal.aborted ? "interrupted" : "failed",
         completedAt,
         durationMs,
+        ...(latestUsage ? { usage: latestUsage } : {}),
         ...(controller.signal.aborted ? {} : { error: errorMessage }),
         activities,
         approvals,

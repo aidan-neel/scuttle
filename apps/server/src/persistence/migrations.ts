@@ -1,5 +1,14 @@
 import type { Database } from "bun:sqlite";
 
+const ensureColumn = (db: Database, table: string, column: string, definition: string): boolean => {
+  const columns = db.query<{ readonly name: string }, []>(`PRAGMA table_info(${table})`).all();
+  if (!columns.some((col) => col.name === column)) {
+    db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
+    return true;
+  }
+  return false;
+};
+
 export const applyScuttleMigrations = (db: Database): void => {
   db.run(`
     CREATE TABLE IF NOT EXISTS scuttle_meta (
@@ -68,6 +77,12 @@ export const applyScuttleMigrations = (db: Database): void => {
     CREATE INDEX IF NOT EXISTS idx_threads_updated_at ON threads(updated_at DESC);
   `);
 
+  ensureColumn(db, "threads", "session_epoch", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "threads", "active_summary", "TEXT");
+  ensureColumn(db, "threads", "last_context_hash", "TEXT");
+  ensureColumn(db, "threads", "last_usage_json", "TEXT");
+  ensureColumn(db, "threads", "compact_at_tokens", "INTEGER");
+
   db.run(`
     CREATE TABLE IF NOT EXISTS turns (
       id TEXT PRIMARY KEY NOT NULL,
@@ -87,13 +102,10 @@ export const applyScuttleMigrations = (db: Database): void => {
     );
   `);
 
-  const turnColumns = db.query<{ readonly name: string }, []>("PRAGMA table_info(turns)").all();
-  if (!turnColumns.some((col) => col.name === "origin")) {
-    db.run("ALTER TABLE turns ADD COLUMN origin TEXT NOT NULL DEFAULT 'user';");
-  }
-  if (!turnColumns.some((col) => col.name === "cost_usd")) {
-    db.run("ALTER TABLE turns ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0;");
-  }
+  ensureColumn(db, "turns", "origin", "TEXT NOT NULL DEFAULT 'user'");
+  ensureColumn(db, "turns", "cost_usd", "REAL NOT NULL DEFAULT 0");
+  ensureColumn(db, "turns", "session_epoch", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "turns", "usage_json", "TEXT");
 
   db.run(`
     CREATE INDEX IF NOT EXISTS idx_turns_thread_id ON turns(thread_id, seq);
@@ -173,10 +185,7 @@ export const applyScuttleMigrations = (db: Database): void => {
     );
   `);
 
-  const agentColumns = db.query<{ readonly name: string }, []>("PRAGMA table_info(agents)").all();
-  if (!agentColumns.some((col) => col.name === "pinned")) {
-    db.run("ALTER TABLE agents ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;");
-  }
+  ensureColumn(db, "agents", "pinned", "INTEGER NOT NULL DEFAULT 0");
 
   db.run(`
     UPDATE agents
@@ -209,6 +218,11 @@ export const applyScuttleMigrations = (db: Database): void => {
     CREATE INDEX IF NOT EXISTS idx_agent_memories_agent_id
     ON agent_memories(agent_id, pinned DESC, updated_at DESC);
   `);
+
+  ensureColumn(db, "agent_memories", "last_accessed_at", "TEXT");
+  ensureColumn(db, "agent_memories", "hit_count", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "agent_memories", "supersedes_id", "TEXT");
+  ensureColumn(db, "agent_memories", "superseded_at", "TEXT");
 
   db.run(`
     CREATE VIRTUAL TABLE IF NOT EXISTS agent_memories_fts USING fts5(
@@ -271,6 +285,14 @@ export const applyScuttleMigrations = (db: Database): void => {
     CREATE INDEX IF NOT EXISTS idx_agent_delegations_child_thread_id
     ON agent_delegations(child_thread_id);
   `);
+
+  if (ensureColumn(db, "agent_delegations", "parent_notified_at", "TEXT")) {
+    db.run(`
+      UPDATE agent_delegations
+      SET parent_notified_at = COALESCE(completed_at, created_at)
+      WHERE status != 'running' AND parent_notified_at IS NULL;
+    `);
+  }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS agent_checkins (

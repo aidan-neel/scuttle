@@ -1,9 +1,8 @@
 import { describeApiError } from "@scuttle/client-runtime";
-import type { Agent, ThreadDetail } from "@scuttle/contracts";
+import type { Agent, ModelSelection, ThreadDetail } from "@scuttle/contracts";
 import { AnimatePresence, motion } from "motion/react";
 import { useRef, useState } from "react";
 import { Composer, type ComposerSubmitPayload } from "@/components/home/Composer.tsx";
-import { COMPACT_PROMPT } from "@/components/home/ComposerSlashMenu.tsx";
 import { estimateContextUsage } from "@/components/home/contextUsage.ts";
 import { useThreadLocationControls } from "@/components/home/useThreadLocationControls.ts";
 import { ScrollRuler } from "@/components/thread/ScrollRuler.tsx";
@@ -29,18 +28,26 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
     startAgentSetup,
     updateAgent,
     updateThread,
+    compactThread,
     interruptTurn,
     respondApproval,
   } = useWorkspace();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [compacting, setCompacting] = useState(false);
   const [waitingDismissed, setWaitingDismissed] = useState(false);
   const introTask = useTask();
   const { thread, turns } = detail;
   const isRunning = thread.status.kind === "running" || thread.status.kind === "needs-input";
   const composerId = `composer-agent-${agent.id}`;
   const { isAtBottom, scrollToBottom } = useStickToBottom(scrollRef, turns, thread.id);
-  const contextUsage = estimateContextUsage({ turns, model: thread.modelSelection.model });
+  const contextUsage = estimateContextUsage({
+    turns,
+    model: thread.modelSelection.model,
+    ...(thread.lastUsage ? { lastUsage: thread.lastUsage } : {}),
+    ...(thread.sessionEpoch !== undefined ? { sessionEpoch: thread.sessionEpoch } : {}),
+    ...(thread.activeSummary ? { activeSummary: thread.activeSummary } : {}),
+  });
   const status = useThreadLocationControls({
     thread,
     disabled: isRunning,
@@ -64,6 +71,28 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
       });
     } catch (error) {
       setSubmitError(describeApiError(error, "Failed to send message."));
+    }
+  };
+
+  const handleCompact = async () => {
+    if (compacting || isRunning) return;
+    setSubmitError(null);
+    setCompacting(true);
+    try {
+      await compactThread(thread.id);
+    } catch (error) {
+      setSubmitError(describeApiError(error, "Failed to compact thread."));
+    } finally {
+      setCompacting(false);
+    }
+  };
+
+  const handleModelSelectionChange = async (modelSelection: ModelSelection) => {
+    setSubmitError(null);
+    try {
+      await updateAgent(agent.id, { modelSelection });
+    } catch (error) {
+      setSubmitError(describeApiError(error, "Could not update model."));
     }
   };
 
@@ -193,19 +222,13 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
             providers={providers}
             modelSelection={thread.modelSelection}
             onModelSelectionChange={(modelSelection) =>
-              void updateAgent(agent.id, { modelSelection })
+              void handleModelSelectionChange(modelSelection)
             }
             interactionMode={thread.interactionMode}
             onInteractionModeChange={(interactionMode) =>
               void updateThread(thread.id, { interactionMode })
             }
-            onCompact={() =>
-              void handleSubmit({
-                prompt: COMPACT_PROMPT,
-                modelSelection: thread.modelSelection,
-                attachments: [],
-              })
-            }
+            {...(compacting ? {} : { onCompact: () => void handleCompact() })}
             filesRoot={thread.cwd}
             status={status}
             contextUsage={contextUsage}

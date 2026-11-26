@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import type * as EventBus from "../EventBus.ts";
 import {
   deleteMemoryRow,
+  findActiveMemoryByNormalizedTitle,
   insertMemory,
   listMemories,
   readMemoryById,
@@ -42,14 +43,30 @@ export const makeAgentMemoryOps = (deps: {
   ) {
     yield* requireAgent(agentId);
     const now = new Date().toISOString();
+    const title = input.title.trim();
+    const content = input.content.trim();
+    const existing = findActiveMemoryByNormalizedTitle(db, agentId, input.category, title);
+    if (existing) {
+      const merged: AgentMemory = {
+        ...existing,
+        title,
+        content,
+        pinned: existing.pinned || (input.pinned ?? false),
+        updatedAt: now,
+      };
+      updateMemoryRow(db, merged);
+      eventBus.publishSync({ kind: "agent.memory.upserted", memory: merged });
+      return merged;
+    }
     const memory: AgentMemory = {
       id: AgentMemoryId.make(crypto.randomUUID()),
       agentId,
       category: input.category,
-      title: input.title.trim(),
-      content: input.content.trim(),
+      title,
+      content,
       pinned: input.pinned ?? false,
       source: input.source ?? "user",
+      hitCount: 0,
       createdAt: now,
       updatedAt: now,
     };

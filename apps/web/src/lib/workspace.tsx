@@ -6,6 +6,8 @@ import {
 import type {
   Agent,
   AgentDetail,
+  CompactThreadInput,
+  CompactThreadResult,
   CreateThreadInput,
   DirectoryListing,
   GitBranchInfo,
@@ -242,6 +244,10 @@ export interface Workspace extends WorkspaceState, AgentActions {
   readonly sendTurn: (threadId: string, input: SendTurnInput) => Promise<ThreadTurn>;
   readonly interruptTurn: (threadId: string) => Promise<void>;
   readonly settleThread: (threadId: string, settled: boolean) => Promise<Thread>;
+  readonly compactThread: (
+    threadId: string,
+    input?: CompactThreadInput,
+  ) => Promise<CompactThreadResult>;
   readonly updateThread: (threadId: string, input: UpdateThreadInput) => Promise<Thread>;
   readonly deleteThread: (threadId: string) => Promise<void>;
   readonly respondApproval: (
@@ -372,6 +378,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       const thread = await apiRef.current.settleThread(threadId, { settled });
       dispatch({ kind: "push", event: { kind: "thread.upserted", thread } });
       return thread;
+    },
+    compactThread: async (threadId, input) => {
+      const result = await apiRef.current.compactThread(threadId, input);
+      dispatch({ kind: "push", event: { kind: "thread.upserted", thread: result.thread } });
+      return result;
     },
     updateThread: async (threadId, input) => {
       const thread = await apiRef.current.updateThread(threadId, input);

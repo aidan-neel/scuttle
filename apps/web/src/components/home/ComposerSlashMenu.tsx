@@ -23,9 +23,6 @@ export type SlashView =
   | { readonly kind: "model" }
   | { readonly kind: "reasoning" };
 
-export const COMPACT_PROMPT =
-  "Summarize this conversation so far into a compact brief: the goal, decisions made, current state, open questions, and next steps. Keep it short and drop anything no longer relevant.";
-
 export interface SlashOptions {
   readonly providers: ReadonlyArray<ProviderSnapshot>;
   readonly modelSelection: ModelSelection;
