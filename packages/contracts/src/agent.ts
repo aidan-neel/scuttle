@@ -1,11 +1,13 @@
 import {
   AgentCheckInId,
   AgentDelegationId,
+  AgentDelegationQuestionId,
   AgentId,
   AgentIssueId,
   AgentMemoryId,
   ProjectId,
   ThreadId,
+  TurnId,
 } from "@scuttle/shared/ids";
 import * as Schema from "effect/Schema";
 import { ModelSelection } from "./provider.ts";
@@ -116,6 +118,7 @@ export type AgentDelegationKind = typeof AgentDelegationKind.Type;
 
 export const AgentDelegationStatus = Schema.Literals([
   "running",
+  "waiting_parent",
   "completed",
   "failed",
   "canceled",
@@ -133,6 +136,8 @@ export const AgentDelegation = Schema.Struct({
   brief: Schema.String,
   modelSelection: ModelSelection,
   status: AgentDelegationStatus,
+  bounceCount: Schema.Number,
+  maxBounces: Schema.Number,
   issueId: Schema.optionalKey(AgentIssueId),
   prUrl: Schema.optionalKey(Schema.String),
   resultSummary: Schema.optionalKey(Schema.String),
@@ -141,6 +146,51 @@ export const AgentDelegation = Schema.Struct({
   completedAt: Schema.optionalKey(Schema.String),
 });
 export type AgentDelegation = typeof AgentDelegation.Type;
+
+export const AgentDelegationQuestionKind = Schema.Literals([
+  "missing_context",
+  "test_failure",
+  "unexpected_error",
+  "plan_conflict",
+  "other",
+]);
+export type AgentDelegationQuestionKind = typeof AgentDelegationQuestionKind.Type;
+
+export const AgentDelegationQuestionStatus = Schema.Literals([
+  "pending",
+  "answered",
+  "failed",
+  "canceled",
+]);
+export type AgentDelegationQuestionStatus = typeof AgentDelegationQuestionStatus.Type;
+
+export const AgentDelegationQuestion = Schema.Struct({
+  id: AgentDelegationQuestionId,
+  delegationId: AgentDelegationId,
+  agentId: AgentId,
+  childThreadId: ThreadId,
+  parentThreadId: ThreadId,
+  parentTurnId: Schema.optionalKey(TurnId),
+  kind: AgentDelegationQuestionKind,
+  question: Schema.String,
+  attempted: Schema.optionalKey(Schema.String),
+  context: Schema.optionalKey(Schema.String),
+  status: AgentDelegationQuestionStatus,
+  answer: Schema.optionalKey(Schema.String),
+  error: Schema.optionalKey(Schema.String),
+  bounceNumber: Schema.Number,
+  createdAt: Schema.String,
+  answeredAt: Schema.optionalKey(Schema.String),
+});
+export type AgentDelegationQuestion = typeof AgentDelegationQuestion.Type;
+
+export const AskDelegationParentInput = Schema.Struct({
+  kind: Schema.optionalKey(AgentDelegationQuestionKind),
+  question: NonEmpty,
+  attempted: Schema.optionalKey(Schema.String),
+  context: Schema.optionalKey(Schema.String),
+});
+export type AskDelegationParentInput = typeof AskDelegationParentInput.Type;
 
 export const AgentCheckIn = Schema.Struct({
   id: AgentCheckInId,
@@ -239,6 +289,9 @@ export const DelegateAgentTaskInput = Schema.Struct({
   runtime: Schema.optionalKey(ThreadRuntime),
   issueId: Schema.optionalKey(AgentIssueId),
   modelSelection: Schema.optionalKey(ModelSelection),
+  maxBounces: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt(), Schema.isBetween({ minimum: 0, maximum: 10 })),
+  ),
 });
 export type DelegateAgentTaskInput = typeof DelegateAgentTaskInput.Type;
 

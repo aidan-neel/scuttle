@@ -38,6 +38,11 @@ export type AgentIssueId = typeof AgentIssueId.Type;
 export const AgentDelegationId = NonEmptyString.pipe(Schema.brand("AgentDelegationId"));
 export type AgentDelegationId = typeof AgentDelegationId.Type;
 
+export const AgentDelegationQuestionId = NonEmptyString.pipe(
+  Schema.brand("AgentDelegationQuestionId"),
+);
+export type AgentDelegationQuestionId = typeof AgentDelegationQuestionId.Type;
+
 export const AgentCheckInId = NonEmptyString.pipe(Schema.brand("AgentCheckInId"));
 export type AgentCheckInId = typeof AgentCheckInId.Type;
 
@@ -53,4 +58,5 @@ export const isAgentId = Schema.is(AgentId);
 export const isAgentMemoryId = Schema.is(AgentMemoryId);
 export const isAgentIssueId = Schema.is(AgentIssueId);
 export const isAgentDelegationId = Schema.is(AgentDelegationId);
+export const isAgentDelegationQuestionId = Schema.is(AgentDelegationQuestionId);
 export const isAgentCheckInId = Schema.is(AgentCheckInId);
