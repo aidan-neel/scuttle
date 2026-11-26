@@ -395,12 +395,7 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
       const nextRuntime = input.runtime ?? existing.runtime;
       const runtimeChanged = input.runtime !== undefined && input.runtime !== existing.runtime;
       const nameChanged = input.name !== undefined && nextName !== existing.name;
-      const modelChanged =
-        input.modelSelection !== undefined &&
-        (input.modelSelection.providerId !== existing.modelSelection.providerId ||
-          input.modelSelection.providerKind !== existing.modelSelection.providerKind ||
-          input.modelSelection.model !== existing.modelSelection.model ||
-          input.modelSelection.effort !== existing.modelSelection.effort);
+      const modelProvided = input.modelSelection !== undefined;
       const updated: Agent = {
         id: existing.id,
         projectId: existing.projectId,
@@ -422,12 +417,12 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
         createdAt: existing.createdAt,
         updatedAt: new Date().toISOString(),
       };
-      if (runtimeChanged || nameChanged || modelChanged) {
+      if (runtimeChanged || nameChanged || modelProvided) {
         yield* threads
           .update(existing.primaryThreadId, {
             ...(runtimeChanged ? { runtime: nextRuntime } : {}),
             ...(nameChanged ? { title: nextName } : {}),
-            ...(modelChanged ? { modelSelection: nextModel } : {}),
+            ...(modelProvided ? { modelSelection: nextModel } : {}),
           })
           .pipe(Effect.mapError(toRejectedError));
       }

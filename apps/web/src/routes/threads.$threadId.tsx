@@ -91,8 +91,13 @@ function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
     onError: setSubmitError,
   });
 
-  const handleModelChange = (modelSelection: ModelSelection) => {
-    void updateThread(thread.id, { modelSelection });
+  const handleModelSelectionChange = async (modelSelection: ModelSelection) => {
+    setSubmitError(null);
+    try {
+      await updateThread(thread.id, { modelSelection });
+    } catch (error) {
+      setSubmitError(describeApiError(error, "Could not update model."));
+    }
   };
 
   const handleSubmit = async (payload: ComposerSubmitPayload) => {
@@ -185,7 +190,9 @@ function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
               : {})}
             providers={providers}
             modelSelection={thread.modelSelection}
-            onModelSelectionChange={handleModelChange}
+            onModelSelectionChange={(modelSelection) =>
+              void handleModelSelectionChange(modelSelection)
+            }
             running={isRunning}
             onSubmit={handleSubmit}
             onStop={() => void interruptTurn(thread.id)}

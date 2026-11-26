@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
-import { Database } from "bun:sqlite";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -7,7 +6,6 @@ import type { ServerPushEvent } from "@scuttle/contracts";
 import { ProviderId } from "@scuttle/shared/ids";
 import * as Effect from "effect/Effect";
 import * as ManagedRuntime from "effect/ManagedRuntime";
-import { applyScuttleMigrations } from "../../src/persistence/migrations.ts";
 import * as Sqlite from "../../src/persistence/Sqlite.ts";
 import { claudeAdapter } from "../../src/providers/claudeAdapter.ts";
 import type { HarnessTurnInput, HarnessTurnResult } from "../../src/providers/types.ts";
@@ -43,7 +41,7 @@ const waitUntil = async (fn: () => boolean, timeoutMs = 2_000) => {
   throw new Error("Timed out waiting for condition.");
 };
 
-describe("turn guards, deferred commit, and migration backfill", () => {
+describe("turn guards and deferred commit", () => {
   const tempRoots: string[] = [];
 
   afterEach(() => {
@@ -435,49 +433,54 @@ describe("turn guards, deferred commit, and migration backfill", () => {
     }
   });
 
-  it("backfills parent_notified_at on existing settled delegations only when migrating the column", () => {
-    const db = new Database(":memory:");
+  it("re-syncs a diverged primary thread model when AgentService.update receives the agent's stored modelSelection", async () => {
+    const { root, repo } = makeGitRepo();
+    tempRoots.push(root);
+
+    const runtime = ManagedRuntime.make(makeAppLayer({ dbPath: ":memory:" }));
+
     try {
-      db.run(`
-        CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, path TEXT UNIQUE, is_git_repo INTEGER DEFAULT 0, default_branch TEXT DEFAULT 'main', last_message TEXT, last_activity_at TEXT, created_at TEXT, updated_at TEXT);
-        CREATE TABLE threads (id TEXT PRIMARY KEY, project_id TEXT, project_name TEXT, title TEXT, runtime TEXT, branch TEXT, worktree_path TEXT, cwd TEXT, provider_id TEXT, provider_kind TEXT, model TEXT, effort TEXT, runtime_mode TEXT DEFAULT 'auto', interaction_mode TEXT DEFAULT 'default', status_json TEXT, settled_at TEXT, provider_session_id TEXT, created_at TEXT, updated_at TEXT);
-        CREATE TABLE agents (id TEXT PRIMARY KEY, project_id TEXT, name TEXT, purpose TEXT DEFAULT '', primary_thread_id TEXT, runtime TEXT DEFAULT 'local', model_selection_json TEXT, model_stack_json TEXT DEFAULT '{}', instructions_md TEXT DEFAULT '', check_in_interval_minutes INTEGER, last_check_in_at TEXT, last_summary TEXT, needs_attention INTEGER DEFAULT 0, created_at TEXT, updated_at TEXT);
-        CREATE TABLE agent_delegations (id TEXT PRIMARY KEY, agent_id TEXT, parent_thread_id TEXT, child_thread_id TEXT, role TEXT, kind TEXT, title TEXT, brief TEXT, model_selection_json TEXT, status TEXT, issue_id TEXT, pr_url TEXT, result_summary TEXT, created_at TEXT, completed_at TEXT);
-      `);
-      db.run(`
-        INSERT INTO agent_delegations (id, agent_id, parent_thread_id, child_thread_id, role, kind, title, brief, model_selection_json, status, created_at, completed_at)
-        VALUES
-          ('d-done', 'a1', 't0', 't1', 'fast', 'task', 'Old done', 'b', '{}', 'completed', '2026-01-01T00:00:00Z', '2026-01-01T01:00:00Z'),
-          ('d-fail', 'a1', 't0', 't2', 'fast', 'task', 'Old fail', 'b', '{}', 'failed', '2026-01-01T00:00:00Z', NULL),
-          ('d-run', 'a1', 't0', 't3', 'fast', 'task', 'Still running', 'b', '{}', 'running', '2026-01-01T00:00:00Z', NULL);
-      `);
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const { db } = yield* Sqlite.SqliteDatabase;
+          const projects = yield* ProjectService.ProjectService;
+          const agents = yield* AgentService.AgentService;
+          const threads = yield* ThreadService.ThreadService;
 
-      applyScuttleMigrations(db);
+          const proj = yield* projects.create({ path: repo, name: "resync-repo" });
+          const seeded = (yield* agents.list()).find((a) => a.projectId === proj.id)!;
+          const storedSelection = {
+            providerId: ProviderId.make("claude"),
+            providerKind: "claude" as const,
+            model: "claude-sonnet-4-5",
+          };
+          yield* agents.update(seeded.id, { modelSelection: storedSelection });
 
-      const rows = db
-        .query<{ readonly id: string; readonly parent_notified_at: string | null }, []>(
-          "SELECT id, parent_notified_at FROM agent_delegations ORDER BY id ASC",
-        )
-        .all();
-      expect(rows).toEqual([
-        { id: "d-done", parent_notified_at: "2026-01-01T01:00:00Z" },
-        { id: "d-fail", parent_notified_at: "2026-01-01T00:00:00Z" },
-        { id: "d-run", parent_notified_at: null },
-      ]);
+          const divergedSelection = {
+            providerId: ProviderId.make("codex"),
+            providerKind: "codex" as const,
+            model: "gpt-5-codex",
+          };
+          yield* threads.update(seeded.primaryThreadId, { modelSelection: divergedSelection });
 
-      db.run(`
-        INSERT INTO agent_delegations (id, agent_id, parent_thread_id, child_thread_id, role, kind, title, brief, model_selection_json, status, created_at, completed_at, parent_notified_at)
-        VALUES ('d-new', 'a1', 't0', 't4', 'fast', 'task', 'New settled', 'b', '{}', 'completed', '2026-02-01T00:00:00Z', '2026-02-01T01:00:00Z', NULL);
-      `);
-      applyScuttleMigrations(db);
-      const afterSecondMigration = db
-        .query<{ readonly parent_notified_at: string | null }, []>(
-          "SELECT parent_notified_at FROM agent_delegations WHERE id = 'd-new'",
-        )
-        .get();
-      expect(afterSecondMigration?.parent_notified_at).toBeNull();
+          const agentBefore = readAgentById(db, seeded.id)!;
+          const threadBefore = readThreadById(db, seeded.primaryThreadId)!;
+          expect(agentBefore.modelSelection).toEqual(storedSelection);
+          expect(threadBefore.modelSelection.providerId).toBe(ProviderId.make("codex"));
+          expect(threadBefore.modelSelection.model).toBe("gpt-5-codex");
+
+          yield* agents.update(seeded.id, { modelSelection: agentBefore.modelSelection });
+
+          const agentAfter = readAgentById(db, seeded.id)!;
+          const threadAfter = readThreadById(db, seeded.primaryThreadId)!;
+          expect(agentAfter.modelSelection).toEqual(storedSelection);
+          expect(threadAfter.modelSelection.providerId).toBe(ProviderId.make("claude"));
+          expect(threadAfter.modelSelection.providerKind).toBe("claude");
+          expect(threadAfter.modelSelection.model).toBe("claude-sonnet-4-5");
+        }),
+      );
     } finally {
-      db.close();
+      await runtime.dispose();
     }
   });
 });
