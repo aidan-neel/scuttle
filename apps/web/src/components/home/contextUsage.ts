@@ -104,4 +104,41 @@ export function formatTokens(tokens: number): string {
   return String(tokens);
 }
 
+export function compactAtBounds(windowTokens: number): {
+  readonly min: number;
+  readonly max: number;
+  readonly step: number;
+} {
+  const step = windowTokens >= 1_000_000 ? 25_000 : windowTokens >= 400_000 ? 20_000 : 10_000;
+  const min = Math.min(
+    windowTokens,
+    Math.max(step, Math.round((windowTokens * 0.1) / step) * step),
+  );
+  return { min, max: windowTokens, step };
+}
+
+export function clampCompactAt(tokens: number, windowTokens: number): number {
+  const { min, max } = compactAtBounds(windowTokens);
+  return Math.min(max, Math.max(min, Math.round(tokens)));
+}
+
+export function parseCompactAtInput(raw: string, windowTokens: number): number | null {
+  const cleaned = raw.trim().replace(/,/g, "");
+  if (cleaned.length === 0) return null;
+  const match = /^(\d+(?:\.\d+)?)\s*(k|m|%)?$/i.exec(cleaned);
+  if (match === null) return null;
+  const numeric = Number(match[1]);
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  const suffix = match[2]?.toLowerCase();
+  const rawTokens =
+    suffix === "%"
+      ? (windowTokens * numeric) / 100
+      : suffix === "m"
+        ? numeric * 1_000_000
+        : suffix === "k"
+          ? numeric * 1_000
+          : numeric;
+  return clampCompactAt(rawTokens, windowTokens);
+}
+
 const trimDecimal = (value: number) => value.toFixed(1).replace(/\.0$/, "");

@@ -64,7 +64,6 @@ export function useThreadLocationControls({
   return {
     runtime: thread.runtime,
     branch: thread.branch,
-    state: thread.status.kind,
     branches,
     busy,
     disabled,
