@@ -68,6 +68,15 @@ export const ThreadStatus = Schema.Union([
 ]);
 export type ThreadStatus = typeof ThreadStatus.Type;
 
+export const TurnUsage = Schema.Struct({
+  inputTokens: Schema.Number,
+  outputTokens: Schema.Number,
+  cacheReadTokens: Schema.optionalKey(Schema.Number),
+  cacheCreationTokens: Schema.optionalKey(Schema.Number),
+  contextWindowTokens: Schema.optionalKey(Schema.Number),
+});
+export type TurnUsage = typeof TurnUsage.Type;
+
 export const Thread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -84,6 +93,10 @@ export const Thread = Schema.Struct({
   costUsd: Schema.optionalKey(Schema.Number),
   settledAt: Schema.optionalKey(Schema.String),
   providerSessionId: Schema.optionalKey(Schema.String),
+  sessionEpoch: Schema.optionalKey(Schema.Number),
+  activeSummary: Schema.optionalKey(Schema.String),
+  lastUsage: Schema.optionalKey(TurnUsage),
+  compactAtTokens: Schema.optionalKey(Schema.Number),
   createdAt: Schema.String,
   updatedAt: Schema.String,
 });
@@ -157,6 +170,7 @@ export const ThreadTurn = Schema.Struct({
   id: TurnId,
   threadId: ThreadId,
   origin: Schema.optionalKey(TurnOrigin),
+  sessionEpoch: Schema.optionalKey(Schema.Number),
   userMessage: Schema.String,
   assistantMessage: Schema.String,
   thinkingText: Schema.String,
@@ -165,6 +179,7 @@ export const ThreadTurn = Schema.Struct({
   completedAt: Schema.optionalKey(Schema.String),
   durationMs: Schema.optionalKey(Schema.Number),
   costUsd: Schema.optionalKey(Schema.Number),
+  usage: Schema.optionalKey(TurnUsage),
   error: Schema.optionalKey(Schema.String),
   modelSelection: ModelSelection,
   activities: Schema.Array(ActivityItem),
@@ -226,3 +241,15 @@ export const RespondApprovalInput = Schema.Struct({
   customText: Schema.optionalKey(Schema.String),
 });
 export type RespondApprovalInput = typeof RespondApprovalInput.Type;
+
+export const CompactThreadInput = Schema.Struct({
+  focus: Schema.optionalKey(Schema.String),
+});
+export type CompactThreadInput = typeof CompactThreadInput.Type;
+
+export const CompactThreadResult = Schema.Struct({
+  thread: Thread,
+  summary: Schema.String,
+  sessionEpoch: Schema.Number,
+});
+export type CompactThreadResult = typeof CompactThreadResult.Type;
