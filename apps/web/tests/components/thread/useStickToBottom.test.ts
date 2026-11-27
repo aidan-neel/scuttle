@@ -6,11 +6,12 @@ import {
 } from "../../../src/components/thread/useStickToBottom.ts";
 
 describe("computeNextPinned", () => {
-  test("unpins immediately when scrolling upward even within STICK_THRESHOLD_PX", () => {
+  test("unpins immediately when user scrolls upward even within STICK_THRESHOLD_PX", () => {
     expect(
       computeNextPinned({
         currentlyPinned: true,
         prevScrollTop: 1000,
+        prevDistanceFromBottom: 0,
         scrollTop: 950,
         distanceFromBottom: 50,
         nowMs: 1000,
@@ -19,12 +20,27 @@ describe("computeNextPinned", () => {
     ).toBe(false);
   });
 
+  test("stays pinned when collapsing content clamps scrollTop downward while remaining at bottom", () => {
+    expect(
+      computeNextPinned({
+        currentlyPinned: true,
+        prevScrollTop: 1600,
+        prevDistanceFromBottom: 0,
+        scrollTop: 1320,
+        distanceFromBottom: 0,
+        nowMs: 1000,
+        suppressPinUntilMs: 0,
+      }),
+    ).toBe(true);
+  });
+
   test("stays unpinned during smooth jump suppression window even within threshold", () => {
     const suppressUntil = 1000 + UNPIN_SUPPRESS_MS;
     expect(
       computeNextPinned({
         currentlyPinned: false,
         prevScrollTop: 1000,
+        prevDistanceFromBottom: 0,
         scrollTop: 980,
         distanceFromBottom: 20,
         nowMs: 1100,
@@ -36,6 +52,7 @@ describe("computeNextPinned", () => {
       computeNextPinned({
         currentlyPinned: false,
         prevScrollTop: 980,
+        prevDistanceFromBottom: 20,
         scrollTop: 990,
         distanceFromBottom: 10,
         nowMs: 1200,
@@ -49,6 +66,7 @@ describe("computeNextPinned", () => {
       computeNextPinned({
         currentlyPinned: false,
         prevScrollTop: 900,
+        prevDistanceFromBottom: 100,
         scrollTop: 900,
         distanceFromBottom: 100,
         nowMs: 2500,
@@ -60,6 +78,7 @@ describe("computeNextPinned", () => {
       computeNextPinned({
         currentlyPinned: false,
         prevScrollTop: 900,
+        prevDistanceFromBottom: 280,
         scrollTop: 960,
         distanceFromBottom: STICK_THRESHOLD_PX,
         nowMs: 2500,
@@ -73,6 +92,7 @@ describe("computeNextPinned", () => {
       computeNextPinned({
         currentlyPinned: true,
         prevScrollTop: 1200,
+        prevDistanceFromBottom: 0,
         scrollTop: 1260,
         distanceFromBottom: 0,
         nowMs: 3000,

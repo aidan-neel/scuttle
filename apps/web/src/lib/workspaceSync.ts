@@ -42,6 +42,8 @@ export const createWorkspaceSync = (options: WorkspaceSyncOptions): WorkspaceSyn
   let bufferOverflowedDuringFetch = false;
   let waiters: Array<() => void> = [];
 
+  const needsRetry = () => !hasLoadedOnce || (wsOpened && !loadedAfterWsOpen);
+
   const clearFallbackTimer = () => {
     if (fallbackTimer !== null) {
       clearTimeout(fallbackTimer);
@@ -65,13 +67,20 @@ export const createWorkspaceSync = (options: WorkspaceSyncOptions): WorkspaceSyn
     }
   };
 
+  const drainBuffered = () => {
+    if (bufferedEvents.length === 0) return;
+    const drained = bufferedEvents;
+    bufferedEvents = [];
+    options.onDispatchBatch(drained);
+  };
+
   const scheduleRetry = () => {
-    if (disposed || hasLoadedOnce || retryTimer !== null) return;
+    if (disposed || !needsRetry() || retryTimer !== null) return;
     const delayMs = Math.min(retryMaxMs, retryBaseMs * 2 ** Math.min(retryAttempt, 4));
     retryAttempt += 1;
     retryTimer = setTimeout(() => {
       retryTimer = null;
-      if (disposed || hasLoadedOnce) return;
+      if (disposed || !needsRetry()) return;
       void runLoad(wsOpened);
     }, delayMs);
   };
@@ -89,10 +98,8 @@ export const createWorkspaceSync = (options: WorkspaceSyncOptions): WorkspaceSyn
 
     clearRetryTimer();
     fetchInFlight = true;
-    if (!hasLoadedOnce) {
-      bufferedEvents = [];
-      bufferOverflowedDuringFetch = false;
-    }
+    bufferedEvents = [];
+    bufferOverflowedDuringFetch = false;
 
     let needsOverflowRefresh = false;
     try {
@@ -110,15 +117,19 @@ export const createWorkspaceSync = (options: WorkspaceSyncOptions): WorkspaceSyn
           bufferedEvents = [];
           bufferOverflowedDuringFetch = false;
           needsOverflowRefresh = true;
-        } else if (bufferedEvents.length > 0) {
-          const drained = bufferedEvents;
-          bufferedEvents = [];
-          options.onDispatchBatch(drained);
+        } else {
+          drainBuffered();
         }
-      } else if (!hasLoadedOnce) {
-        bufferedEvents = [];
+      } else {
+        if (hasLoadedOnce && !bufferOverflowedDuringFetch) {
+          drainBuffered();
+        } else {
+          bufferedEvents = [];
+        }
         bufferOverflowedDuringFetch = false;
-        scheduleRetry();
+        if (needsRetry()) {
+          scheduleRetry();
+        }
       }
     } finally {
       fetchInFlight = false;
@@ -153,18 +164,19 @@ export const createWorkspaceSync = (options: WorkspaceSyncOptions): WorkspaceSyn
     },
     handleWsEvents: (events) => {
       if (disposed || events.length === 0) return;
+      if (fetchInFlight) {
+        if (bufferOverflowedDuringFetch) return;
+        if (bufferedEvents.length + events.length > maxBufferedEvents) {
+          bufferedEvents = [];
+          bufferOverflowedDuringFetch = true;
+          return;
+        }
+        bufferedEvents.push(...events);
+        return;
+      }
       if (hasLoadedOnce) {
         options.onDispatchBatch(events);
-        return;
       }
-      if (!fetchInFlight) return;
-      if (bufferOverflowedDuringFetch) return;
-      if (bufferedEvents.length + events.length > maxBufferedEvents) {
-        bufferedEvents = [];
-        bufferOverflowedDuringFetch = true;
-        return;
-      }
-      bufferedEvents.push(...events);
     },
     refresh: () => {
       if (disposed) return Promise.resolve();

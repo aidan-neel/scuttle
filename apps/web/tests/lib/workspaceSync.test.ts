@@ -47,15 +47,35 @@ describe("createWorkspaceSync", () => {
     sync.dispose();
   });
 
-  test("slow WS triggers fallback fetch then refetches once WS opens to close event gap", async () => {
+  test("slow WS catch-up buffers concurrent pushes until snapshot lands and retries if catch-up fails", async () => {
     let fetchCount = 0;
+    let resolveCatchUp!: (ok: boolean) => void;
+    const timeline: Array<string> = [];
+
     const sync = createWorkspaceSync({
-      fetchWorkspace: async () => {
+      fetchWorkspace: () => {
         fetchCount += 1;
-        return true;
+        if (fetchCount === 1) {
+          timeline.push("fallback-loaded");
+          return Promise.resolve(true);
+        }
+        if (fetchCount === 2) {
+          return new Promise<boolean>((resolve) => {
+            resolveCatchUp = (ok) => {
+              timeline.push(ok ? "catchup-loaded" : "catchup-failed");
+              resolve(ok);
+            };
+          });
+        }
+        timeline.push("catchup-retry-loaded");
+        return Promise.resolve(true);
       },
-      onDispatchBatch: () => {},
+      onDispatchBatch: () => {
+        timeline.push("push-dispatched");
+      },
       fallbackDelayMs: 15,
+      retryBaseMs: 20,
+      retryMaxMs: 40,
     });
 
     sync.start();
@@ -63,12 +83,61 @@ describe("createWorkspaceSync", () => {
     expect(fetchCount).toBe(1);
 
     sync.handleWsOpen({ isReconnect: false });
-    await delay(10);
     expect(fetchCount).toBe(2);
+
+    sync.handleWsEvents([makeDelta("rename", 0)]);
+    expect(timeline).toEqual(["fallback-loaded"]);
+
+    resolveCatchUp(false);
+    await delay(45);
+    expect(fetchCount).toBe(3);
+    expect(timeline).toEqual([
+      "fallback-loaded",
+      "catchup-failed",
+      "push-dispatched",
+      "catchup-retry-loaded",
+    ]);
     sync.dispose();
   });
 
-  test("failed initial fetch retries with backoff and enforces buffer cap", async () => {
+  test("concurrent push during succeeding catch-up replays after snapshot so newer push is not reverted", async () => {
+    let fetchCount = 0;
+    let resolveCatchUp!: (ok: boolean) => void;
+    const timeline: Array<string> = [];
+
+    const sync = createWorkspaceSync({
+      fetchWorkspace: () => {
+        fetchCount += 1;
+        if (fetchCount === 1) {
+          timeline.push("fallback-loaded");
+          return Promise.resolve(true);
+        }
+        return new Promise<boolean>((resolve) => {
+          resolveCatchUp = (ok) => {
+            timeline.push("catchup-loaded");
+            resolve(ok);
+          };
+        });
+      },
+      onDispatchBatch: () => {
+        timeline.push("push-dispatched");
+      },
+      fallbackDelayMs: 15,
+    });
+
+    sync.start();
+    await delay(35);
+    sync.handleWsOpen({ isReconnect: false });
+    sync.handleWsEvents([makeDelta("rename", 0)]);
+    expect(timeline).toEqual(["fallback-loaded"]);
+
+    resolveCatchUp(true);
+    await delay(10);
+    expect(timeline).toEqual(["fallback-loaded", "catchup-loaded", "push-dispatched"]);
+    sync.dispose();
+  });
+
+  test("buffer overflow during a succeeding fetch drops stale batch and triggers one follow-up refresh", async () => {
     let fetchCount = 0;
     const batches: Array<ReadonlyArray<ServerPushEvent>> = [];
     let releaseFirst!: (ok: boolean) => void;
@@ -85,8 +154,6 @@ describe("createWorkspaceSync", () => {
       },
       onDispatchBatch: (events) => batches.push(events),
       fallbackDelayMs: 100,
-      retryBaseMs: 20,
-      retryMaxMs: 40,
       maxBufferedEvents: 2,
     });
 
@@ -94,11 +161,30 @@ describe("createWorkspaceSync", () => {
     expect(fetchCount).toBe(1);
 
     sync.handleWsEvents([makeDelta("a", 0), makeDelta("b", 1), makeDelta("c", 2)]);
-    releaseFirst(false);
+    releaseFirst(true);
 
-    await delay(50);
+    await delay(20);
     expect(fetchCount).toBe(2);
     expect(batches).toHaveLength(0);
+    sync.dispose();
+  });
+
+  test("failed initial fetch retries with backoff", async () => {
+    let fetchCount = 0;
+    const sync = createWorkspaceSync({
+      fetchWorkspace: async () => {
+        fetchCount += 1;
+        return fetchCount >= 2;
+      },
+      onDispatchBatch: () => {},
+      fallbackDelayMs: 100,
+      retryBaseMs: 20,
+      retryMaxMs: 40,
+    });
+
+    sync.handleWsOpen({ isReconnect: false });
+    await delay(50);
+    expect(fetchCount).toBe(2);
     sync.dispose();
   });
 

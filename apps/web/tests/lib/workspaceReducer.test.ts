@@ -414,5 +414,15 @@ describe("workspaceReducer", () => {
     });
     expect(state.threadDetails["thread-1"]?.turns[0]?.assistantMessage).toBe("Final");
     expect(state.threadDetails["thread-1"]?.turns[0]?.thinkingText).toBe("Done");
+
+    state = reduceWorkspaceState(state, {
+      kind: "threadDetailLoaded",
+      detail: makeDetail("thread-1", "2026-11-26T00:00:01.000Z", [
+        { ...makeTurn("thread-1", "turn-1", "prefix"), status: "running", thinkingText: "" },
+      ]),
+    });
+    expect(state.threadDetails["thread-1"]?.turns[0]?.status).toBe("completed");
+    expect(state.threadDetails["thread-1"]?.turns[0]?.assistantMessage).toBe("Final");
+    expect(state.threadDetails["thread-1"]?.turns[0]?.thinkingText).toBe("Done");
   });
 });

@@ -32,19 +32,22 @@ export const mergeThreadDetailSnapshot = (
   incoming: ThreadDetail,
 ): ThreadDetail => {
   if (existing === undefined) return incoming;
-  let runningPrevById: Map<string, ThreadTurn> | null = null;
+  if (!incoming.turns.some((turn) => turn.status === "running")) return incoming;
+
+  const prevById = new Map<string, ThreadTurn>();
   for (const turn of existing.turns) {
-    if (turn.status !== "running") continue;
-    runningPrevById ??= new Map<string, ThreadTurn>();
-    runningPrevById.set(turn.id, turn);
+    prevById.set(turn.id, turn);
   }
-  if (runningPrevById === null) return incoming;
 
   let merged = false;
   const turns = incoming.turns.map((turn): ThreadTurn => {
     if (turn.status !== "running") return turn;
-    const prev = runningPrevById.get(turn.id);
+    const prev = prevById.get(turn.id);
     if (prev === undefined) return turn;
+    if (prev.status !== "running") {
+      merged = true;
+      return prev;
+    }
     const keepAssistant =
       prev.assistantMessage.length > turn.assistantMessage.length &&
       prev.assistantMessage.startsWith(turn.assistantMessage);

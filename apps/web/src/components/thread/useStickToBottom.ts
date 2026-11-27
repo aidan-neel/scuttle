@@ -14,6 +14,7 @@ export interface StickToBottom {
 export interface PinTransitionInput {
   readonly currentlyPinned: boolean;
   readonly prevScrollTop: number;
+  readonly prevDistanceFromBottom: number;
   readonly scrollTop: number;
   readonly distanceFromBottom: number;
   readonly nowMs: number;
@@ -23,6 +24,7 @@ export interface PinTransitionInput {
 export const computeNextPinned = ({
   currentlyPinned,
   prevScrollTop,
+  prevDistanceFromBottom,
   scrollTop,
   distanceFromBottom,
   nowMs,
@@ -30,12 +32,13 @@ export const computeNextPinned = ({
 }: PinTransitionInput): boolean => {
   if (distanceFromBottom > STICK_THRESHOLD_PX) return false;
   if (nowMs < suppressPinUntilMs) return false;
-  if (scrollTop < prevScrollTop) return false;
+  if (scrollTop < prevScrollTop && distanceFromBottom > prevDistanceFromBottom) return false;
   if (currentlyPinned) return true;
   return scrollTop > prevScrollTop;
 };
 
-const distanceFromBottom = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.clientHeight;
+const distanceFromBottom = (el: HTMLElement) =>
+  Math.max(0, el.scrollHeight - el.scrollTop - el.clientHeight);
 
 export function useStickToBottom(
   scrollRef: RefObject<HTMLDivElement | null>,
@@ -46,6 +49,7 @@ export function useStickToBottom(
   const [isAtBottom, setIsAtBottom] = useState(true);
   const pinnedRef = useRef(true);
   const prevScrollTopRef = useRef(0);
+  const prevDistanceRef = useRef(0);
   const suppressPinUntilRef = useRef(0);
   const resizeRafRef = useRef<number | null>(null);
   const hasTurns = turns.length > 0;
@@ -57,6 +61,7 @@ export function useStickToBottom(
     suppressPinUntilRef.current = 0;
     el.scrollTop = el.scrollHeight;
     prevScrollTopRef.current = el.scrollTop;
+    prevDistanceRef.current = distanceFromBottom(el);
     setIsAtBottom(true);
   }, [resetKey, scrollRef]);
 
@@ -73,6 +78,7 @@ export function useStickToBottom(
         if (!pinnedRef.current) return;
         el.scrollTop = el.scrollHeight;
         prevScrollTopRef.current = el.scrollTop;
+        prevDistanceRef.current = distanceFromBottom(el);
         setIsAtBottom(true);
       });
     });
@@ -103,12 +109,14 @@ export function useStickToBottom(
       pinnedRef.current = computeNextPinned({
         currentlyPinned: pinnedRef.current,
         prevScrollTop: prevScrollTopRef.current,
+        prevDistanceFromBottom: prevDistanceRef.current,
         scrollTop,
         distanceFromBottom: dist,
         nowMs: performance.now(),
         suppressPinUntilMs: suppressPinUntilRef.current,
       });
       prevScrollTopRef.current = scrollTop;
+      prevDistanceRef.current = dist;
       if (rafId !== null) return;
       rafId = requestAnimationFrame(() => {
         rafId = null;
@@ -117,6 +125,7 @@ export function useStickToBottom(
     };
 
     prevScrollTopRef.current = el.scrollTop;
+    prevDistanceRef.current = distanceFromBottom(el);
     measureAtBottom();
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => {

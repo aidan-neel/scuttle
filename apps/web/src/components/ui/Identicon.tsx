@@ -79,10 +79,14 @@ function isUrlFailed(url: string, now: number): boolean {
 }
 
 function recordLoadSuccess(url: string): void {
-  failedUrls.delete(url);
+  const removed = failedUrls.delete(url);
+  const wasDisabled = disabledUntil > 0;
   consecutiveFailures = 0;
   disabledUntil = 0;
   scheduleRecoveryTimer(Date.now());
+  if (removed || wasDisabled) {
+    notifyListeners();
+  }
 }
 
 function recordLoadFailure(url: string): void {
@@ -147,9 +151,8 @@ export function Identicon({ name, size, className }: IdenticonProps) {
   const { box, classes } = SIZES[size];
   const url = dicebearIdenticonUrl(name);
   useSyncExternalStore(subscribe, getFailureVersion, getServerFailureVersion);
-  const now = Date.now();
 
-  if (disabledUntil > now || isUrlFailed(url, now)) {
+  if (disabledUntil > 0 || failedUrls.has(url)) {
     return (
       <FallbackIdenticon
         name={name}
