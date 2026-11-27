@@ -99,7 +99,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 to="/"
                 className="mb-2 flex h-9 items-center self-start rounded-control px-2 outline-none focus-visible:shadow-focus md:hidden"
               >
-                <span className="text-[14px] font-semibold tracking-tight">Scuttle</span>
+                <span className="text-[15px] font-semibold tracking-tight">Scuttle</span>
               </Link>
             )}
             <div className="relative isolate flex min-h-0 flex-1 flex-col overflow-hidden rounded-canvas bg-canvas shadow-canvas">

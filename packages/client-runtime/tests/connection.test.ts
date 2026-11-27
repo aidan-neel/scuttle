@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
-import { parseServerRpcMessage, resolveWebSocketUrl } from "./connection.ts";
+import { parseServerRpcMessage, resolveWebSocketUrl } from "../src/connection.ts";
 
 describe("client-runtime connection helpers", () => {
   test("derives ws URL from explicit http base URL", () => {

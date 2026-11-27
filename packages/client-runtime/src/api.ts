@@ -2,11 +2,15 @@ import {
   Agent,
   AgentCheckIn,
   AgentDelegation,
+  AgentDelegationQuestion,
   AgentDetail,
   AgentIssue,
   AgentMemory,
+  type AskDelegationParentInput,
   type AssignAgentIssueInput,
   AssignAgentIssueResult,
+  type CompactThreadInput,
+  CompactThreadResult,
   type CreateAgentInput,
   type CreateIssueInput,
   type CreateMemoryInput,
@@ -57,6 +61,10 @@ const decodeAgentMemory = Schema.decodeUnknownEffect(AgentMemory);
 const decodeAgentIssues = Schema.decodeUnknownEffect(Schema.Array(AgentIssue));
 const decodeAgentIssue = Schema.decodeUnknownEffect(AgentIssue);
 const decodeAgentDelegation = Schema.decodeUnknownEffect(AgentDelegation);
+const decodeAgentDelegationQuestion = Schema.decodeUnknownEffect(AgentDelegationQuestion);
+const decodeAgentDelegationQuestions = Schema.decodeUnknownEffect(
+  Schema.Array(AgentDelegationQuestion),
+);
 const decodeAssignIssueResult = Schema.decodeUnknownEffect(AssignAgentIssueResult);
 const decodeAgentCheckIn = Schema.decodeUnknownEffect(AgentCheckIn);
 const decodeProject = Schema.decodeUnknownEffect(Project);
@@ -66,6 +74,7 @@ const decodeProviders = Schema.decodeUnknownEffect(Schema.Array(ProviderSnapshot
 const decodeProvider = Schema.decodeUnknownEffect(ProviderSnapshot);
 const decodeThread = Schema.decodeUnknownEffect(Thread);
 const decodeThreadDetail = Schema.decodeUnknownEffect(ThreadDetail);
+const decodeCompactThreadResult = Schema.decodeUnknownEffect(CompactThreadResult);
 const decodeTurn = Schema.decodeUnknownEffect(ThreadTurn);
 const decodeForges = Schema.decodeUnknownEffect(Schema.Array(ForgeStatus));
 const decodeForge = Schema.decodeUnknownEffect(ForgeStatus);
@@ -235,6 +244,10 @@ export interface ScuttleApiClient {
   readonly sendTurn: (threadId: string, input: SendTurnInput) => Promise<ThreadTurn>;
   readonly interruptTurn: (threadId: string) => Promise<void>;
   readonly settleThread: (threadId: string, input: SettleThreadInput) => Promise<Thread>;
+  readonly compactThread: (
+    threadId: string,
+    input?: CompactThreadInput,
+  ) => Promise<CompactThreadResult>;
   readonly updateThread: (threadId: string, input: UpdateThreadInput) => Promise<Thread>;
   readonly deleteThread: (threadId: string) => Promise<void>;
   readonly respondApproval: (
@@ -282,6 +295,15 @@ export interface ScuttleApiClient {
     agentId: string,
     delegationId: string,
   ) => Promise<AgentDelegation>;
+  readonly askDelegationParent: (
+    agentId: string,
+    delegationId: string,
+    input: AskDelegationParentInput,
+  ) => Promise<AgentDelegationQuestion>;
+  readonly listDelegationQuestions: (
+    agentId: string,
+    delegationId: string,
+  ) => Promise<ReadonlyArray<AgentDelegationQuestion>>;
   readonly triggerAgentCheckIn: (
     agentId: string,
     input?: TriggerCheckInInput,
@@ -326,6 +348,12 @@ export const createScuttleApiClient = (baseUrl?: string): ScuttleApiClient => {
       empty(`/api/threads/${encodeURIComponent(threadId)}/interrupt`, postJson()),
     settleThread: (threadId, input) =>
       json(`/api/threads/${encodeURIComponent(threadId)}/settle`, postJson(input), decodeThread),
+    compactThread: (threadId, input) =>
+      json(
+        `/api/threads/${encodeURIComponent(threadId)}/compact`,
+        postJson(input ?? {}),
+        decodeCompactThreadResult,
+      ),
     updateThread: (threadId, input) =>
       json(
         `/api/threads/${encodeURIComponent(threadId)}`,
@@ -391,6 +419,18 @@ export const createScuttleApiClient = (baseUrl?: string): ScuttleApiClient => {
         agentPath(agentId, `/delegations/${encodeURIComponent(delegationId)}/cancel`),
         postJson(),
         decodeAgentDelegation,
+      ),
+    askDelegationParent: (agentId, delegationId, input) =>
+      json(
+        agentPath(agentId, `/delegations/${encodeURIComponent(delegationId)}/ask`),
+        postJson(input),
+        decodeAgentDelegationQuestion,
+      ),
+    listDelegationQuestions: (agentId, delegationId) =>
+      json(
+        agentPath(agentId, `/delegations/${encodeURIComponent(delegationId)}/questions`),
+        undefined,
+        decodeAgentDelegationQuestions,
       ),
     triggerAgentCheckIn: (agentId, input) =>
       json(agentPath(agentId, "/checkins"), postJson(input ?? {}), decodeAgentCheckIn),

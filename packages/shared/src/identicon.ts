@@ -8,6 +8,9 @@ export interface Identicon {
 
 export const IDENTICON_GRID = 5;
 
+export const dicebearIdenticonUrl = (name: string): string =>
+  `https://api.dicebear.com/10.x/identicon/svg?seed=${encodeURIComponent(name)}&scale=0.72`;
+
 const hueChannel = (m1: number, m2: number, hue: number): number => {
   const h = ((hue % 1) + 1) % 1;
   if (h < 1 / 6) return m1 + (m2 - m1) * h * 6;

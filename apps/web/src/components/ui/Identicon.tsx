@@ -1,11 +1,12 @@
-import { IDENTICON_GRID, identicon } from "@scuttle/shared/identicon";
+import { dicebearIdenticonUrl, IDENTICON_GRID, identicon } from "@scuttle/shared/identicon";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 
 const SIZES = {
-  sm: { box: 16, radius: 4 },
-  md: { box: 24, radius: 6 },
-  lg: { box: 32, radius: 8 },
-  xl: { box: 56, radius: 14 },
+  sm: { box: 16, radius: 4, classes: "size-4 rounded-[4px]" },
+  md: { box: 24, radius: 6, classes: "size-6 rounded-[6px]" },
+  lg: { box: 32, radius: 8, classes: "size-8 rounded-[8px]" },
+  xl: { box: 56, radius: 14, classes: "size-14 rounded-[14px]" },
 } as const;
 
 interface IdenticonProps {
@@ -14,7 +15,7 @@ interface IdenticonProps {
   className?: string;
 }
 
-export function Identicon({ name, size, className }: IdenticonProps) {
+function FallbackIdenticon({ name, size, className }: IdenticonProps) {
   const { box, radius } = SIZES[size];
   const { foreground, background, cells } = identicon(name);
   const pad = box * 0.18;
@@ -44,5 +45,34 @@ export function Identicon({ name, size, className }: IdenticonProps) {
         ),
       )}
     </svg>
+  );
+}
+
+export function Identicon({ name, size, className }: IdenticonProps) {
+  const { box, classes } = SIZES[size];
+  const url = dicebearIdenticonUrl(name);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+
+  if (failedUrl === url) {
+    return (
+      <FallbackIdenticon
+        name={name}
+        size={size}
+        {...(className !== undefined ? { className } : {})}
+      />
+    );
+  }
+
+  return (
+    <img
+      src={url}
+      alt=""
+      aria-hidden
+      width={box}
+      height={box}
+      decoding="async"
+      onError={() => setFailedUrl(url)}
+      className={cn("shrink-0 bg-white/[0.06] object-cover select-none", classes, className)}
+    />
   );
 }

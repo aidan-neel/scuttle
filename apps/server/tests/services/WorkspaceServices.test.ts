@@ -1,14 +1,14 @@
 import { describe, expect, it } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as ServerConfig from "../config.ts";
-import * as Sqlite from "../persistence/Sqlite.ts";
-import { presentToolActivity } from "../providers/toolLabel.ts";
-import { startScuttleServer } from "../server.ts";
-import * as EventBus from "./EventBus.ts";
-import * as GitService from "./GitService.ts";
-import * as ProjectService from "./ProjectService.ts";
-import * as ProviderService from "./ProviderService.ts";
+import * as ServerConfig from "../../src/config.ts";
+import * as Sqlite from "../../src/persistence/Sqlite.ts";
+import { presentToolActivity } from "../../src/providers/toolLabel.ts";
+import { startScuttleServer } from "../../src/server.ts";
+import * as EventBus from "../../src/services/EventBus.ts";
+import * as GitService from "../../src/services/GitService.ts";
+import * as ProjectService from "../../src/services/ProjectService.ts";
+import * as ProviderService from "../../src/services/ProviderService.ts";
 
 const makeTestLayer = () => {
   const configLayer = ServerConfig.layer({ dbPath: ":memory:" });

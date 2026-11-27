@@ -1,9 +1,9 @@
 import type { EffortLevel } from "@scuttle/contracts";
-import { AnimatePresence, motion } from "motion/react";
+import { motion } from "motion/react";
 import { type KeyboardEvent, type PointerEvent, useRef, useState } from "react";
 import { DitherShader } from "@/lib/dither";
 import { EFFORT_LABELS } from "@/lib/format.ts";
-import { easeOut, spring } from "@/lib/motion.ts";
+import { spring } from "@/lib/motion.ts";
 
 interface ReasoningSliderProps {
   readonly efforts: ReadonlyArray<EffortLevel>;
@@ -101,20 +101,7 @@ export function ReasoningSlider({ efforts, value, onChange }: ReasoningSliderPro
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <span className="text-meta font-medium text-fg-muted">Reasoning</span>
-        <span className="relative h-4 overflow-hidden text-right text-meta font-medium text-fg">
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.span
-              key={value}
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              transition={{ duration: 0.12, ease: easeOut }}
-              className="inline-block"
-            >
-              {EFFORT_LABELS[value]}
-            </motion.span>
-          </AnimatePresence>
-        </span>
+        <span className="text-right text-meta font-medium text-fg">{EFFORT_LABELS[value]}</span>
       </div>
 
       <div
@@ -209,7 +196,7 @@ export function ReasoningSlider({ efforts, value, onChange }: ReasoningSliderPro
               type="button"
               style={idx === 0 || idx === count - 1 ? undefined : { left: `${pct}%` }}
               onClick={() => onChange(effort)}
-              className={`absolute top-0 cursor-pointer rounded-[4px] py-0.5 text-[10.5px] leading-none whitespace-nowrap transition-colors duration-100 outline-none ${alignClass} ${
+              className={`absolute top-0 cursor-pointer rounded-[4px] py-0.5 text-[11.5px] leading-none whitespace-nowrap transition-colors duration-100 outline-none ${alignClass} ${
                 active ? "font-medium text-fg" : "text-fg-faint hover:text-fg-muted"
               }`}
             >

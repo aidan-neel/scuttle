@@ -1,10 +1,8 @@
 import { Popover } from "@base-ui/react/popover";
 import {
-  Add01Icon,
   ArrowDown01Icon,
   ArrowRight01Icon,
   Search01Icon,
-  StarIcon,
   Tick02Icon,
 } from "@hugeicons/core-free-icons";
 import type {
@@ -14,7 +12,7 @@ import type {
   ProviderStatusKind,
 } from "@scuttle/contracts";
 import { AnimatePresence, motion } from "motion/react";
-import { type WheelEvent, useState } from "react";
+import { type ReactNode, type WheelEvent, useLayoutEffect, useRef, useState } from "react";
 import { BrandLogo } from "@/components/ui/BrandLogo.tsx";
 import { buttonClass } from "@/components/ui/Button.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
@@ -29,8 +27,8 @@ import {
   type ModelEntry,
   type UpstreamGroup,
 } from "@/lib/modelGrouping.ts";
-import { easeOut, spring } from "@/lib/motion.ts";
-import { ReasoningSlider } from "./ReasoningSlider.tsx";
+import { spring } from "@/lib/motion.ts";
+import { ModelDetailCard } from "./ModelDetailCard.tsx";
 
 interface ModelPickerProps {
   readonly providers: ReadonlyArray<ProviderSnapshot>;
@@ -38,13 +36,7 @@ interface ModelPickerProps {
   readonly onChange: (next: ModelSelection) => void;
 }
 
-const STATUS_DOT: Record<ProviderStatusKind, string> = {
-  ready: "bg-success",
-  unauthenticated: "bg-warning",
-  unavailable: "bg-danger",
-  probing: "bg-fg-faint",
-  disabled: "bg-fg-faint",
-};
+const MAX_LIST_HEIGHT_PX = 320;
 
 const STATUS_LABEL: Record<ProviderStatusKind, string> = {
   ready: "Ready",
@@ -59,6 +51,45 @@ const scrollChipsWithWheel = (event: WheelEvent<HTMLDivElement>) => {
     event.currentTarget.scrollLeft += event.deltaY;
   }
 };
+
+function MorphingModelList({ children }: { readonly children: ReactNode }) {
+  const innerRef = useRef<HTMLDivElement | null>(null);
+  const [state, setState] = useState<{
+    readonly height: number;
+    readonly animate: boolean;
+  } | null>(null);
+
+  useLayoutEffect(() => {
+    const el = innerRef.current;
+    if (!el) return;
+    const measure = () => {
+      const next = Math.min(MAX_LIST_HEIGHT_PX, Math.ceil(el.getBoundingClientRect().height));
+      setState((prev) => {
+        if (prev === null) return { height: next, animate: false };
+        if (prev.height === next) return prev;
+        return { height: next, animate: true };
+      });
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <motion.div
+      initial={false}
+      animate={{ height: state ? state.height : MAX_LIST_HEIGHT_PX }}
+      transition={state?.animate ? spring.snappy : { duration: 0 }}
+      className="max-h-80 overflow-x-hidden overflow-y-auto"
+    >
+      <div ref={innerRef} className="p-1">
+        {children}
+      </div>
+    </motion.div>
+  );
+}
 
 function FilterChips({
   items,
@@ -91,7 +122,7 @@ function FilterChips({
             {item.brand && <BrandLogo brand={item.brand} className="size-3 shrink-0" />}
             <span>{item.label}</span>
             {item.count !== undefined && (
-              <span className="font-mono text-[10px] text-fg-faint">{item.count}</span>
+              <span className="font-mono text-[11px] text-fg-faint">{item.count}</span>
             )}
           </button>
         );
@@ -221,7 +252,7 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
             className={`size-3 shrink-0 transition-transform duration-150 ease-out ${groupOpen ? "rotate-90" : ""}`}
           />
           <span className="min-w-0 flex-1 truncate">{group.upstream.label}</span>
-          <span className="shrink-0 font-mono text-[10px] text-fg-faint">
+          <span className="shrink-0 font-mono text-[11px] text-fg-faint">
             {group.entries.length}
           </span>
         </button>
@@ -283,7 +314,7 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
               transition={spring.snappy}
               className="flex items-end gap-2"
             >
-              <div className="w-[300px] overflow-hidden rounded-card bg-menu shadow-menu">
+              <div className="w-[308px] overflow-hidden rounded-card bg-menu shadow-menu">
                 <div className="flex items-center gap-1.5 border-b border-edge px-2.5 py-2">
                   <Icon icon={Search01Icon} className="size-3.5 shrink-0 text-fg-muted" />
                   <input
@@ -291,6 +322,7 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
                     value={query}
                     onChange={(event) => {
                       setQuery(event.target.value);
+                      setInspectedKey(null);
                       resetGroupToggles();
                     }}
                     placeholder="Search models"
@@ -306,6 +338,7 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
                       onSelect={(key) => {
                         setHarnessFilter(key);
                         setUpstreamFilter(ALL);
+                        setInspectedKey(null);
                         resetGroupToggles();
                       }}
                     />
@@ -326,6 +359,7 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
                         active={activeUpstream}
                         onSelect={(key) => {
                           setUpstreamFilter(key);
+                          setInspectedKey(null);
                           resetGroupToggles();
                         }}
                       />
@@ -333,7 +367,7 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
                   )}
                 </AnimatePresence>
 
-                <div className="max-h-80 overflow-y-auto p-1">
+                <MorphingModelList>
                   {favoriteEntries.length > 0 && (
                     <div className="mb-1.5">
                       <div className="px-2 pt-1 pb-1 text-meta font-medium text-fg-muted">
@@ -352,7 +386,7 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
                         <div className="flex items-center justify-between gap-2 px-2 py-1 text-meta font-medium text-fg-muted">
                           <span className="truncate">{section.provider.name}</span>
                           {section.provider.status !== "ready" && (
-                            <span className="text-[10px] font-normal text-warning">
+                            <span className="text-[11px] font-normal text-warning">
                               {STATUS_LABEL[section.provider.status]}
                             </span>
                           )}
@@ -374,86 +408,17 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
                       No matching models.
                     </div>
                   )}
-                </div>
+                </MorphingModelList>
               </div>
 
               {detailEntry && (
-                <div className="hidden w-[238px] overflow-hidden rounded-card bg-menu p-3.5 shadow-menu sm:block">
-                  <AnimatePresence mode="wait" initial={false}>
-                    <motion.div
-                      key={detailEntry.key}
-                      initial={{ opacity: 0, y: 3 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -3 }}
-                      transition={{ duration: 0.12, ease: easeOut }}
-                      className="flex flex-col gap-3.5"
-                    >
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <BrandLogo
-                            brand={detailEntry.provider.kind}
-                            className="size-3.5 shrink-0"
-                          />
-                          <span className="min-w-0 flex-1 truncate text-body font-medium text-fg">
-                            {detailEntry.displayName}
-                          </span>
-                          <span
-                            title={detailEntry.provider.status}
-                            className={`size-1.5 shrink-0 rounded-full ${STATUS_DOT[detailEntry.provider.status]}`}
-                          />
-                        </div>
-                        <div className="flex items-center gap-1.5 text-meta text-fg-muted">
-                          <span className="truncate">{detailEntry.provider.name}</span>
-                          {detailEntry.upstream && (
-                            <>
-                              <span className="text-fg-faint">·</span>
-                              <span className="truncate">{detailEntry.upstream.label}</span>
-                            </>
-                          )}
-                          {detailEntry.provider.version && (
-                            <>
-                              <span className="text-fg-faint">·</span>
-                              <span className="font-mono text-fg-faint">
-                                v{detailEntry.provider.version}
-                              </span>
-                            </>
-                          )}
-                        </div>
-                        {detailEntry.model.slug !== detailEntry.displayName && (
-                          <div className="truncate font-mono text-[10px] text-fg-faint">
-                            {detailEntry.model.slug}
-                          </div>
-                        )}
-                      </div>
-
-                      {detailEntry.model.efforts.length > 0 && detailEffort && (
-                        <div className="border-t border-edge pt-3">
-                          <ReasoningSlider
-                            efforts={detailEntry.model.efforts}
-                            value={detailEffort}
-                            onChange={(effort) => selectEntry(detailEntry, effort, false)}
-                          />
-                        </div>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={() => toggle(detailEntry.key)}
-                        className={buttonClass(
-                          "secondary",
-                          "sm",
-                          "w-full cursor-pointer justify-center gap-1.5",
-                        )}
-                      >
-                        <Icon
-                          icon={isFavorite(detailEntry.key) ? StarIcon : Add01Icon}
-                          className={`size-3.5 ${isFavorite(detailEntry.key) ? "text-warning" : ""}`}
-                        />
-                        {isFavorite(detailEntry.key) ? "Favorited" : "Add to favorites"}
-                      </button>
-                    </motion.div>
-                  </AnimatePresence>
-                </div>
+                <ModelDetailCard
+                  entry={detailEntry}
+                  effort={detailEffort}
+                  favorited={isFavorite(detailEntry.key)}
+                  onEffortChange={(effort) => selectEntry(detailEntry, effort, false)}
+                  onToggleFavorite={() => toggle(detailEntry.key)}
+                />
               )}
             </motion.div>
           </Popover.Popup>

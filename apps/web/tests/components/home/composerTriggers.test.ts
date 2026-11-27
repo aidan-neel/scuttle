@@ -5,7 +5,7 @@ import {
   formatMention,
   insertMentionTrigger,
   replaceMention,
-} from "./composerTriggers.ts";
+} from "../../../src/components/home/composerTriggers.ts";
 
 describe("detectTrigger", () => {
   test("opens the slash menu for a single command word", () => {

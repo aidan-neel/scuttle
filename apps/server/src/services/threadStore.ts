@@ -17,6 +17,7 @@ import {
   type ThreadTurn,
   TurnOrigin,
   TurnStatus,
+  TurnUsage,
 } from "@scuttle/contracts";
 import {
   ActivityId,
@@ -47,6 +48,11 @@ export interface ThreadRow {
   readonly cost_usd?: number | null;
   readonly settled_at: string | null;
   readonly provider_session_id: string | null;
+  readonly session_epoch?: number | null;
+  readonly active_summary?: string | null;
+  readonly last_context_hash?: string | null;
+  readonly last_usage_json?: string | null;
+  readonly compact_at_tokens?: number | null;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -56,6 +62,7 @@ export interface TurnRow {
   readonly thread_id: string;
   readonly seq: number;
   readonly origin: string;
+  readonly session_epoch?: number | null;
   readonly user_message: string;
   readonly assistant_message: string;
   readonly thinking_text: string;
@@ -64,6 +71,7 @@ export interface TurnRow {
   readonly completed_at: string | null;
   readonly duration_ms: number | null;
   readonly cost_usd: number;
+  readonly usage_json?: string | null;
   readonly error: string | null;
   readonly model_selection_json: string;
 }
@@ -109,6 +117,7 @@ const decodeModelSelection = Schema.decodeUnknownOption(ModelSelection);
 const decodeActivityKind = Schema.decodeUnknownOption(ActivityKind);
 const decodeActivityStatus = Schema.decodeUnknownOption(ActivityStatus);
 const decodeApprovalOptions = Schema.decodeUnknownOption(Schema.Array(ApprovalOption));
+const decodeTurnUsage = Schema.decodeUnknownOption(TurnUsage);
 
 const safeJsonParse = (raw: string): unknown => {
   try {
@@ -125,6 +134,9 @@ export const rowToThread = (row: ThreadRow): Thread => {
   const rmOpt = decodeRuntimeMode(row.runtime_mode);
   const imOpt = decodeInteractionMode(row.interaction_mode);
   const statusOpt = decodeThreadStatus(safeJsonParse(row.status_json));
+  const lastUsageOpt = row.last_usage_json
+    ? decodeTurnUsage(safeJsonParse(row.last_usage_json))
+    : null;
 
   return {
     id: ThreadId.make(row.id),
@@ -147,6 +159,12 @@ export const rowToThread = (row: ThreadRow): Thread => {
     ...(typeof row.cost_usd === "number" && row.cost_usd > 0 ? { costUsd: row.cost_usd } : {}),
     ...(row.settled_at ? { settledAt: row.settled_at } : {}),
     ...(row.provider_session_id ? { providerSessionId: row.provider_session_id } : {}),
+    ...(typeof row.session_epoch === "number" ? { sessionEpoch: row.session_epoch } : {}),
+    ...(row.active_summary ? { activeSummary: row.active_summary } : {}),
+    ...(lastUsageOpt && lastUsageOpt._tag === "Some" ? { lastUsage: lastUsageOpt.value } : {}),
+    ...(typeof row.compact_at_tokens === "number" && row.compact_at_tokens > 0
+      ? { compactAtTokens: row.compact_at_tokens }
+      : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -233,10 +251,12 @@ export const readTurnsForThread = (db: Database, thread: Thread): ReadonlyArray<
     const originOpt = decodeTurnOrigin(row.origin);
     const statusOpt = decodeTurnStatus(row.status);
     const msOpt = decodeModelSelection(safeJsonParse(row.model_selection_json));
+    const usageOpt = row.usage_json ? decodeTurnUsage(safeJsonParse(row.usage_json)) : null;
     return {
       id: TurnId.make(row.id),
       threadId: ThreadId.make(row.thread_id),
       ...(originOpt._tag === "Some" && originOpt.value === "system" ? { origin: "system" } : {}),
+      ...(typeof row.session_epoch === "number" ? { sessionEpoch: row.session_epoch } : {}),
       userMessage: row.user_message,
       assistantMessage: row.assistant_message,
       thinkingText: row.thinking_text,
@@ -245,12 +265,102 @@ export const readTurnsForThread = (db: Database, thread: Thread): ReadonlyArray<
       ...(row.completed_at ? { completedAt: row.completed_at } : {}),
       ...(row.duration_ms !== null ? { durationMs: row.duration_ms } : {}),
       ...(row.cost_usd > 0 ? { costUsd: row.cost_usd } : {}),
+      ...(usageOpt && usageOpt._tag === "Some" ? { usage: usageOpt.value } : {}),
       ...(row.error ? { error: row.error } : {}),
       modelSelection: msOpt._tag === "Some" ? msOpt.value : thread.modelSelection,
       activities: activitiesByTurn.get(row.id) ?? [],
       approvals: approvalsByTurn.get(row.id) ?? [],
     };
   });
+};
+
+export const hasCompletedTurnInEpoch = (
+  db: Database,
+  threadId: string,
+  sessionEpoch: number,
+): boolean => {
+  const row = db
+    .query<{ readonly present: number }, [string, number]>(
+      "SELECT 1 AS present FROM turns WHERE thread_id = ? AND session_epoch = ? AND status = 'completed' LIMIT 1",
+    )
+    .get(threadId, sessionEpoch);
+  return row !== null;
+};
+
+export const readThreadContextHash = (db: Database, threadId: string): string | null => {
+  const row = db
+    .query<{ readonly last_context_hash: string | null }, [string]>(
+      "SELECT last_context_hash FROM threads WHERE id = ?",
+    )
+    .get(threadId);
+  return row?.last_context_hash ?? null;
+};
+
+export const updateThreadContextHash = (
+  db: Database,
+  threadId: string,
+  hash: string | null,
+  expectedSessionEpoch?: number,
+): void => {
+  if (expectedSessionEpoch !== undefined) {
+    db.prepare("UPDATE threads SET last_context_hash = ? WHERE id = ? AND session_epoch = ?").run(
+      hash,
+      threadId,
+      expectedSessionEpoch,
+    );
+    return;
+  }
+  db.prepare("UPDATE threads SET last_context_hash = ? WHERE id = ?").run(hash, threadId);
+};
+
+export const insertTurnRow = (db: Database, seq: number, turn: ThreadTurn): void => {
+  db.prepare(
+    `INSERT INTO turns
+       (id, thread_id, seq, origin, session_epoch, user_message, assistant_message, thinking_text, status, started_at, model_selection_json)
+     VALUES (?, ?, ?, ?, ?, ?, '', '', 'running', ?, ?)`,
+  ).run(
+    turn.id,
+    turn.threadId,
+    seq,
+    turn.origin ?? "user",
+    turn.sessionEpoch ?? 0,
+    turn.userMessage,
+    turn.startedAt,
+    JSON.stringify(turn.modelSelection),
+  );
+};
+
+export const updateTurnOutcomeRow = (
+  db: Database,
+  threadId: string,
+  turnEpoch: number,
+  next: ThreadTurn,
+): void => {
+  db.prepare(
+    `UPDATE turns
+     SET assistant_message = ?, thinking_text = ?, status = ?, completed_at = ?, duration_ms = ?, cost_usd = ?, error = ?, usage_json = ?
+     WHERE id = ?`,
+  ).run(
+    next.assistantMessage,
+    next.thinkingText,
+    next.status,
+    next.completedAt ?? null,
+    next.durationMs ?? null,
+    next.costUsd ?? 0,
+    next.error ?? null,
+    next.usage ? JSON.stringify(next.usage) : null,
+    next.id,
+  );
+  if (next.usage) {
+    db.prepare(
+      "UPDATE threads SET last_usage_json = ?, updated_at = ? WHERE id = ? AND session_epoch = ?",
+    ).run(
+      JSON.stringify(next.usage),
+      next.completedAt ?? new Date().toISOString(),
+      threadId,
+      turnEpoch,
+    );
+  }
 };
 
 export const recoverInterruptedThreads = (db: Database): void => {
@@ -341,6 +451,47 @@ export const insertThreadRow = (
     JSON.stringify(input.status),
     input.now,
     input.now,
+  );
+  return readThreadById(db, input.id);
+};
+
+export const updateThreadRow = (
+  db: Database,
+  input: {
+    readonly id: ThreadId;
+    readonly title: string;
+    readonly runtime: Thread["runtime"];
+    readonly branch: string;
+    readonly worktreePath: string | null;
+    readonly cwd: string;
+    readonly modelSelection: Thread["modelSelection"];
+    readonly runtimeMode: Thread["runtimeMode"];
+    readonly interactionMode: Thread["interactionMode"];
+    readonly providerSessionId: string | null;
+    readonly now: string;
+  },
+): Thread | null => {
+  db.prepare(
+    `UPDATE threads
+     SET title = ?, runtime = ?, branch = ?, worktree_path = ?, cwd = ?,
+         provider_id = ?, provider_kind = ?, model = ?, effort = ?,
+         runtime_mode = ?, interaction_mode = ?, provider_session_id = ?, updated_at = ?
+     WHERE id = ?`,
+  ).run(
+    input.title,
+    input.runtime,
+    input.branch,
+    input.worktreePath,
+    input.cwd,
+    input.modelSelection.providerId,
+    input.modelSelection.providerKind,
+    input.modelSelection.model,
+    input.modelSelection.effort ?? null,
+    input.runtimeMode,
+    input.interactionMode,
+    input.providerSessionId,
+    input.now,
+    input.id,
   );
   return readThreadById(db, input.id);
 };

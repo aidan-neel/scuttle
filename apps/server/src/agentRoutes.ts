@@ -1,4 +1,5 @@
 import {
+  AskDelegationParentInput,
   AssignAgentIssueInput,
   CreateAgentInput,
   CreateIssueInput,
@@ -13,8 +14,7 @@ import {
 } from "@scuttle/contracts";
 import { AgentDelegationId, AgentId, AgentIssueId, AgentMemoryId } from "@scuttle/shared/ids";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
-import { jsonError, matchRoute, readAndDecode } from "./httpHelpers.ts";
+import { jsonError, matchRoute, readAndDecode, readOptionalAndDecode } from "./httpHelpers.ts";
 import type { AgentErrorReason } from "./services/agent/errors.ts";
 import * as AgentService from "./services/AgentService.ts";
 
@@ -38,28 +38,6 @@ const respond = <A, E extends { readonly message: string }, R>(
     Effect.map((body) => Response.json(body, { status })),
     Effect.catch((error) => Effect.succeed(toErrorResponse(error))),
   );
-
-const readOptionalAndDecode = <A>(
-  request: Request,
-  schema: Schema.Decoder<A>,
-  fallback: A,
-): Effect.Effect<A, Error> =>
-  Effect.gen(function* () {
-    const text = yield* Effect.tryPromise({
-      try: () => request.text(),
-      catch: () => new Error("Failed to read request body."),
-    });
-    if (text.trim().length === 0) return fallback;
-    let raw: unknown;
-    try {
-      raw = JSON.parse(text);
-    } catch {
-      return yield* Effect.fail(new Error("Request body must be valid JSON."));
-    }
-    return yield* Schema.decodeUnknownEffect(schema)(raw).pipe(
-      Effect.mapError(() => new Error("Request body did not match expected schema.")),
-    );
-  });
 
 export const handleAgentApiRequest = (
   request: Request,
@@ -216,6 +194,35 @@ export const handleAgentApiRequest = (
           Effect.flatMap((input) => agents.delegateTask(id, input)),
         ),
         201,
+      );
+    }
+
+    const delegationAsk = matchRoute(
+      pathname,
+      /^\/api\/agents\/([^/]+)\/delegations\/([^/]+)\/ask$/,
+    );
+    if (method === "POST" && delegationAsk !== null) {
+      const id = AgentId.make(delegationAsk[0]!);
+      const delegationId = AgentDelegationId.make(delegationAsk[1]!);
+      return yield* respond(
+        readAndDecode(request, AskDelegationParentInput).pipe(
+          Effect.flatMap((input) =>
+            agents.askParent(id, delegationId, input, { signal: request.signal }),
+          ),
+        ),
+      );
+    }
+
+    const delegationQuestions = matchRoute(
+      pathname,
+      /^\/api\/agents\/([^/]+)\/delegations\/([^/]+)\/questions$/,
+    );
+    if (method === "GET" && delegationQuestions !== null) {
+      return yield* respond(
+        agents.listDelegationQuestions(
+          AgentId.make(delegationQuestions[0]!),
+          AgentDelegationId.make(delegationQuestions[1]!),
+        ),
       );
     }
 

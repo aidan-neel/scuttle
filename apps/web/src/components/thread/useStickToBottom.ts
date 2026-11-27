@@ -1,5 +1,5 @@
 import type { ThreadTurn } from "@scuttle/contracts";
-import { type RefObject, useEffect, useState } from "react";
+import { type RefObject, useEffect, useLayoutEffect, useState } from "react";
 
 const STICK_THRESHOLD_PX = 220;
 const AT_BOTTOM_PX = 32;
@@ -14,11 +14,19 @@ const distanceFromBottom = (el: HTMLElement) => el.scrollHeight - el.scrollTop -
 export function useStickToBottom(
   scrollRef: RefObject<HTMLDivElement | null>,
   turns: ReadonlyArray<ThreadTurn>,
+  resetKey?: string,
 ): StickToBottom {
   const [isAtBottom, setIsAtBottom] = useState(true);
   const lastTurn = turns[turns.length - 1];
   const signature = `${turns.length}:${lastTurn?.assistantMessage.length ?? 0}:${lastTurn?.activities.length ?? 0}:${lastTurn?.approvals.length ?? 0}`;
   const hasTurns = turns.length > 0;
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    setIsAtBottom(true);
+  }, [resetKey]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -36,7 +44,7 @@ export function useStickToBottom(
     update();
     el.addEventListener("scroll", update, { passive: true });
     return () => el.removeEventListener("scroll", update);
-  }, [hasTurns]);
+  }, [hasTurns, resetKey]);
 
   const scrollToBottom = () => {
     const el = scrollRef.current;

@@ -2,16 +2,13 @@ import { Dialog } from "@base-ui/react/dialog";
 import { Alert02Icon, Cancel01Icon } from "@hugeicons/core-free-icons";
 import { describeApiError } from "@scuttle/client-runtime";
 import type { Agent, ModelSelection, ThreadRuntime } from "@scuttle/contracts";
-import { AnimatePresence, motion } from "motion/react";
 import { type ReactNode, useRef, useState } from "react";
 import { RUNTIMES } from "@/components/home/ComposerContextBar.tsx";
 import { ModelPicker } from "@/components/home/ModelPicker.tsx";
 import { Button } from "@/components/ui/Button.tsx";
-import { DotSpinner } from "@/components/ui/DotSpinner.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
 import { Picker } from "@/components/ui/Picker.tsx";
-import { easeOut, spring } from "@/lib/motion.ts";
 import { useWorkspace } from "@/lib/workspace.tsx";
 
 interface AgentProfileDialogProps {
@@ -50,6 +47,7 @@ function ProfileForm({ agent, onClose }: { readonly agent: Agent; readonly onClo
   const [runtime, setRuntime] = useState<ThreadRuntime>(agent.runtime);
   const [modelSelection, setModelSelection] = useState<ModelSelection>(agent.modelSelection);
   const [saving, setSaving] = useState(false);
+  const [closingAfterSave, setClosingAfterSave] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const trimmedName = name.trim();
@@ -61,7 +59,7 @@ function ProfileForm({ agent, onClose }: { readonly agent: Agent; readonly onClo
     modelSelection.effort !== agent.modelSelection.effort;
 
   const save = async () => {
-    if (saving || trimmedName.length === 0) return;
+    if (saving || closingAfterSave || trimmedName.length === 0) return;
     if (!dirty) {
       onClose();
       return;
@@ -75,10 +73,10 @@ function ProfileForm({ agent, onClose }: { readonly agent: Agent; readonly onClo
         modelSelection,
         modelStack: { ...agent.modelStack, agent: modelSelection },
       });
+      setClosingAfterSave(true);
       onClose();
     } catch (cause) {
       setError(describeApiError(cause, "Could not update the agent."));
-    } finally {
       setSaving(false);
     }
   };
@@ -111,7 +109,7 @@ function ProfileForm({ agent, onClose }: { readonly agent: Agent; readonly onClo
           placeholder="Agent"
           aria-label="Agent name"
           spellCheck={false}
-          className="w-full bg-transparent text-center text-[22px] leading-tight font-medium tracking-tight text-fg caret-fg outline-none placeholder:text-fg-faint"
+          className="w-full bg-transparent text-center text-[23px] leading-tight font-medium tracking-tight text-fg caret-fg outline-none placeholder:text-fg-faint"
         />
       </div>
 
@@ -154,9 +152,13 @@ function ProfileForm({ agent, onClose }: { readonly agent: Agent; readonly onClo
             </p>
           )}
         </div>
-        <Button type="submit" variant="primary" disabled={trimmedName.length === 0 || saving}>
-          {saving && <DotSpinner variant="working" label="Saving" />}
-          {dirty ? "Save" : "Done"}
+        <Button
+          type="submit"
+          variant="primary"
+          disabled={trimmedName.length === 0 || saving}
+          className="min-w-[72px]"
+        >
+          {dirty || saving || closingAfterSave ? "Save" : "Done"}
         </Button>
       </footer>
     </form>
@@ -164,36 +166,26 @@ function ProfileForm({ agent, onClose }: { readonly agent: Agent; readonly onClo
 }
 
 export function AgentProfileDialog({ agent, open, onOpenChange }: AgentProfileDialogProps) {
+  const isOpen = open && agent !== null;
+  const [renderedAgent, setRenderedAgent] = useState<Agent | null>(agent);
+  if (agent !== null && agent !== renderedAgent) {
+    setRenderedAgent(agent);
+  }
+
   return (
-    <Dialog.Root open={open && agent !== null} onOpenChange={onOpenChange}>
-      <AnimatePresence>
-        {open && agent !== null && (
-          <Dialog.Portal keepMounted>
-            <Dialog.Backdrop
-              render={
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1, transition: { duration: 0.16, ease: easeOut } }}
-                  exit={{ opacity: 0, transition: { duration: 0.12, ease: easeOut } }}
-                />
-              }
-              className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px]"
+    <Dialog.Root open={isOpen} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px] transition-opacity duration-200 ease-out-quint data-ending-style:opacity-0 data-ending-style:duration-160 data-starting-style:opacity-0" />
+        <Dialog.Popup className="fixed inset-x-0 top-[15vh] z-50 mx-auto flex w-[min(460px,calc(100vw-2rem))] flex-col overflow-hidden rounded-canvas bg-menu shadow-menu outline-none transition-[opacity,scale,translate] duration-220 ease-out-quint data-ending-style:translate-y-1.5 data-ending-style:scale-[0.97] data-ending-style:opacity-0 data-ending-style:duration-160 data-starting-style:translate-y-2 data-starting-style:scale-[0.97] data-starting-style:opacity-0">
+          {renderedAgent !== null && (
+            <ProfileForm
+              key={renderedAgent.id}
+              agent={renderedAgent}
+              onClose={() => onOpenChange(false)}
             />
-            <Dialog.Popup
-              render={
-                <motion.div
-                  initial={{ opacity: 0, y: 8, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1, transition: spring.snappy }}
-                  exit={{ opacity: 0, y: 4, scale: 0.985, transition: { duration: 0.12 } }}
-                />
-              }
-              className="fixed inset-x-0 top-[15vh] z-50 mx-auto flex w-[min(460px,calc(100vw-2rem))] flex-col overflow-hidden rounded-canvas bg-menu shadow-menu outline-none"
-            >
-              <ProfileForm key={agent.id} agent={agent} onClose={() => onOpenChange(false)} />
-            </Dialog.Popup>
-          </Dialog.Portal>
-        )}
-      </AnimatePresence>
+          )}
+        </Dialog.Popup>
+      </Dialog.Portal>
     </Dialog.Root>
   );
 }

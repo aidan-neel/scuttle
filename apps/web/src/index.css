@@ -47,18 +47,18 @@
   --color-avatar: #3a2a5c;
   --color-on-avatar: #d4c4f5;
 
-  --text-meta: 11px;
-  --text-meta--line-height: 16px;
-  --text-label: 12.5px;
-  --text-label--line-height: 16px;
-  --text-button: 13px;
-  --text-button--line-height: 16px;
-  --text-body: 13.5px;
-  --text-body--line-height: 20px;
-  --text-prompt: 14px;
-  --text-prompt--line-height: 22px;
-  --text-title: 15px;
-  --text-title--line-height: 20px;
+  --text-meta: 12px;
+  --text-meta--line-height: 17px;
+  --text-label: 13.5px;
+  --text-label--line-height: 18px;
+  --text-button: 14px;
+  --text-button--line-height: 18px;
+  --text-body: 14.5px;
+  --text-body--line-height: 22px;
+  --text-prompt: 15px;
+  --text-prompt--line-height: 23px;
+  --text-title: 16px;
+  --text-title--line-height: 22px;
 
   --radius-chip: 6px;
   --radius-control: 7px;
@@ -67,7 +67,7 @@
   --radius-canvas: 12px;
   --radius-composer: 16px;
 
-  --container-composer: 720px;
+  --container-composer: 840px;
 
   --shadow-raised:
     inset 0 0 0 1px var(--color-edge), inset 0 1px 0 var(--color-edge-highlight),

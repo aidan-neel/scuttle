@@ -44,9 +44,12 @@ interface DelegationRow {
   readonly brief: string;
   readonly model_selection_json: string;
   readonly status: string;
+  readonly bounce_count: number;
+  readonly max_bounces: number;
   readonly issue_id: string | null;
   readonly pr_url: string | null;
   readonly result_summary: string | null;
+  readonly parent_notified_at: string | null;
   readonly created_at: string;
   readonly completed_at: string | null;
 }
@@ -111,9 +114,12 @@ const rowToDelegation = (row: DelegationRow): AgentDelegation => {
     brief: row.brief,
     modelSelection: modelOpt._tag === "Some" ? modelOpt.value : FALLBACK_MODEL,
     status: statusOpt._tag === "Some" ? statusOpt.value : "running",
+    bounceCount: row.bounce_count ?? 0,
+    maxBounces: row.max_bounces ?? 3,
     ...(row.issue_id !== null ? { issueId: AgentIssueId.make(row.issue_id) } : {}),
     ...(row.pr_url !== null ? { prUrl: row.pr_url } : {}),
     ...(row.result_summary !== null ? { resultSummary: row.result_summary } : {}),
+    ...(row.parent_notified_at !== null ? { parentNotifiedAt: row.parent_notified_at } : {}),
     createdAt: row.created_at,
     ...(row.completed_at !== null ? { completedAt: row.completed_at } : {}),
   };
@@ -242,13 +248,13 @@ export const readDelegationById = (
   return row ? rowToDelegation(row) : null;
 };
 
-export const readRunningDelegationByChildThread = (
+export const readActiveDelegationByChildThread = (
   db: Database,
   childThreadId: string,
 ): AgentDelegation | null => {
   const row = db
     .query<DelegationRow, [string]>(
-      "SELECT * FROM agent_delegations WHERE child_thread_id = ? AND status = 'running' ORDER BY created_at DESC LIMIT 1",
+      "SELECT * FROM agent_delegations WHERE child_thread_id = ? AND status IN ('running', 'waiting_parent') ORDER BY created_at DESC LIMIT 1",
     )
     .get(childThreadId);
   return row ? rowToDelegation(row) : null;
@@ -273,8 +279,8 @@ export const insertDelegation = (db: Database, delegation: AgentDelegation): voi
   db.prepare(
     `INSERT INTO agent_delegations
        (id, agent_id, parent_thread_id, child_thread_id, role, kind, title, brief,
-        model_selection_json, status, issue_id, pr_url, result_summary, created_at, completed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        model_selection_json, status, bounce_count, max_bounces, issue_id, pr_url, result_summary, created_at, completed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     delegation.id,
     delegation.agentId,
@@ -286,6 +292,8 @@ export const insertDelegation = (db: Database, delegation: AgentDelegation): voi
     delegation.brief,
     JSON.stringify(delegation.modelSelection),
     delegation.status,
+    delegation.bounceCount,
+    delegation.maxBounces,
     delegation.issueId ?? null,
     delegation.prUrl ?? null,
     delegation.resultSummary ?? null,
@@ -297,16 +305,48 @@ export const insertDelegation = (db: Database, delegation: AgentDelegation): voi
 export const updateDelegationRow = (db: Database, delegation: AgentDelegation): void => {
   db.prepare(
     `UPDATE agent_delegations
-     SET status = ?, pr_url = ?, result_summary = ?, completed_at = ?
+     SET status = ?, bounce_count = ?, max_bounces = ?, pr_url = ?, result_summary = ?, completed_at = ?
      WHERE id = ? AND agent_id = ?`,
   ).run(
     delegation.status,
+    delegation.bounceCount,
+    delegation.maxBounces,
     delegation.prUrl ?? null,
     delegation.resultSummary ?? null,
     delegation.completedAt ?? null,
     delegation.id,
     delegation.agentId,
   );
+};
+
+export const listUnnotifiedSettledDelegations = (
+  db: Database,
+  agentId: string,
+): ReadonlyArray<AgentDelegation> =>
+  db
+    .query<DelegationRow, [string]>(
+      `SELECT * FROM agent_delegations
+       WHERE agent_id = ? AND status NOT IN ('running', 'waiting_parent') AND parent_notified_at IS NULL
+       ORDER BY completed_at ASC, created_at ASC
+       LIMIT 10`,
+    )
+    .all(agentId)
+    .map(rowToDelegation);
+
+export const markDelegationsParentNotified = (
+  db: Database,
+  delegationIds: ReadonlyArray<string>,
+  notifiedAt: string,
+): void => {
+  if (delegationIds.length === 0) return;
+  db.transaction(() => {
+    const stmt = db.prepare(
+      "UPDATE agent_delegations SET parent_notified_at = ? WHERE id = ? AND parent_notified_at IS NULL",
+    );
+    for (const id of delegationIds) {
+      stmt.run(notifiedAt, id);
+    }
+  })();
 };
 
 export const recoverStaleDelegations = (db: Database): void => {
@@ -316,10 +356,29 @@ export const recoverStaleDelegations = (db: Database): void => {
      SET status = 'canceled',
          result_summary = COALESCE(result_summary, 'Interrupted before completion'),
          completed_at = COALESCE(completed_at, ?)
-     WHERE status = 'running'
+     WHERE status IN ('running', 'waiting_parent')
        AND NOT EXISTS (
          SELECT 1 FROM turns t
          WHERE t.thread_id = agent_delegations.child_thread_id AND t.status = 'running'
+       )`,
+  ).run(now);
+  db.prepare(
+    `UPDATE agent_delegation_questions
+     SET status = 'canceled',
+         error = COALESCE(error, 'Interrupted before parent answered'),
+         answered_at = COALESCE(answered_at, ?)
+     WHERE status = 'pending'
+       AND (
+         NOT EXISTS (
+           SELECT 1 FROM agent_delegations d
+           WHERE d.id = agent_delegation_questions.delegation_id
+             AND d.status = 'waiting_parent'
+         )
+         OR NOT EXISTS (
+           SELECT 1 FROM turns t
+           WHERE t.thread_id = agent_delegation_questions.child_thread_id
+             AND t.status = 'running'
+         )
        )`,
   ).run(now);
 };

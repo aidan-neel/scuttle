@@ -2,9 +2,11 @@ import type {
   Agent,
   AgentCheckIn,
   AgentDelegation,
+  AgentDelegationQuestion,
   AgentDetail,
   AgentIssue,
   AgentMemory,
+  AskDelegationParentInput,
   AssignAgentIssueInput,
   AssignAgentIssueResult,
   CreateAgentInput,
@@ -40,17 +42,20 @@ import * as GitService from "./GitService.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as ProviderService from "./ProviderService.ts";
 import * as ThreadService from "./ThreadService.ts";
+import { makeAgentBounceOps } from "./agent/agentBounceOps.ts";
+import { forkCheckInScheduler } from "./agent/agentCheckInScheduler.ts";
+import { buildAgentContextBlock } from "./agent/agentContext.ts";
 import { makeAgentDelegationOps } from "./agent/agentDelegationOps.ts";
 import { makeAgentIssueOps } from "./agent/agentIssueOps.ts";
 import { makeAgentMemoryOps } from "./agent/agentMemoryOps.ts";
 import {
-  buildAgentContextBlock,
   buildSetupStartPrompt,
   defaultInstructionsMd,
   formatAgentName,
   pickDefaultModelSelection,
 } from "./agent/agentPrompts.ts";
 import {
+  buildUpdatedAgent,
   deleteAgentRow,
   insertAgent,
   listAgents,
@@ -70,12 +75,21 @@ export { AgentServiceError } from "./agent/errors.ts";
 export interface AgentServiceOptions {
   readonly runner: CommandRunner;
   readonly fetch: FetchFn;
+  readonly enableCheckInScheduler?: boolean;
+  readonly askParentTimeoutMs?: number;
 }
 
 const DEFAULT_OPTIONS: AgentServiceOptions = {
   runner: runCommand,
   fetch: (input, init) => fetch(input, init),
+  enableCheckInScheduler: true,
 };
+
+const toRejectedError = (err: { readonly message: string }) =>
+  new AgentServiceError({ reason: "rejected", detail: err.message });
+
+const toNotFoundError = (err: { readonly message: string }) =>
+  new AgentServiceError({ reason: "not-found", detail: err.message });
 
 export class AgentService extends Context.Service<
   AgentService,
@@ -155,6 +169,16 @@ export class AgentService extends Context.Service<
       agentId: AgentId,
       delegationId: AgentDelegationId,
     ) => Effect.Effect<AgentDelegation, AgentServiceError>;
+    readonly askParent: (
+      agentId: AgentId,
+      delegationId: AgentDelegationId,
+      input: AskDelegationParentInput,
+      options?: { readonly signal?: AbortSignal },
+    ) => Effect.Effect<AgentDelegationQuestion, AgentServiceError>;
+    readonly listDelegationQuestions: (
+      agentId: AgentId,
+      delegationId: AgentDelegationId,
+    ) => Effect.Effect<ReadonlyArray<AgentDelegationQuestion>, AgentServiceError>;
     readonly runCheckIn: (
       agentId: AgentId,
       input?: TriggerCheckInInput,
@@ -211,11 +235,7 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
             branch: input.project.defaultBranch,
             modelSelection,
           })
-          .pipe(
-            Effect.mapError(
-              (err) => new AgentServiceError({ reason: "rejected", detail: err.message }),
-            ),
-          );
+          .pipe(Effect.mapError(toRejectedError));
 
         const now = new Date().toISOString();
         const agent: Agent = {
@@ -267,11 +287,7 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
       const agent = yield* requireAgent(agentId);
       return yield* threads
         .sendTurn(agent.primaryThreadId, input, options)
-        .pipe(
-          Effect.mapError(
-            (err) => new AgentServiceError({ reason: "rejected", detail: err.message }),
-          ),
-        );
+        .pipe(Effect.mapError(toRejectedError));
     });
 
     const memoryOps = makeAgentMemoryOps({ db, eventBus, requireAgent });
@@ -283,6 +299,16 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
       fetch: options.fetch,
       requireAgent,
     });
+    const bounceOps = makeAgentBounceOps({
+      db,
+      eventBus,
+      requireAgent,
+      sendAgentTurn: sendTurn,
+      interruptThreadTurn: threads.interrupt,
+      ...(options.askParentTimeoutMs !== undefined
+        ? { askParentTimeoutMs: options.askParentTimeoutMs }
+        : {}),
+    });
     const delegationOps = makeAgentDelegationOps({
       db,
       eventBus,
@@ -292,6 +318,7 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
       gitForge,
       requireAgent,
       sendAgentTurn: sendTurn,
+      bounceOps,
     });
 
     yield* Effect.acquireRelease(
@@ -302,8 +329,19 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
           }
         }),
       ),
-      (unsubscribe) => Effect.sync(unsubscribe),
+      (unsubscribe) =>
+        Effect.sync(() => {
+          unsubscribe();
+          bounceOps.dispose();
+        }),
     );
+
+    if (options.enableCheckInScheduler ?? true) {
+      yield* forkCheckInScheduler({
+        listAgents: () => listAgents(db),
+        runCheckIn: delegationOps.runCheckIn,
+      });
+    }
 
     const list = Effect.fn("AgentService.list")(function* () {
       yield* ensureSeeded();
@@ -315,11 +353,7 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
       const agent = yield* requireAgent(agentId);
       const primaryThread = yield* threads
         .getDetail(agent.primaryThreadId)
-        .pipe(
-          Effect.mapError(
-            (err) => new AgentServiceError({ reason: "not-found", detail: err.message }),
-          ),
-        );
+        .pipe(Effect.mapError(toNotFoundError));
       return {
         agent,
         primaryThread,
@@ -338,13 +372,7 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
         });
       }
       const project = input.projectId
-        ? yield* projects
-            .get(input.projectId)
-            .pipe(
-              Effect.mapError(
-                (err) => new AgentServiceError({ reason: "not-found", detail: err.message }),
-              ),
-            )
+        ? yield* projects.get(input.projectId).pipe(Effect.mapError(toNotFoundError))
         : yield* projects
             .create({ path: input.path! })
             .pipe(
@@ -375,47 +403,27 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
       input: UpdateAgentInput,
     ) {
       const existing = yield* requireAgent(agentId);
-      const nextInterval =
-        input.checkInIntervalMinutes === undefined
-          ? existing.checkInIntervalMinutes
-          : input.checkInIntervalMinutes === null
-            ? undefined
-            : input.checkInIntervalMinutes;
-      const nextName = input.name?.trim() || existing.name;
-      const nextModel = input.modelSelection ?? existing.modelSelection;
-      const updated: Agent = {
-        id: existing.id,
-        projectId: existing.projectId,
-        projectName: existing.projectName,
-        projectPath: existing.projectPath,
-        name: nextName,
-        purpose: input.purpose !== undefined ? input.purpose : existing.purpose,
-        primaryThreadId: existing.primaryThreadId,
-        runtime: input.runtime ?? existing.runtime,
-        modelSelection: nextModel,
-        modelStack: input.modelStack ?? existing.modelStack,
-        instructionsMd:
-          input.instructionsMd !== undefined ? input.instructionsMd : existing.instructionsMd,
-        ...(nextInterval !== undefined ? { checkInIntervalMinutes: nextInterval } : {}),
-        ...(existing.lastCheckInAt !== undefined ? { lastCheckInAt: existing.lastCheckInAt } : {}),
-        ...(existing.lastSummary !== undefined ? { lastSummary: existing.lastSummary } : {}),
-        pinned: input.pinned ?? existing.pinned,
-        needsAttention: input.needsAttention ?? existing.needsAttention,
-        createdAt: existing.createdAt,
-        updatedAt: new Date().toISOString(),
-      };
-      updateAgentRow(db, updated);
-      if (input.name !== undefined || input.modelSelection !== undefined) {
+      const updated = buildUpdatedAgent(existing, input);
+      const runtimeChanged = input.runtime !== undefined && input.runtime !== existing.runtime;
+      const nameChanged = input.name !== undefined && updated.name !== existing.name;
+      const modelProvided = input.modelSelection !== undefined;
+      if (runtimeChanged || nameChanged || modelProvided) {
         yield* threads
-          .update(existing.primaryThreadId, { title: nextName, modelSelection: nextModel })
-          .pipe(Effect.ignore);
+          .update(existing.primaryThreadId, {
+            ...(runtimeChanged ? { runtime: updated.runtime } : {}),
+            ...(nameChanged ? { title: updated.name } : {}),
+            ...(modelProvided ? { modelSelection: updated.modelSelection } : {}),
+          })
+          .pipe(Effect.mapError(toRejectedError));
       }
+      updateAgentRow(db, updated);
       eventBus.publishSync({ kind: "agent.upserted", agent: updated });
       return updated;
     });
 
     const remove = Effect.fn("AgentService.remove")(function* (agentId: AgentId) {
       const existing = yield* requireAgent(agentId);
+      bounceOps.cancelPendingForAgent(existing.id, "Agent was deleted.");
       deleteAgentRow(db, existing.id);
       yield* threads.remove(existing.primaryThreadId).pipe(Effect.ignore);
       eventBus.publishSync({ kind: "agent.deleted", agentId: existing.id });
@@ -465,6 +473,8 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
       assignIssue: delegationOps.assignIssue,
       delegateTask: delegationOps.delegateTask,
       cancelDelegation: delegationOps.cancelDelegation,
+      askParent: bounceOps.askParent,
+      listDelegationQuestions: bounceOps.listQuestions,
       runCheckIn: delegationOps.runCheckIn,
     });
   });

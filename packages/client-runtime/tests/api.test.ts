@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import {
   AgentCheckInId,
   AgentDelegationId,
+  AgentDelegationQuestionId,
   AgentId,
   AgentIssueId,
   AgentMemoryId,
@@ -10,7 +11,7 @@ import {
   ThreadId,
   TurnId,
 } from "@scuttle/shared/ids";
-import { createScuttleApiClient } from "./api.ts";
+import { createScuttleApiClient } from "../src/api.ts";
 
 const originalFetch = globalThis.fetch;
 
@@ -79,6 +80,8 @@ describe("client-runtime Agent API", () => {
       brief: "Build it",
       modelSelection: MODEL,
       status: "running" as const,
+      bounceCount: 0,
+      maxBounces: 3,
       issueId: issue.id,
       createdAt: "2026-11-25T00:00:00Z",
     };
@@ -105,6 +108,22 @@ describe("client-runtime Agent API", () => {
       approvals: [],
     };
 
+    const question = {
+      id: AgentDelegationQuestionId.make("q-1"),
+      delegationId: delegation.id,
+      agentId: AGENT.id,
+      childThreadId: delegation.childThreadId,
+      parentThreadId: AGENT.primaryThreadId,
+      parentTurnId: TurnId.make("turn-1"),
+      kind: "missing_context" as const,
+      question: "Which config file?",
+      status: "answered" as const,
+      answer: "Use config/dev.ts",
+      bounceNumber: 1,
+      createdAt: "2026-11-25T00:00:00Z",
+      answeredAt: "2026-11-25T00:00:05Z",
+    };
+
     const mockFetch = async (input: string | URL | Request, init?: RequestInit) => {
       const url =
         typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -115,6 +134,12 @@ describe("client-runtime Agent API", () => {
       if (url.endsWith("/api/agents/agent-1/issues/sync")) return Response.json([issue]);
       if (url.endsWith("/api/agents/agent-1/issues/issue-1/assign")) {
         return Response.json({ mode: "pr", issue, delegation });
+      }
+      if (url.endsWith("/api/agents/agent-1/delegations/del-1/ask") && method === "POST") {
+        return Response.json(question);
+      }
+      if (url.endsWith("/api/agents/agent-1/delegations/del-1/questions") && method === "GET") {
+        return Response.json([question]);
       }
       if (url.endsWith("/api/agents/agent-1/checkins")) return Response.json(checkIn);
       if (url.endsWith("/api/agents/agent-1/setup/start")) return Response.json(turn);
@@ -131,6 +156,13 @@ describe("client-runtime Agent API", () => {
       issue,
       delegation,
     });
+    expect(
+      await client.askDelegationParent(AGENT.id, delegation.id, {
+        kind: "missing_context",
+        question: "Which config file?",
+      }),
+    ).toEqual(question);
+    expect(await client.listDelegationQuestions(AGENT.id, delegation.id)).toEqual([question]);
     expect(await client.triggerAgentCheckIn(AGENT.id)).toEqual(checkIn);
     expect(await client.startAgentSetup(AGENT.id)).toEqual(turn);
     expect(calls).toEqual([
@@ -138,8 +170,64 @@ describe("client-runtime Agent API", () => {
       "GET /api/agents/agent-1/memories?q=500",
       "POST /api/agents/agent-1/issues/sync",
       "POST /api/agents/agent-1/issues/issue-1/assign",
+      "POST /api/agents/agent-1/delegations/del-1/ask",
+      "GET /api/agents/agent-1/delegations/del-1/questions",
       "POST /api/agents/agent-1/checkins",
       "POST /api/agents/agent-1/setup/start",
+    ]);
+  });
+
+  it("calls POST /api/threads/:id/compact and decodes CompactThreadResult with TurnUsage", async () => {
+    const usage = {
+      inputTokens: 1200,
+      outputTokens: 300,
+      cacheReadTokens: 800,
+      contextWindowTokens: 200_000,
+    };
+    const thread = {
+      id: AGENT.primaryThreadId,
+      projectId: AGENT.projectId,
+      projectName: AGENT.projectName,
+      title: "Scuttle",
+      runtime: "local" as const,
+      branch: "main",
+      cwd: "/repo",
+      modelSelection: MODEL,
+      runtimeMode: "auto" as const,
+      interactionMode: "default" as const,
+      status: { kind: "idle" as const },
+      sessionEpoch: 1,
+      activeSummary: "Compacted summary",
+      lastUsage: usage,
+      createdAt: "2026-11-25T00:00:00Z",
+      updatedAt: "2026-11-25T00:00:00Z",
+    };
+
+    const calls: { url: string; method: string; body: string | undefined }[] = [];
+    Object.assign(globalThis, {
+      fetch: async (input: string | URL | Request, init?: RequestInit) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        calls.push({
+          url: new URL(url).pathname,
+          method: init?.method ?? "GET",
+          body: typeof init?.body === "string" ? init.body : undefined,
+        });
+        return Response.json({ thread, summary: "Compacted summary", sessionEpoch: 1 });
+      },
+    });
+
+    const client = createScuttleApiClient("http://127.0.0.1:4310");
+    const result = await client.compactThread(thread.id, { focus: "Auth flow" });
+    expect(result.sessionEpoch).toBe(1);
+    expect(result.summary).toBe("Compacted summary");
+    expect(result.thread.lastUsage).toEqual(usage);
+    expect(calls).toEqual([
+      {
+        url: "/api/threads/thread-1/compact",
+        method: "POST",
+        body: JSON.stringify({ focus: "Auth flow" }),
+      },
     ]);
   });
 });

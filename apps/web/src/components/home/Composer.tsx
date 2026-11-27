@@ -43,7 +43,7 @@ interface ComposerProps {
   readonly contextUsage?: ComposerContextUsage;
 }
 
-const MIN_TEXTAREA_PX = 40;
+const MIN_TEXTAREA_PX = 60;
 const MAX_TEXTAREA_PX = 220;
 
 export function Composer({
@@ -235,7 +235,7 @@ export function Composer({
           aria-expanded={palette.content !== null}
           aria-controls={palette.content ? palette.listboxId : undefined}
           aria-activedescendant={activeOptionId}
-          className="block w-full resize-none overflow-x-hidden overflow-y-auto bg-transparent px-4 pt-2.5 pb-0.5 text-prompt text-fg caret-fg outline-none break-words placeholder:text-fg-muted"
+          className="block w-full resize-none overflow-x-hidden overflow-y-auto bg-transparent px-4 pt-4 pb-1.5 text-prompt text-fg caret-fg outline-none break-words placeholder:text-fg-muted"
         />
         <input
           ref={fileInputRef}
@@ -244,7 +244,7 @@ export function Composer({
           className="hidden"
           onChange={(event) => void onFilesPicked(event)}
         />
-        <div className="flex items-center gap-1 px-2.5 pt-0.5 pb-2">
+        <div className="flex items-center gap-1 px-2.5 pt-1 pb-3">
           <ComposerPlusMenu
             textareaRef={textareaRef}
             filesAvailable={filesRoot !== undefined}

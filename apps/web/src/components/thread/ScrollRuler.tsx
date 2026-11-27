@@ -125,7 +125,7 @@ export function ScrollRuler({ turns, scrollRef }: ScrollRulerProps) {
                         : "text-fg-muted hover:bg-(--wash) hover:text-fg",
                     )}
                   >
-                    <span className="shrink-0 font-mono text-[10px] text-fg-faint tabular-nums">
+                    <span className="shrink-0 font-mono text-[11px] text-fg-faint tabular-nums">
                       {idx + 1}
                     </span>
                     <span className="min-w-0 flex-1 truncate">{turnLabel(turn)}</span>

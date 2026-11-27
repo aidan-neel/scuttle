@@ -77,7 +77,7 @@ function ThinkingRow({
         disabled={!canExpand}
         aria-expanded={canExpand ? open : undefined}
         onClick={() => setOpen((prev) => !prev)}
-        className="group/step inline-flex max-w-full items-baseline py-0.5 text-left text-[13px] leading-[1.5] tabular-nums enabled:cursor-pointer"
+        className="group/step inline-flex max-w-full items-baseline py-0.5 text-left text-[14px] leading-[1.5] tabular-nums enabled:cursor-pointer"
       >
         <span
           className={cn(
@@ -93,7 +93,7 @@ function ThinkingRow({
       <AnimatePresence initial={false}>
         {open && canExpand && (
           <Reveal>
-            <p className="mt-1 mb-1.5 border-l border-line/80 pl-3 text-[13px] leading-[1.6] whitespace-pre-wrap break-words text-fg-muted">
+            <p className="mt-1 mb-1.5 border-l border-line/80 pl-3 text-[14px] leading-[1.6] whitespace-pre-wrap break-words text-fg-muted">
               {thinkingText}
             </p>
           </Reveal>
@@ -134,7 +134,7 @@ function TraceStep({
         disabled={!canExpand}
         aria-expanded={canExpand ? open : undefined}
         onClick={() => setOpen((prev) => !prev)}
-        className="group/step inline-flex max-w-full items-baseline py-0.5 text-left text-[13px] leading-[1.5] tabular-nums enabled:cursor-pointer"
+        className="group/step inline-flex max-w-full items-baseline py-0.5 text-left text-[14px] leading-[1.5] tabular-nums enabled:cursor-pointer"
       >
         <span
           className={cn(
@@ -152,7 +152,7 @@ function TraceStep({
       <AnimatePresence initial={false}>
         {open && canExpand && (
           <Reveal>
-            <pre className="mt-1 mb-1.5 max-h-48 overflow-auto rounded-control bg-chrome/80 px-3 py-2 font-mono text-[11.5px] leading-[1.5] whitespace-pre-wrap break-words text-fg-muted">
+            <pre className="mt-1 mb-1.5 max-h-48 overflow-auto rounded-control bg-chrome/80 px-3 py-2 font-mono text-[12.5px] leading-[1.5] whitespace-pre-wrap break-words text-fg-muted">
               {detail}
             </pre>
           </Reveal>
@@ -189,7 +189,7 @@ export function WorkProgress({ turn }: { readonly turn: ThreadTurn }) {
           aria-controls={hasTrace ? panelId : undefined}
           onClick={() => setUserExpanded(!open)}
           className={cn(
-            "inline-flex items-center py-0.5 text-[13px] leading-[1.5] tabular-nums transition-colors",
+            "inline-flex items-center py-0.5 text-[14px] leading-[1.5] tabular-nums transition-colors",
             turn.status === "failed" ? "text-danger/80" : "text-fg-muted",
             "enabled:cursor-pointer enabled:hover:text-fg-secondary",
           )}

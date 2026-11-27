@@ -1,11 +1,13 @@
 import { StopIcon } from "@hugeicons/core-free-icons";
-import type { ModelSelection } from "@scuttle/contracts";
+import { describeApiError } from "@scuttle/client-runtime";
+import type { ModelSelection, ThreadDetail } from "@scuttle/contracts";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { ThreadGitPopover } from "@/components/git/ThreadGitPopover.tsx";
 import { Composer, type ComposerSubmitPayload } from "@/components/home/Composer.tsx";
-import { COMPACT_PROMPT } from "@/components/home/ComposerSlashMenu.tsx";
 import { estimateContextUsage } from "@/components/home/contextUsage.ts";
+import { useThreadLocationControls } from "@/components/home/useThreadLocationControls.ts";
 import { ScrollRuler } from "@/components/thread/ScrollRuler.tsx";
 import { ScrollToEndButton } from "@/components/thread/ScrollToEndButton.tsx";
 import { ThreadTurnView } from "@/components/thread/ThreadTurnView.tsx";
@@ -14,6 +16,7 @@ import { Button } from "@/components/ui/Button.tsx";
 import { DotSpinner } from "@/components/ui/DotSpinner.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
+import { easeOut } from "@/lib/motion.ts";
 import { useWorkspace } from "@/lib/workspace.tsx";
 
 export const Route = createFileRoute("/threads/$threadId")({
@@ -23,20 +26,10 @@ export const Route = createFileRoute("/threads/$threadId")({
 function ThreadPage() {
   const { threadId } = Route.useParams();
   const navigate = useNavigate();
-  const {
-    providers,
-    threadDetails,
-    loadThreadDetail,
-    sendTurn,
-    interruptTurn,
-    updateThread,
-    respondApproval,
-  } = useWorkspace();
+  const { threadDetails, loadThreadDetail } = useWorkspace();
 
   const detail = threadDetails[threadId];
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -49,9 +42,6 @@ function ThreadPage() {
       active = false;
     };
   }, [threadId]);
-
-  const turns = detail?.turns ?? [];
-  const { isAtBottom, scrollToBottom } = useStickToBottom(scrollRef, turns);
 
   if (loadError) {
     return (
@@ -73,11 +63,41 @@ function ThreadPage() {
     );
   }
 
-  const { thread } = detail;
-  const isRunning = thread.status.kind === "running" || thread.status.kind === "needs-input";
+  return <ThreadView detail={detail} />;
+}
 
-  const handleModelChange = (modelSelection: ModelSelection) => {
-    void updateThread(thread.id, { modelSelection });
+function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
+  const { providers, sendTurn, interruptTurn, updateThread, compactThread, respondApproval } =
+    useWorkspace();
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [compacting, setCompacting] = useState(false);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  const { thread, turns } = detail;
+  const { isAtBottom, scrollToBottom } = useStickToBottom(scrollRef, turns, thread.id);
+  const isRunning = thread.status.kind === "running" || thread.status.kind === "needs-input";
+  const contextUsage = estimateContextUsage({
+    turns,
+    model: thread.modelSelection.model,
+    ...(thread.lastUsage ? { lastUsage: thread.lastUsage } : {}),
+    ...(thread.sessionEpoch !== undefined ? { sessionEpoch: thread.sessionEpoch } : {}),
+    ...(thread.activeSummary ? { activeSummary: thread.activeSummary } : {}),
+  });
+
+  const status = useThreadLocationControls({
+    thread,
+    disabled: isRunning,
+    onRuntimeUpdate: (runtime) => updateThread(thread.id, { runtime }),
+    onError: setSubmitError,
+  });
+
+  const handleModelSelectionChange = async (modelSelection: ModelSelection) => {
+    setSubmitError(null);
+    try {
+      await updateThread(thread.id, { modelSelection });
+    } catch (error) {
+      setSubmitError(describeApiError(error, "Could not update model."));
+    }
   };
 
   const handleSubmit = async (payload: ComposerSubmitPayload) => {
@@ -89,7 +109,20 @@ function ThreadPage() {
         ...(payload.attachments.length > 0 ? { attachments: [...payload.attachments] } : {}),
       });
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : "Failed to send message.");
+      setSubmitError(describeApiError(error, "Failed to send message."));
+    }
+  };
+
+  const handleCompact = async () => {
+    if (compacting || isRunning) return;
+    setSubmitError(null);
+    setCompacting(true);
+    try {
+      await compactThread(thread.id);
+    } catch (error) {
+      setSubmitError(describeApiError(error, "Failed to compact thread."));
+    } finally {
+      setCompacting(false);
     }
   };
 
@@ -105,7 +138,7 @@ function ThreadPage() {
         <ThreadGitPopover
           target={{ projectId: thread.projectId, threadId: thread.id }}
           fallbackBranch={thread.branch}
-          refreshKey={`${thread.status.kind}:${turns.length}`}
+          refreshKey={`${thread.status.kind}:${turns.length}:${thread.branch}:${thread.runtime}`}
         />
         {isRunning && (
           <Button variant="destructive" size="sm" onClick={() => void interruptTurn(thread.id)}>
@@ -115,9 +148,15 @@ function ThreadPage() {
         )}
       </header>
 
-      <div className="relative flex min-h-0 flex-1 flex-col">
+      <motion.div
+        key={thread.id}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.11, ease: easeOut }}
+        className="relative flex min-h-0 flex-1 flex-col"
+      >
         <ScrollRuler turns={turns} scrollRef={scrollRef} />
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-8">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 pt-8 pb-10">
           <div className="mx-auto flex w-full max-w-composer flex-col gap-9">
             {turns.map((turn) => (
               <ThreadTurnView
@@ -130,10 +169,14 @@ function ThreadPage() {
             ))}
           </div>
         </div>
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-12 bg-gradient-to-t from-canvas via-canvas/80 to-transparent"
+        />
         <ScrollToEndButton visible={!isAtBottom} onClick={scrollToBottom} />
-      </div>
+      </motion.div>
 
-      <div className="shrink-0 px-4 pt-2 pb-2">
+      <div className="shrink-0 px-4 pt-0 pb-2">
         <div className="mx-auto w-full max-w-composer space-y-2">
           {submitError && (
             <div className="rounded-control border border-danger/30 bg-danger/10 px-3 py-1.5 text-label text-danger">
@@ -147,7 +190,9 @@ function ThreadPage() {
               : {})}
             providers={providers}
             modelSelection={thread.modelSelection}
-            onModelSelectionChange={handleModelChange}
+            onModelSelectionChange={(modelSelection) =>
+              void handleModelSelectionChange(modelSelection)
+            }
             running={isRunning}
             onSubmit={handleSubmit}
             onStop={() => void interruptTurn(thread.id)}
@@ -155,16 +200,10 @@ function ThreadPage() {
             onInteractionModeChange={(interactionMode) =>
               void updateThread(thread.id, { interactionMode })
             }
-            onCompact={() =>
-              void handleSubmit({
-                prompt: COMPACT_PROMPT,
-                modelSelection: thread.modelSelection,
-                attachments: [],
-              })
-            }
+            {...(compacting ? {} : { onCompact: () => void handleCompact() })}
             filesRoot={thread.cwd}
-            status={{ runtime: thread.runtime, branch: thread.branch, state: thread.status.kind }}
-            contextUsage={estimateContextUsage({ turns, model: thread.modelSelection.model })}
+            status={status}
+            contextUsage={contextUsage}
           />
         </div>
       </div>

@@ -124,13 +124,13 @@ export function AgentCostPopover({ agent, primaryThread, delegations }: AgentCos
           <Popover.Popup aria-label="Agent cost breakdown" className={POPUP_CLASS}>
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-[18px] leading-tight font-semibold text-fg tabular-nums">
+                <p className="text-[19px] leading-tight font-semibold text-fg tabular-nums">
                   {formatUsd(0)}
                 </p>
                 <p className="mt-0.5 text-meta text-fg-muted">Charged by Scuttle</p>
               </div>
               <div className="text-right">
-                <p className="text-[18px] leading-tight font-semibold text-fg-muted tabular-nums">
+                <p className="text-[19px] leading-tight font-semibold text-fg-muted tabular-nums">
                   {formatUsd(totalKeysUsd)}
                 </p>
                 <p className="mt-0.5 text-meta text-fg-muted">On your keys</p>

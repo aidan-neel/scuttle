@@ -1,5 +1,8 @@
 import type {
+  CompactThreadInput,
+  CompactThreadResult,
   CreateThreadInput,
+  ProviderConfig,
   RespondApprovalInput,
   SendTurnInput,
   Thread,
@@ -10,30 +13,29 @@ import type {
   TurnOrigin,
   UpdateThreadInput,
 } from "@scuttle/contracts";
-import { type ApprovalId, ThreadId, TurnId } from "@scuttle/shared/ids";
+import { type ApprovalId, ThreadId, type TurnId } from "@scuttle/shared/ids";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as ServerConfig from "../config.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
-import { maybeWrapAgentPrompt } from "./agent/agentPrompts.ts";
-import { readAgentIdForThread } from "./agent/agentWorkStore.ts";
 import * as EventBus from "./EventBus.ts";
 import * as GitService from "./GitService.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as ProviderService from "./ProviderService.ts";
+import { maybeRolloverThreadSession, rolloverThreadSession } from "./threadCompaction.ts";
+import { createThreadWithLocation, resolveThreadLocation } from "./threadRuntime.ts";
 import {
   deriveThreadInputTitle,
-  formatPromptWithAttachments,
-  insertThreadRow,
   listAllThreads,
   readThreadById,
   readTurnsForThread,
   recoverInterruptedThreads,
-  TITLE_LIMIT,
+  updateThreadRow,
 } from "./threadStore.ts";
-import { type ActiveRun, launchTurnExecution, type PendingApprovalResolver } from "./turnRunner.ts";
+import { dispatchThreadTurn, resolvePendingApproval } from "./threadTurnDispatch.ts";
+import type { ActiveRun, PendingApprovalResolver } from "./turnRunner.ts";
 
 export class ThreadServiceError extends Schema.TaggedError<ThreadServiceError>()(
   "ThreadServiceError",
@@ -60,17 +62,25 @@ export class ThreadService extends Context.Service<
       readonly modelSelection: CreateThreadInput["modelSelection"];
       readonly runtimeMode?: CreateThreadInput["runtimeMode"];
       readonly interactionMode?: CreateThreadInput["interactionMode"];
+      readonly setupWorktree?: boolean;
     }) => Effect.Effect<Thread, ThreadServiceError>;
     readonly sendTurn: (
       threadId: ThreadId,
       input: SendTurnInput,
       options?: { readonly origin?: TurnOrigin },
     ) => Effect.Effect<ThreadTurn, ThreadServiceError>;
-    readonly interrupt: (threadId: ThreadId) => Effect.Effect<void, ThreadServiceError>;
+    readonly interrupt: (
+      threadId: ThreadId,
+      expectedTurnId?: TurnId,
+    ) => Effect.Effect<void, ThreadServiceError>;
     readonly settle: (
       threadId: ThreadId,
       settled: boolean,
     ) => Effect.Effect<Thread, ThreadServiceError>;
+    readonly compact: (
+      threadId: ThreadId,
+      input?: CompactThreadInput,
+    ) => Effect.Effect<CompactThreadResult, ThreadServiceError>;
     readonly update: (
       threadId: ThreadId,
       input: UpdateThreadInput,
@@ -138,15 +148,40 @@ const make = Effect.gen(function* () {
     isDisposed: () => disposed,
   };
 
-  const list = () => Effect.sync(() => listAllThreads(db));
-
-  const getDetail = Effect.fn("ThreadService.getDetail")(function* (threadId: ThreadId) {
+  const requireThread = Effect.fn("ThreadService.requireThread")(function* (threadId: ThreadId) {
     const thread = readThreadById(db, threadId);
     if (!thread) {
       return yield* new ThreadServiceError({ detail: `Thread "${threadId}" was not found.` });
     }
+    return thread;
+  });
+
+  const list = () => Effect.sync(() => listAllThreads(db));
+
+  const getDetail = Effect.fn("ThreadService.getDetail")(function* (threadId: ThreadId) {
+    const thread = yield* requireThread(threadId);
     const turns = readTurnsForThread(db, thread);
     return { thread, turns };
+  });
+
+  const ensureTurnStartable = Effect.fn("ThreadService.ensureTurnStartable")(function* (
+    threadId: ThreadId,
+    providerId: Thread["modelSelection"]["providerId"],
+  ) {
+    if (activeRuns.has(threadId)) {
+      return yield* new ThreadServiceError({
+        detail: "This thread already has a turn running. Stop it before sending another message.",
+      });
+    }
+    const providerConfig = yield* providers
+      .getConfig(providerId)
+      .pipe(Effect.mapError((err) => new ThreadServiceError({ detail: err.message })));
+    if (!providerConfig.enabled) {
+      return yield* new ThreadServiceError({
+        detail: `Provider "${providerConfig.name}" is disabled. Enable it in Settings.`,
+      });
+    }
+    return providerConfig;
   });
 
   const startTurnInternal = Effect.fn("ThreadService.startTurnInternal")(function* (
@@ -154,67 +189,56 @@ const make = Effect.gen(function* () {
     prompt: string,
     attachments: ReadonlyArray<ThreadAttachment> | undefined,
     origin: TurnOrigin = "user",
+    resolvedConfig?: ProviderConfig,
   ) {
-    if (activeRuns.has(thread.id)) {
-      return yield* new ThreadServiceError({
-        detail: "This thread already has a turn running. Stop it before sending another message.",
-      });
-    }
+    const providerConfig =
+      resolvedConfig ?? (yield* ensureTurnStartable(thread.id, thread.modelSelection.providerId));
 
-    const providerConfig = yield* providers
-      .getConfig(thread.modelSelection.providerId)
-      .pipe(Effect.mapError((err) => new ThreadServiceError({ detail: err.message })));
-    if (!providerConfig.enabled) {
-      return yield* new ThreadServiceError({
-        detail: `Provider "${providerConfig.name}" is disabled. Enable it in Settings.`,
-      });
-    }
-
-    const seqRow = db
-      .query<{ next_seq: number }, [string]>(
-        "SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM turns WHERE thread_id = ?",
-      )
-      .get(thread.id);
-    const seq = seqRow?.next_seq ?? 1;
-    const turnId = TurnId.make(crypto.randomUUID());
-    const startedAt = new Date().toISOString();
-
-    const turn: ThreadTurn = {
-      id: turnId,
-      threadId: thread.id,
-      ...(origin === "system" ? { origin } : {}),
-      userMessage: prompt,
-      assistantMessage: "",
-      thinkingText: "",
-      status: "running",
-      startedAt,
-      modelSelection: thread.modelSelection,
-      activities: [],
-      approvals: [],
-    };
-
-    db.prepare(
-      `INSERT INTO turns
-         (id, thread_id, seq, origin, user_message, assistant_message, thinking_text, status, started_at, model_selection_json)
-       VALUES (?, ?, ?, ?, ?, '', '', 'running', ?, ?)`,
-    ).run(turnId, thread.id, seq, origin, prompt, startedAt, JSON.stringify(thread.modelSelection));
-
-    updateThreadStatus(thread.id, { kind: "running", startedAt, phase: "thinking" });
-    eventBus.publishSync({ kind: "turn.upserted", turn });
-
-    const refreshed = readThreadById(db, thread.id) ?? thread;
-    const apiBaseUrl = config.apiBaseUrlRef.url;
-    const wrapped = maybeWrapAgentPrompt(db, refreshed.id, prompt, apiBaseUrl);
-    const fullPrompt = formatPromptWithAttachments(wrapped.prompt, attachments);
-    const agentId = wrapped.agentId ?? readAgentIdForThread(db, refreshed.id);
-    const extraEnv: Record<string, string> = {
-      SCUTTLE_API_URL: apiBaseUrl,
-      ...(agentId ? { SCUTTLE_AGENT_ID: agentId } : {}),
-    };
-    launchTurnExecution(runnerDeps, refreshed, turn, fullPrompt, providerConfig, extraEnv);
-
-    return turn;
+    return dispatchThreadTurn({
+      db,
+      eventBus,
+      runnerDeps,
+      updateThreadStatus,
+      thread,
+      prompt,
+      attachments,
+      origin,
+      providerConfig,
+      apiBaseUrl: config.apiBaseUrlRef.url,
+    });
   });
+
+  const insertThreadWithLocation = Effect.fn("ThreadService.insertThreadWithLocation")(
+    function* (input: {
+      readonly projectId: CreateThreadInput["projectId"];
+      readonly title: string;
+      readonly runtime: CreateThreadInput["runtime"];
+      readonly branch: string;
+      readonly modelSelection: CreateThreadInput["modelSelection"];
+      readonly runtimeMode?: CreateThreadInput["runtimeMode"];
+      readonly interactionMode?: CreateThreadInput["interactionMode"];
+      readonly setupWorktree?: boolean;
+      readonly initialStatus: ThreadStatus;
+    }) {
+      const project = yield* projects
+        .get(input.projectId)
+        .pipe(Effect.mapError((err) => new ThreadServiceError({ detail: err.message })));
+      return yield* createThreadWithLocation({
+        db,
+        eventBus,
+        git,
+        project,
+        title: input.title,
+        runtime: input.runtime,
+        branch: input.branch,
+        modelSelection: input.modelSelection,
+        ...(input.runtimeMode ? { runtimeMode: input.runtimeMode } : {}),
+        ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
+        ...(input.setupWorktree ? { setupWorktree: true } : {}),
+        initialStatus: input.initialStatus,
+      }).pipe(Effect.mapError((detail) => new ThreadServiceError({ detail })));
+    },
+  );
 
   const createIdle = Effect.fn("ThreadService.createIdle")(function* (input: {
     readonly projectId: CreateThreadInput["projectId"];
@@ -224,82 +248,29 @@ const make = Effect.gen(function* () {
     readonly modelSelection: CreateThreadInput["modelSelection"];
     readonly runtimeMode?: CreateThreadInput["runtimeMode"];
     readonly interactionMode?: CreateThreadInput["interactionMode"];
+    readonly setupWorktree?: boolean;
   }) {
-    const project = yield* projects
-      .get(input.projectId)
-      .pipe(Effect.mapError((err) => new ThreadServiceError({ detail: err.message })));
-
-    const threadId = ThreadId.make(crypto.randomUUID());
-    const now = new Date().toISOString();
-    const thread = insertThreadRow(db, {
-      id: threadId,
-      projectId: project.id,
-      projectName: project.name,
-      title: input.title.trim().slice(0, TITLE_LIMIT) || project.name,
-      runtime: input.runtime,
-      branch: input.branch,
-      cwd: project.path,
-      modelSelection: input.modelSelection,
-      runtimeMode: input.runtimeMode ?? "auto",
-      interactionMode: input.interactionMode ?? "default",
-      status: { kind: "idle" },
-      now,
+    return yield* insertThreadWithLocation({
+      ...input,
+      initialStatus: { kind: "idle" },
     });
-    if (!thread) {
-      return yield* new ThreadServiceError({ detail: "Failed to persist thread." });
-    }
-    eventBus.publishSync({ kind: "thread.upserted", thread });
-    return thread;
   });
 
   const create = Effect.fn("ThreadService.create")(function* (input: CreateThreadInput) {
-    const project = yield* projects
-      .get(input.projectId)
-      .pipe(Effect.mapError((err) => new ThreadServiceError({ detail: err.message })));
-
-    const threadId = ThreadId.make(crypto.randomUUID());
     const title = deriveThreadInputTitle(input.prompt, input.title);
-    let cwd = project.path;
-    let branch = input.branch;
-    let worktreePath: string | undefined;
-
-    if (input.runtime === "worktree") {
-      const created = yield* git
-        .createWorktree({
-          repoPath: project.path,
-          baseBranch: input.branch,
-          titleHint: title,
-          threadId,
-        })
-        .pipe(Effect.mapError((err) => new ThreadServiceError({ detail: err.message })));
-      cwd = created.worktreePath;
-      worktreePath = created.worktreePath;
-      branch = created.branch;
-    }
-
-    const now = new Date().toISOString();
-    const thread = insertThreadRow(db, {
-      id: threadId,
-      projectId: project.id,
-      projectName: project.name,
+    const thread = yield* insertThreadWithLocation({
+      projectId: input.projectId,
       title,
       runtime: input.runtime,
-      branch,
-      ...(worktreePath ? { worktreePath } : {}),
-      cwd,
+      branch: input.branch,
       modelSelection: input.modelSelection,
-      runtimeMode: input.runtimeMode ?? "auto",
-      interactionMode: input.interactionMode ?? "default",
-      status: { kind: "running", startedAt: now, phase: "thinking" },
-      now,
+      runtimeMode: input.runtimeMode,
+      interactionMode: input.interactionMode,
+      setupWorktree: true,
+      initialStatus: { kind: "running", startedAt: new Date().toISOString(), phase: "thinking" },
     });
-    if (!thread) {
-      return yield* new ThreadServiceError({ detail: "Failed to persist thread." });
-    }
-    eventBus.publishSync({ kind: "thread.upserted", thread });
-
     const turn = yield* startTurnInternal(thread, input.prompt, input.attachments);
-    const updatedThread = readThreadById(db, threadId) ?? thread;
+    const updatedThread = readThreadById(db, thread.id) ?? thread;
     return { thread: updatedThread, turns: [turn] };
   });
 
@@ -308,15 +279,21 @@ const make = Effect.gen(function* () {
     input: SendTurnInput,
     options?: { readonly origin?: TurnOrigin },
   ) {
-    let thread = readThreadById(db, threadId);
-    if (!thread) {
-      return yield* new ThreadServiceError({ detail: `Thread "${threadId}" was not found.` });
-    }
+    const existing = yield* requireThread(threadId);
 
-    const nextSelection = input.modelSelection ?? thread.modelSelection;
-    const providerChanged = nextSelection.providerId !== thread.modelSelection.providerId;
-    const nextRuntimeMode = input.runtimeMode ?? thread.runtimeMode;
-    const nextInteractionMode = input.interactionMode ?? thread.interactionMode;
+    const nextSelection = input.modelSelection ?? existing.modelSelection;
+    const providerConfig = yield* ensureTurnStartable(threadId, nextSelection.providerId);
+
+    const selectionChanged =
+      nextSelection.providerId !== existing.modelSelection.providerId ||
+      nextSelection.model !== existing.modelSelection.model;
+    const { thread: rolledThread, rolledOver } = maybeRolloverThreadSession({
+      db,
+      thread: existing,
+      shouldRollover: selectionChanged,
+    });
+    const nextRuntimeMode = input.runtimeMode ?? rolledThread.runtimeMode;
+    const nextInteractionMode = input.interactionMode ?? rolledThread.interactionMode;
 
     db.prepare(
       `UPDATE threads
@@ -330,25 +307,37 @@ const make = Effect.gen(function* () {
       nextSelection.effort ?? null,
       nextRuntimeMode,
       nextInteractionMode,
-      providerChanged ? null : (thread.providerSessionId ?? null),
+      rolledOver || selectionChanged ? null : (rolledThread.providerSessionId ?? null),
       new Date().toISOString(),
       threadId,
     );
 
-    thread = readThreadById(db, threadId) ?? thread;
+    const thread = readThreadById(db, threadId) ?? rolledThread;
     eventBus.publishSync({ kind: "thread.upserted", thread });
 
-    return yield* startTurnInternal(thread, input.prompt, input.attachments, options?.origin);
+    return yield* startTurnInternal(
+      thread,
+      input.prompt,
+      input.attachments,
+      options?.origin,
+      providerConfig,
+    );
   });
 
-  const interrupt = (threadId: ThreadId) =>
+  const interrupt = (threadId: ThreadId, expectedTurnId?: TurnId) =>
     Effect.sync(() => {
       const active = activeRuns.get(threadId);
+      if (expectedTurnId !== undefined && active?.turnId !== expectedTurnId) {
+        return;
+      }
       if (active) {
         active.controller.abort();
       }
       for (const [approvalId, pending] of pendingApprovals.entries()) {
-        if (pending.threadId === threadId) {
+        if (
+          pending.threadId === threadId &&
+          (expectedTurnId === undefined || pending.turnId === expectedTurnId)
+        ) {
           pending.resolve({ optionId: "decline" });
           pendingApprovals.delete(approvalId);
         }
@@ -359,52 +348,84 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
     settled: boolean,
   ) {
-    const existing = readThreadById(db, threadId);
-    if (!existing) {
-      return yield* new ThreadServiceError({ detail: `Thread "${threadId}" was not found.` });
-    }
+    yield* requireThread(threadId);
     const now = new Date().toISOString();
     db.prepare("UPDATE threads SET settled_at = ?, updated_at = ? WHERE id = ?").run(
       settled ? now : null,
       now,
       threadId,
     );
-    const updated = readThreadById(db, threadId);
-    if (!updated) {
-      return yield* new ThreadServiceError({ detail: `Thread "${threadId}" was not found.` });
-    }
+    const updated = yield* requireThread(threadId);
     eventBus.publishSync({ kind: "thread.upserted", thread: updated });
     return updated;
+  });
+
+  const compact = Effect.fn("ThreadService.compact")(function* (
+    threadId: ThreadId,
+    input?: CompactThreadInput,
+  ) {
+    if (activeRuns.has(threadId)) {
+      return yield* new ThreadServiceError({
+        detail: "Stop the running turn before compacting this thread.",
+      });
+    }
+    const existing = yield* requireThread(threadId);
+    const result = rolloverThreadSession({
+      db,
+      thread: existing,
+      ...(input?.focus !== undefined ? { focus: input.focus } : {}),
+      forceSummary: true,
+    });
+    eventBus.publishSync({ kind: "thread.upserted", thread: result.thread });
+    return result;
   });
 
   const update = Effect.fn("ThreadService.update")(function* (
     threadId: ThreadId,
     input: UpdateThreadInput,
   ) {
-    const existing = readThreadById(db, threadId);
-    if (!existing) {
-      return yield* new ThreadServiceError({ detail: `Thread "${threadId}" was not found.` });
-    }
+    const existing = yield* requireThread(threadId);
+    const nextRuntime = input.runtime ?? existing.runtime;
     const nextSelection = input.modelSelection ?? existing.modelSelection;
-    const providerChanged = nextSelection.providerId !== existing.modelSelection.providerId;
-    db.prepare(
-      `UPDATE threads
-       SET title = ?, provider_id = ?, provider_kind = ?, model = ?, effort = ?,
-           runtime_mode = ?, interaction_mode = ?, provider_session_id = ?, updated_at = ?
-       WHERE id = ?`,
-    ).run(
-      input.title?.trim() || existing.title,
-      nextSelection.providerId,
-      nextSelection.providerKind,
-      nextSelection.model,
-      nextSelection.effort ?? null,
-      input.runtimeMode ?? existing.runtimeMode,
-      input.interactionMode ?? existing.interactionMode,
-      providerChanged ? null : (existing.providerSessionId ?? null),
-      new Date().toISOString(),
-      threadId,
-    );
-    const updated = readThreadById(db, threadId);
+    const selectionChanged =
+      nextSelection.providerId !== existing.modelSelection.providerId ||
+      nextSelection.model !== existing.modelSelection.model;
+    if ((nextRuntime !== existing.runtime || selectionChanged) && activeRuns.has(threadId)) {
+      return yield* new ThreadServiceError({
+        detail: "Stop the running turn before changing runtime or model.",
+      });
+    }
+    const project = yield* projects
+      .get(existing.projectId)
+      .pipe(Effect.mapError((err) => new ThreadServiceError({ detail: err.message })));
+    const location = yield* resolveThreadLocation({
+      existing,
+      project,
+      nextRuntime,
+      requestedBranch: input.branch,
+      git,
+    }).pipe(Effect.mapError((detail) => new ThreadServiceError({ detail })));
+    const shouldRollover =
+      location.resetSession || selectionChanged || nextRuntime !== existing.runtime;
+    const { thread: rolledThread, rolledOver } = maybeRolloverThreadSession({
+      db,
+      thread: existing,
+      shouldRollover,
+    });
+    const resetSession = rolledOver || shouldRollover;
+    const updated = updateThreadRow(db, {
+      id: threadId,
+      title: input.title?.trim() || rolledThread.title,
+      runtime: location.runtime,
+      branch: location.branch,
+      worktreePath: location.worktreePath,
+      cwd: location.cwd,
+      modelSelection: nextSelection,
+      runtimeMode: input.runtimeMode ?? rolledThread.runtimeMode,
+      interactionMode: input.interactionMode ?? rolledThread.interactionMode,
+      providerSessionId: resetSession ? null : (rolledThread.providerSessionId ?? null),
+      now: new Date().toISOString(),
+    });
     if (!updated) {
       return yield* new ThreadServiceError({ detail: `Thread "${threadId}" was not found.` });
     }
@@ -413,10 +434,7 @@ const make = Effect.gen(function* () {
   });
 
   const remove = Effect.fn("ThreadService.remove")(function* (threadId: ThreadId) {
-    const existing = readThreadById(db, threadId);
-    if (!existing) {
-      return yield* new ThreadServiceError({ detail: `Thread "${threadId}" was not found.` });
-    }
+    const existing = yield* requireThread(threadId);
     yield* interrupt(threadId);
     if (existing.worktreePath) {
       const project = yield* projects.get(existing.projectId).pipe(Effect.option);
@@ -433,37 +451,20 @@ const make = Effect.gen(function* () {
     approvalId: ApprovalId,
     input: RespondApprovalInput,
   ) {
-    const resolver = pendingApprovals.get(approvalId);
-    if (!resolver || resolver.threadId !== threadId) {
+    const resolved = resolvePendingApproval({
+      db,
+      eventBus,
+      pendingApprovals,
+      updateThreadStatus,
+      threadId,
+      approvalId,
+      response: input,
+    });
+    if (!resolved) {
       return yield* new ThreadServiceError({
         detail: "Approval request is no longer active.",
       });
     }
-    pendingApprovals.delete(approvalId);
-    db.prepare("UPDATE approvals SET status = 'resolved', selected_option_id = ? WHERE id = ?").run(
-      input.optionId,
-      approvalId,
-    );
-    const thread = readThreadById(db, threadId);
-    if (thread) {
-      const turns = readTurnsForThread(db, thread);
-      const turn = turns.find((t) => t.id === resolver.turnId);
-      const approval = turn?.approvals.find((a) => a.id === approvalId);
-      if (approval) {
-        eventBus.publishSync({ kind: "approval.updated", approval });
-      }
-      if (turn) {
-        updateThreadStatus(threadId, {
-          kind: "running",
-          startedAt: turn.startedAt,
-          phase: "working",
-        });
-      }
-    }
-    resolver.resolve({
-      optionId: input.optionId,
-      ...(input.customText ? { customText: input.customText } : {}),
-    });
   });
 
   return ThreadService.of({
@@ -474,6 +475,7 @@ const make = Effect.gen(function* () {
     sendTurn,
     interrupt,
     settle,
+    compact,
     update,
     remove,
     respondApproval,

@@ -1,7 +1,5 @@
 import type { RespondApprovalInput, ThreadTurn } from "@scuttle/contracts";
-import { motion } from "motion/react";
 import { formatClockTime } from "@/lib/format.ts";
-import { easeOut } from "@/lib/motion.ts";
 import { ApprovalCard } from "./ApprovalCard.tsx";
 import { MarkdownView, useSmoothedStream } from "./MarkdownView.tsx";
 import { WorkProgress } from "./WorkProgress.tsx";
@@ -19,20 +17,14 @@ export function ThreadTurnView({ turn, onRespondApproval }: ThreadTurnViewProps)
   const clockTime = isSystem ? formatClockTime(turn.startedAt) : "";
 
   return (
-    <motion.article
-      data-turn-id={turn.id}
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.22, ease: easeOut }}
-      className="scroll-mt-6 space-y-3"
-    >
+    <article data-turn-id={turn.id} className="scroll-mt-6 space-y-3">
       {isSystem ? (
         clockTime.length > 0 && (
           <p className="text-center text-meta text-fg-faint tabular-nums">{clockTime}</p>
         )
       ) : (
         <div className="flex justify-end">
-          <div className="max-w-[78%] rounded-[14px] bg-raised px-4 py-2.5 text-[14px] leading-[1.55] text-fg shadow-raised whitespace-pre-wrap break-words">
+          <div className="max-w-[78%] rounded-[14px] bg-raised px-4 py-2.5 text-[15px] leading-[1.55] text-fg shadow-raised whitespace-pre-wrap break-words">
             {turn.userMessage}
           </div>
         </div>
@@ -59,6 +51,6 @@ export function ThreadTurnView({ turn, onRespondApproval }: ThreadTurnViewProps)
           {turn.error}
         </div>
       )}
-    </motion.article>
+    </article>
   );
 }
