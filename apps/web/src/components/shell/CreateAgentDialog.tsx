@@ -114,7 +114,7 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
                   exit={{ opacity: 0, transition: { duration: 0.12, ease: easeOut } }}
                 />
               }
-              className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px]"
+              className="scrim-backdrop fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px]"
             />
             <Dialog.Popup
               initialFocus={nameRef}

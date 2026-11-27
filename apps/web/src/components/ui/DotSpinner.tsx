@@ -1,3 +1,4 @@
+import { isSoftwareRenderer } from "@/lib/renderMode";
 import { cn } from "@/lib/utils";
 
 export type DotSpinnerVariant = "working" | "thinking" | "loading";
@@ -19,6 +20,7 @@ interface DotSpinnerProps {
 export function DotSpinner({ variant, label, className }: DotSpinnerProps) {
   const step = STEP[variant];
   const cycle = variant === "working" ? step * 8 : step * 6;
+  const software = isSoftwareRenderer();
 
   return (
     <span
@@ -33,12 +35,16 @@ export function DotSpinner({ variant, label, className }: DotSpinnerProps) {
             "size-[3px] rounded-[0.75px] bg-current",
             slot < 0
               ? "opacity-25"
-              : "animate-dot motion-reduce:animate-none motion-reduce:opacity-60",
+              : software
+                ? undefined
+                : "animate-dot motion-reduce:animate-none motion-reduce:opacity-60",
           )}
           style={
             slot < 0
               ? undefined
-              : { animationDelay: `${slot * step - cycle}ms`, animationDuration: `${cycle}ms` }
+              : software
+                ? { opacity: Math.max(0.25, 0.9 - slot * 0.1) }
+                : { animationDelay: `${slot * step - cycle}ms`, animationDuration: `${cycle}ms` }
           }
         />
       ))}

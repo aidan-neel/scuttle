@@ -8,6 +8,7 @@ import {
 import type { DitherPreset, DitherPresetId } from "@/components/dithercn/dither-presets";
 import { cssColor, DitherShader, usePrefersReducedMotion } from "@/lib/dither";
 import type { DitherShaderProps } from "@/lib/dither";
+import { isSoftwareRenderer } from "@/lib/renderMode";
 
 export type DitherHorizonProps = Omit<DitherShaderProps, "field" | "uniforms" | "fallback"> & {
   readonly intensity?: number;
@@ -23,12 +24,13 @@ export function DitherHorizon({
   matrix,
   cell,
   speed,
-  fps = 60,
+  fps = 30,
   animate = true,
   stillTime,
   ...props
 }: DitherHorizonProps) {
   const reducedMotion = usePrefersReducedMotion();
+  const software = isSoftwareRenderer();
   const [randomPreset] = useState<DitherPreset | null>(() =>
     preset ? null : pickRandomDitherPreset(),
   );
@@ -44,7 +46,8 @@ export function DitherHorizon({
   const resolvedMatrix = matrix ?? activePreset.matrix;
   const resolvedCell = cell ?? activePreset.cell;
   const resolvedSpeed = speed ?? activePreset.speed;
-  const isStatic = reducedMotion || !animate;
+  const effectiveAnimate = animate && !software;
+  const isStatic = reducedMotion || !effectiveAnimate;
   const resolvedStillTime = stillTime ?? (isStatic ? activePreset.stillTime : 0);
 
   return (
@@ -57,7 +60,7 @@ export function DitherHorizon({
       cell={resolvedCell}
       speed={resolvedSpeed}
       fps={fps}
-      animate={animate}
+      animate={effectiveAnimate}
       stillTime={resolvedStillTime}
       uniforms={{
         horizonIntensity: intensity,

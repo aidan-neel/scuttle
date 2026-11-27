@@ -175,7 +175,7 @@ export function AgentProfileDialog({ agent, open, onOpenChange }: AgentProfileDi
   return (
     <Dialog.Root open={isOpen} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px] transition-opacity duration-200 ease-out-quint data-ending-style:opacity-0 data-ending-style:duration-160 data-starting-style:opacity-0" />
+        <Dialog.Backdrop className="scrim-backdrop fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px] transition-opacity duration-200 ease-out-quint data-ending-style:opacity-0 data-ending-style:duration-160 data-starting-style:opacity-0" />
         <Dialog.Popup className="fixed inset-x-0 top-[15vh] z-50 mx-auto flex w-[min(460px,calc(100vw-2rem))] flex-col overflow-hidden rounded-canvas bg-menu shadow-menu outline-none transition-[opacity,scale,translate] duration-220 ease-out-quint data-ending-style:translate-y-1.5 data-ending-style:scale-[0.97] data-ending-style:opacity-0 data-ending-style:duration-160 data-starting-style:translate-y-2 data-starting-style:scale-[0.97] data-starting-style:opacity-0">
           {renderedAgent !== null && (
             <ProfileForm

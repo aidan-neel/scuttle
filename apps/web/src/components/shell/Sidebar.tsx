@@ -114,22 +114,32 @@ export function Sidebar({
             <SettingsSidebarNav active={settingsSection} />
           </div>
         ) : (
-          <nav
-            aria-label="Workspace"
-            className="scrollbar-none mt-5 flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto mask-[linear-gradient(to_bottom,transparent,black_8px,black_calc(100%-24px),transparent)]"
-          >
-            <AgentList
-              filterProjectId={filterProjectId}
-              onFilterChange={setProjectFilter}
-              onCreateAgent={() => setCreateAgentOpen(true)}
+          <div className="relative mt-5 flex min-h-0 flex-1 flex-col">
+            <nav
+              aria-label="Workspace"
+              className="scrollbar-none flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto pt-2 pb-6"
+            >
+              <AgentList
+                filterProjectId={filterProjectId}
+                onFilterChange={setProjectFilter}
+                onCreateAgent={() => setCreateAgentOpen(true)}
+              />
+              <ThreadList
+                filterProjectId={filterProjectId}
+                onFilterChange={setProjectFilter}
+                onNewThread={onNewThread}
+                onSettled={setNotice}
+              />
+            </nav>
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-x-0 top-0 h-2 bg-gradient-to-b from-chrome to-transparent"
             />
-            <ThreadList
-              filterProjectId={filterProjectId}
-              onFilterChange={setProjectFilter}
-              onNewThread={onNewThread}
-              onSettled={setNotice}
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-chrome to-transparent"
             />
-          </nav>
+          </div>
         )}
 
         <div className="relative mt-2">

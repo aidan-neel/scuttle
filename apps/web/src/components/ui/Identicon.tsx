@@ -1,6 +1,44 @@
 import { dicebearIdenticonUrl, IDENTICON_GRID, identicon } from "@scuttle/shared/identicon";
-import { useState } from "react";
+import { useSyncExternalStore } from "react";
 import { cn } from "@/lib/utils";
+
+const MAX_CONSECUTIVE_FAILURES = 3;
+const failedUrls = new Set<string>();
+const listeners = new Set<() => void>();
+let consecutiveFailures = 0;
+let dicebearDisabled = false;
+let failureVersion = 0;
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+function getFailureVersion(): number {
+  return failureVersion;
+}
+
+function getServerFailureVersion(): number {
+  return 0;
+}
+
+function recordLoadSuccess(): void {
+  consecutiveFailures = 0;
+}
+
+function recordLoadFailure(url: string): void {
+  failedUrls.add(url);
+  consecutiveFailures += 1;
+  if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+    dicebearDisabled = true;
+  }
+  failureVersion += 1;
+  for (const listener of listeners) {
+    listener();
+  }
+}
 
 const SIZES = {
   sm: { box: 16, radius: 4, classes: "size-4 rounded-[4px]" },
@@ -51,9 +89,9 @@ function FallbackIdenticon({ name, size, className }: IdenticonProps) {
 export function Identicon({ name, size, className }: IdenticonProps) {
   const { box, classes } = SIZES[size];
   const url = dicebearIdenticonUrl(name);
-  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  useSyncExternalStore(subscribe, getFailureVersion, getServerFailureVersion);
 
-  if (failedUrl === url) {
+  if (dicebearDisabled || failedUrls.has(url)) {
     return (
       <FallbackIdenticon
         name={name}
@@ -70,8 +108,10 @@ export function Identicon({ name, size, className }: IdenticonProps) {
       aria-hidden
       width={box}
       height={box}
+      loading="lazy"
       decoding="async"
-      onError={() => setFailedUrl(url)}
+      onLoad={recordLoadSuccess}
+      onError={() => recordLoadFailure(url)}
       className={cn("shrink-0 bg-white/[0.06] object-cover select-none", classes, className)}
     />
   );
