@@ -1,33 +1,30 @@
 import type { Database } from "bun:sqlite";
 import {
-  type ActivityItem,
-  ActivityKind,
-  ActivityStatus,
-  ApprovalOption,
-  EffortLevel,
-  InteractionMode,
-  ModelSelection,
-  type PendingApproval,
-  ProviderKind,
-  RuntimeMode,
+  type EffortLevel,
+  type InteractionMode,
+  type ProviderKind,
+  type RuntimeMode,
   type Thread,
   type ThreadAttachment,
-  ThreadRuntime,
+  type ThreadRuntime,
   ThreadStatus,
-  type ThreadTurn,
-  TurnOrigin,
-  TurnStatus,
-  TurnUsage,
 } from "@scuttle/contracts";
-import {
-  ActivityId,
-  ApprovalId,
-  ProjectId,
-  ProviderId,
-  ThreadId,
-  TurnId,
-} from "@scuttle/shared/ids";
+import { ProjectId, ProviderId, ThreadId } from "@scuttle/shared/ids";
 import * as Schema from "effect/Schema";
+import { decodeTurnUsage, lookupEnum, safeJsonParse } from "./turnQueries.ts";
+
+export {
+  type ActivityRow,
+  type ApprovalRow,
+  hasCompletedTurnInEpoch,
+  insertTurnRow,
+  readTurnsForThread,
+  rowToActivity,
+  rowToApproval,
+  rowToTurn,
+  type TurnRow,
+  updateTurnOutcomeRow,
+} from "./turnQueries.ts";
 
 export interface ThreadRow {
   readonly id: string;
@@ -57,82 +54,46 @@ export interface ThreadRow {
   readonly updated_at: string;
 }
 
-export interface TurnRow {
-  readonly id: string;
-  readonly thread_id: string;
-  readonly seq: number;
-  readonly origin: string;
-  readonly session_epoch?: number | null;
-  readonly user_message: string;
-  readonly assistant_message: string;
-  readonly thinking_text: string;
-  readonly status: string;
-  readonly started_at: string;
-  readonly completed_at: string | null;
-  readonly duration_ms: number | null;
-  readonly cost_usd: number;
-  readonly usage_json?: string | null;
-  readonly error: string | null;
-  readonly model_selection_json: string;
-}
-
-export interface ActivityRow {
-  readonly id: string;
-  readonly turn_id: string;
-  readonly thread_id: string;
-  readonly seq: number;
-  readonly kind: string;
-  readonly label: string;
-  readonly active_label: string;
-  readonly detail: string | null;
-  readonly status: string;
-  readonly started_at: string;
-  readonly completed_at: string | null;
-  readonly duration_ms: number | null;
-}
-
-export interface ApprovalRow {
-  readonly id: string;
-  readonly thread_id: string;
-  readonly turn_id: string;
-  readonly kind: string;
-  readonly title: string;
-  readonly description: string | null;
-  readonly command: string | null;
-  readonly options_json: string;
-  readonly status: string;
-  readonly selected_option_id: string | null;
-  readonly created_at: string;
-}
-
-const decodeRuntime = Schema.decodeUnknownOption(ThreadRuntime);
-const decodeProviderKind = Schema.decodeUnknownOption(ProviderKind);
-const decodeEffort = Schema.decodeUnknownOption(EffortLevel);
-const decodeRuntimeMode = Schema.decodeUnknownOption(RuntimeMode);
-const decodeInteractionMode = Schema.decodeUnknownOption(InteractionMode);
-const decodeThreadStatus = Schema.decodeUnknownOption(ThreadStatus);
-const decodeTurnOrigin = Schema.decodeUnknownOption(TurnOrigin);
-const decodeTurnStatus = Schema.decodeUnknownOption(TurnStatus);
-const decodeModelSelection = Schema.decodeUnknownOption(ModelSelection);
-const decodeActivityKind = Schema.decodeUnknownOption(ActivityKind);
-const decodeActivityStatus = Schema.decodeUnknownOption(ActivityStatus);
-const decodeApprovalOptions = Schema.decodeUnknownOption(Schema.Array(ApprovalOption));
-const decodeTurnUsage = Schema.decodeUnknownOption(TurnUsage);
-
-const safeJsonParse = (raw: string): unknown => {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
+const RUNTIMES: Readonly<Record<string, ThreadRuntime>> = {
+  local: "local",
+  worktree: "worktree",
 };
 
+const PROVIDER_KINDS: Readonly<Record<string, ProviderKind>> = {
+  claude: "claude",
+  codex: "codex",
+  antigravity: "antigravity",
+  opencode: "opencode",
+  copilot: "copilot",
+};
+
+const EFFORT_LEVELS: Readonly<Record<string, EffortLevel>> = {
+  low: "low",
+  medium: "medium",
+  high: "high",
+  xhigh: "xhigh",
+  max: "max",
+};
+
+const RUNTIME_MODES: Readonly<Record<string, RuntimeMode>> = {
+  auto: "auto",
+  "approval-required": "approval-required",
+  "full-access": "full-access",
+};
+
+const INTERACTION_MODES: Readonly<Record<string, InteractionMode>> = {
+  default: "default",
+  plan: "plan",
+};
+
+const decodeThreadStatus = Schema.decodeUnknownOption(ThreadStatus);
+
 export const rowToThread = (row: ThreadRow): Thread => {
-  const runtimeOpt = decodeRuntime(row.runtime);
-  const kindOpt = decodeProviderKind(row.provider_kind);
-  const effortOpt = row.effort ? decodeEffort(row.effort) : null;
-  const rmOpt = decodeRuntimeMode(row.runtime_mode);
-  const imOpt = decodeInteractionMode(row.interaction_mode);
+  const runtime = lookupEnum(RUNTIMES, row.runtime) ?? "local";
+  const providerKind = lookupEnum(PROVIDER_KINDS, row.provider_kind) ?? "claude";
+  const effort = lookupEnum(EFFORT_LEVELS, row.effort);
+  const runtimeMode = lookupEnum(RUNTIME_MODES, row.runtime_mode) ?? "auto";
+  const interactionMode = lookupEnum(INTERACTION_MODES, row.interaction_mode) ?? "default";
   const statusOpt = decodeThreadStatus(safeJsonParse(row.status_json));
   const lastUsageOpt = row.last_usage_json
     ? decodeTurnUsage(safeJsonParse(row.last_usage_json))
@@ -143,18 +104,18 @@ export const rowToThread = (row: ThreadRow): Thread => {
     projectId: ProjectId.make(row.project_id),
     projectName: row.project_name,
     title: row.title,
-    runtime: runtimeOpt._tag === "Some" ? runtimeOpt.value : "local",
+    runtime,
     branch: row.branch,
     ...(row.worktree_path ? { worktreePath: row.worktree_path } : {}),
     cwd: row.cwd,
     modelSelection: {
       providerId: ProviderId.make(row.provider_id),
-      providerKind: kindOpt._tag === "Some" ? kindOpt.value : "claude",
+      providerKind,
       model: row.model,
-      ...(effortOpt && effortOpt._tag === "Some" ? { effort: effortOpt.value } : {}),
+      ...(effort !== undefined ? { effort } : {}),
     },
-    runtimeMode: rmOpt._tag === "Some" ? rmOpt.value : "auto",
-    interactionMode: imOpt._tag === "Some" ? imOpt.value : "default",
+    runtimeMode,
+    interactionMode,
     status: statusOpt._tag === "Some" ? statusOpt.value : { kind: "idle" },
     ...(typeof row.cost_usd === "number" && row.cost_usd > 0 ? { costUsd: row.cost_usd } : {}),
     ...(row.settled_at ? { settledAt: row.settled_at } : {}),
@@ -170,121 +131,28 @@ export const rowToThread = (row: ThreadRow): Thread => {
   };
 };
 
-export const rowToActivity = (row: ActivityRow): ActivityItem => {
-  const kindOpt = decodeActivityKind(row.kind);
-  const statusOpt = decodeActivityStatus(row.status);
-  return {
-    id: ActivityId.make(row.id),
-    turnId: TurnId.make(row.turn_id),
-    threadId: ThreadId.make(row.thread_id),
-    kind: kindOpt._tag === "Some" ? kindOpt.value : "tool",
-    label: row.label,
-    activeLabel: row.active_label,
-    ...(row.detail ? { detail: row.detail } : {}),
-    status: statusOpt._tag === "Some" ? statusOpt.value : "completed",
-    startedAt: row.started_at,
-    ...(row.completed_at ? { completedAt: row.completed_at } : {}),
-    ...(row.duration_ms !== null ? { durationMs: row.duration_ms } : {}),
-  };
-};
-
-export const rowToApproval = (row: ApprovalRow): PendingApproval => {
-  const optionsOpt = decodeApprovalOptions(safeJsonParse(row.options_json));
-  return {
-    id: ApprovalId.make(row.id),
-    threadId: ThreadId.make(row.thread_id),
-    turnId: TurnId.make(row.turn_id),
-    kind: row.kind === "question" ? "question" : "permission",
-    title: row.title,
-    ...(row.description ? { description: row.description } : {}),
-    ...(row.command ? { command: row.command } : {}),
-    options: optionsOpt._tag === "Some" ? [...optionsOpt.value] : [],
-    status: row.status === "resolved" ? "resolved" : "pending",
-    ...(row.selected_option_id ? { selectedOptionId: row.selected_option_id } : {}),
-    createdAt: row.created_at,
-  };
-};
-
-const THREAD_SELECT = `
+const THREAD_BY_ID_SELECT = `
   SELECT t.*, COALESCE((SELECT SUM(cost_usd) FROM turns WHERE thread_id = t.id), 0) AS cost_usd
   FROM threads t
+  WHERE t.id = ?
+`;
+
+const THREAD_LIST_SELECT = `
+  SELECT t.*, COALESCE(tc.cost_usd, 0) AS cost_usd
+  FROM threads t
+  LEFT JOIN (SELECT thread_id, SUM(cost_usd) AS cost_usd FROM turns GROUP BY thread_id) tc
+    ON tc.thread_id = t.id
+  ORDER BY t.updated_at DESC
 `;
 
 export const readThreadById = (db: Database, threadId: string): Thread | null => {
-  const row = db.query<ThreadRow, [string]>(`${THREAD_SELECT} WHERE t.id = ?`).get(threadId);
+  const row = db.query<ThreadRow, [string]>(THREAD_BY_ID_SELECT).get(threadId);
   return row ? rowToThread(row) : null;
 };
 
 export const listAllThreads = (db: Database): ReadonlyArray<Thread> => {
-  const rows = db.query<ThreadRow, []>(`${THREAD_SELECT} ORDER BY t.updated_at DESC`).all();
+  const rows = db.query<ThreadRow, []>(THREAD_LIST_SELECT).all();
   return rows.map(rowToThread);
-};
-
-export const readTurnsForThread = (db: Database, thread: Thread): ReadonlyArray<ThreadTurn> => {
-  const turnRows = db
-    .query<TurnRow, [string]>("SELECT * FROM turns WHERE thread_id = ? ORDER BY seq ASC")
-    .all(thread.id);
-  const activityRows = db
-    .query<ActivityRow, [string]>("SELECT * FROM activities WHERE thread_id = ? ORDER BY seq ASC")
-    .all(thread.id);
-  const approvalRows = db
-    .query<ApprovalRow, [string]>(
-      "SELECT * FROM approvals WHERE thread_id = ? ORDER BY created_at ASC",
-    )
-    .all(thread.id);
-
-  const activitiesByTurn = new Map<string, ActivityItem[]>();
-  for (const row of activityRows) {
-    const list = activitiesByTurn.get(row.turn_id) ?? [];
-    list.push(rowToActivity(row));
-    activitiesByTurn.set(row.turn_id, list);
-  }
-
-  const approvalsByTurn = new Map<string, PendingApproval[]>();
-  for (const row of approvalRows) {
-    const list = approvalsByTurn.get(row.turn_id) ?? [];
-    list.push(rowToApproval(row));
-    approvalsByTurn.set(row.turn_id, list);
-  }
-
-  return turnRows.map((row): ThreadTurn => {
-    const originOpt = decodeTurnOrigin(row.origin);
-    const statusOpt = decodeTurnStatus(row.status);
-    const msOpt = decodeModelSelection(safeJsonParse(row.model_selection_json));
-    const usageOpt = row.usage_json ? decodeTurnUsage(safeJsonParse(row.usage_json)) : null;
-    return {
-      id: TurnId.make(row.id),
-      threadId: ThreadId.make(row.thread_id),
-      ...(originOpt._tag === "Some" && originOpt.value === "system" ? { origin: "system" } : {}),
-      ...(typeof row.session_epoch === "number" ? { sessionEpoch: row.session_epoch } : {}),
-      userMessage: row.user_message,
-      assistantMessage: row.assistant_message,
-      thinkingText: row.thinking_text,
-      status: statusOpt._tag === "Some" ? statusOpt.value : "completed",
-      startedAt: row.started_at,
-      ...(row.completed_at ? { completedAt: row.completed_at } : {}),
-      ...(row.duration_ms !== null ? { durationMs: row.duration_ms } : {}),
-      ...(row.cost_usd > 0 ? { costUsd: row.cost_usd } : {}),
-      ...(usageOpt && usageOpt._tag === "Some" ? { usage: usageOpt.value } : {}),
-      ...(row.error ? { error: row.error } : {}),
-      modelSelection: msOpt._tag === "Some" ? msOpt.value : thread.modelSelection,
-      activities: activitiesByTurn.get(row.id) ?? [],
-      approvals: approvalsByTurn.get(row.id) ?? [],
-    };
-  });
-};
-
-export const hasCompletedTurnInEpoch = (
-  db: Database,
-  threadId: string,
-  sessionEpoch: number,
-): boolean => {
-  const row = db
-    .query<{ readonly present: number }, [string, number]>(
-      "SELECT 1 AS present FROM turns WHERE thread_id = ? AND session_epoch = ? AND status = 'completed' LIMIT 1",
-    )
-    .get(threadId, sessionEpoch);
-  return row !== null;
 };
 
 export const readThreadContextHash = (db: Database, threadId: string): string | null => {
@@ -303,84 +171,34 @@ export const updateThreadContextHash = (
   expectedSessionEpoch?: number,
 ): void => {
   if (expectedSessionEpoch !== undefined) {
-    db.prepare("UPDATE threads SET last_context_hash = ? WHERE id = ? AND session_epoch = ?").run(
+    db.query("UPDATE threads SET last_context_hash = ? WHERE id = ? AND session_epoch = ?").run(
       hash,
       threadId,
       expectedSessionEpoch,
     );
     return;
   }
-  db.prepare("UPDATE threads SET last_context_hash = ? WHERE id = ?").run(hash, threadId);
-};
-
-export const insertTurnRow = (db: Database, seq: number, turn: ThreadTurn): void => {
-  db.prepare(
-    `INSERT INTO turns
-       (id, thread_id, seq, origin, session_epoch, user_message, assistant_message, thinking_text, status, started_at, model_selection_json)
-     VALUES (?, ?, ?, ?, ?, ?, '', '', 'running', ?, ?)`,
-  ).run(
-    turn.id,
-    turn.threadId,
-    seq,
-    turn.origin ?? "user",
-    turn.sessionEpoch ?? 0,
-    turn.userMessage,
-    turn.startedAt,
-    JSON.stringify(turn.modelSelection),
-  );
-};
-
-export const updateTurnOutcomeRow = (
-  db: Database,
-  threadId: string,
-  turnEpoch: number,
-  next: ThreadTurn,
-): void => {
-  db.prepare(
-    `UPDATE turns
-     SET assistant_message = ?, thinking_text = ?, status = ?, completed_at = ?, duration_ms = ?, cost_usd = ?, error = ?, usage_json = ?
-     WHERE id = ?`,
-  ).run(
-    next.assistantMessage,
-    next.thinkingText,
-    next.status,
-    next.completedAt ?? null,
-    next.durationMs ?? null,
-    next.costUsd ?? 0,
-    next.error ?? null,
-    next.usage ? JSON.stringify(next.usage) : null,
-    next.id,
-  );
-  if (next.usage) {
-    db.prepare(
-      "UPDATE threads SET last_usage_json = ?, updated_at = ? WHERE id = ? AND session_epoch = ?",
-    ).run(
-      JSON.stringify(next.usage),
-      next.completedAt ?? new Date().toISOString(),
-      threadId,
-      turnEpoch,
-    );
-  }
+  db.query("UPDATE threads SET last_context_hash = ? WHERE id = ?").run(hash, threadId);
 };
 
 export const recoverInterruptedThreads = (db: Database): void => {
   const now = new Date().toISOString();
-  db.prepare(
+  db.query(
     `UPDATE turns
      SET status = 'interrupted', completed_at = COALESCE(completed_at, ?), error = COALESCE(error, 'Server restarted while running')
      WHERE status = 'running'`,
   ).run(now);
-  db.prepare(
+  db.query(
     `UPDATE activities
      SET status = 'failed', completed_at = COALESCE(completed_at, ?)
      WHERE status = 'running'`,
   ).run(now);
-  db.prepare(
+  db.query(
     `UPDATE approvals
      SET status = 'resolved'
      WHERE status = 'pending'`,
   ).run();
-  db.prepare(
+  db.query(
     `UPDATE threads
      SET status_json = ?
      WHERE status_json LIKE '%"running"%' OR status_json LIKE '%"needs-input"%'`,
@@ -429,7 +247,7 @@ export const insertThreadRow = (
     readonly now: string;
   },
 ): Thread | null => {
-  db.prepare(
+  db.query(
     `INSERT INTO threads
        (id, project_id, project_name, title, runtime, branch, worktree_path, cwd, provider_id, provider_kind, model, effort, runtime_mode, interaction_mode, status_json, settled_at, provider_session_id, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
@@ -471,7 +289,7 @@ export const updateThreadRow = (
     readonly now: string;
   },
 ): Thread | null => {
-  db.prepare(
+  db.query(
     `UPDATE threads
      SET title = ?, runtime = ?, branch = ?, worktree_path = ?, cwd = ?,
          provider_id = ?, provider_kind = ?, model = ?, effort = ?,

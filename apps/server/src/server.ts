@@ -92,6 +92,20 @@ export const makeAppLayer = (
   );
 };
 
+const GZIP_THRESHOLD_BYTES = 4096;
+
+const appendVaryHeader = (headers: Headers, token: string): void => {
+  const existing = headers.get("Vary");
+  if (!existing) {
+    headers.set("Vary", token);
+    return;
+  }
+  const needle = token.toLowerCase();
+  if (!existing.split(",").some((part) => part.trim().toLowerCase() === needle)) {
+    headers.set("Vary", `${existing}, ${token}`);
+  }
+};
+
 const serveStaticFile = (webDistDir: string, pathname: string): Response | null => {
   const safePath = pathname === "/" ? "/index.html" : pathname;
   const resolved = NodePath.resolve(webDistDir, `.${safePath}`);
@@ -99,11 +113,23 @@ const serveStaticFile = (webDistDir: string, pathname: string): Response | null 
     return new Response("Forbidden", { status: 403 });
   }
   if (NodeFS.existsSync(resolved) && NodeFS.statSync(resolved).isFile()) {
+    if (safePath.startsWith("/assets/")) {
+      return new Response(Bun.file(resolved), {
+        headers: { "Cache-Control": "public, max-age=31536000, immutable" },
+      });
+    }
+    if (safePath === "/index.html") {
+      return new Response(Bun.file(resolved), {
+        headers: { "Cache-Control": "no-cache" },
+      });
+    }
     return new Response(Bun.file(resolved));
   }
   const indexHtml = NodePath.join(webDistDir, "index.html");
   if (NodeFS.existsSync(indexHtml)) {
-    return new Response(Bun.file(indexHtml));
+    return new Response(Bun.file(indexHtml), {
+      headers: { "Cache-Control": "no-cache" },
+    });
   }
   return null;
 };
@@ -123,8 +149,54 @@ const withCors = (response: Response, origin: string | null): Response => {
   }
   const headers = new Headers(response.headers);
   headers.set("Access-Control-Allow-Origin", origin);
-  headers.set("Vary", "Origin");
+  appendVaryHeader(headers, "Origin");
   return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+};
+
+const isLoopbackHost = (hostname: string): boolean =>
+  hostname === "127.0.0.1" ||
+  hostname === "localhost" ||
+  hostname === "::1" ||
+  hostname === "[::1]";
+
+const maybeCompressJsonResponse = async (
+  request: Request,
+  url: URL,
+  response: Response,
+): Promise<Response> => {
+  if (
+    isLoopbackHost(url.hostname) ||
+    response.status !== 200 ||
+    response.headers.has("Content-Encoding")
+  ) {
+    return response;
+  }
+  const contentType = response.headers.get("content-type");
+  if (!contentType || !contentType.toLowerCase().includes("application/json")) {
+    return response;
+  }
+  const acceptEncoding = request.headers.get("accept-encoding");
+  if (!acceptEncoding || !/\bgzip\b/i.test(acceptEncoding)) {
+    return response;
+  }
+  const raw = new Uint8Array(await response.arrayBuffer());
+  if (raw.byteLength <= GZIP_THRESHOLD_BYTES) {
+    return new Response(raw, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  }
+  const compressed = Bun.gzipSync(raw, { level: 1 });
+  const headers = new Headers(response.headers);
+  headers.set("Content-Encoding", "gzip");
+  headers.delete("Content-Length");
+  appendVaryHeader(headers, "Accept-Encoding");
+  return new Response(compressed, {
     status: response.status,
     statusText: response.statusText,
     headers,
@@ -191,7 +263,8 @@ export const startScuttleServer = async (
         }
         const apiResponse = await runtime.runPromise(handleApiRequest(request, url));
         if (apiResponse !== null) {
-          return withCors(apiResponse, origin);
+          const compressed = await maybeCompressJsonResponse(request, url, apiResponse);
+          return withCors(compressed, origin);
         }
         return withCors(Response.json({ error: "Not found" }, { status: 404 }), origin);
       }

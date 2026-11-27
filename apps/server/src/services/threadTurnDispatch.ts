@@ -11,12 +11,8 @@ import type {
 import { type ApprovalId, type ThreadId, TurnId } from "@scuttle/shared/ids";
 import { wrapPromptForThread } from "./agent/agentContext.ts";
 import type * as EventBus from "./EventBus.ts";
-import {
-  formatPromptWithAttachments,
-  insertTurnRow,
-  readThreadById,
-  readTurnsForThread,
-} from "./threadStore.ts";
+import { formatPromptWithAttachments, insertTurnRow, readThreadById } from "./threadStore.ts";
+import { readApprovalById, readTurnStartedAt } from "./turnQueries.ts";
 import {
   launchTurnExecution,
   type PendingApprovalResolver,
@@ -116,25 +112,21 @@ export const resolvePendingApproval = (input: {
     return false;
   }
   pendingApprovals.delete(approvalId);
-  db.prepare("UPDATE approvals SET status = 'resolved', selected_option_id = ? WHERE id = ?").run(
+  db.query("UPDATE approvals SET status = 'resolved', selected_option_id = ? WHERE id = ?").run(
     response.optionId,
     approvalId,
   );
-  const thread = readThreadById(db, threadId);
-  if (thread) {
-    const turns = readTurnsForThread(db, thread);
-    const turn = turns.find((t) => t.id === resolver.turnId);
-    const approval = turn?.approvals.find((a) => a.id === approvalId);
-    if (approval) {
-      eventBus.publishSync({ kind: "approval.updated", approval });
-    }
-    if (turn) {
-      updateThreadStatus(threadId, {
-        kind: "running",
-        startedAt: turn.startedAt,
-        phase: "working",
-      });
-    }
+  const approval = readApprovalById(db, approvalId);
+  if (approval) {
+    eventBus.publishSync({ kind: "approval.updated", approval });
+  }
+  const startedAt = readTurnStartedAt(db, resolver.turnId);
+  if (startedAt !== null) {
+    updateThreadStatus(threadId, {
+      kind: "running",
+      startedAt,
+      phase: "working",
+    });
   }
   resolver.resolve({
     optionId: response.optionId,

@@ -110,6 +110,9 @@ export const applyScuttleMigrations = (db: Database): void => {
   db.run(`
     CREATE INDEX IF NOT EXISTS idx_turns_thread_id ON turns(thread_id, seq);
   `);
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_turns_thread_cost ON turns(thread_id, cost_usd);
+  `);
 
   db.run(`
     CREATE TABLE IF NOT EXISTS activities (
@@ -131,6 +134,9 @@ export const applyScuttleMigrations = (db: Database): void => {
   db.run(`
     CREATE INDEX IF NOT EXISTS idx_activities_turn_id ON activities(turn_id, seq);
   `);
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_activities_thread_seq ON activities(thread_id, seq);
+  `);
 
   db.run(`
     CREATE TABLE IF NOT EXISTS approvals (
@@ -150,6 +156,9 @@ export const applyScuttleMigrations = (db: Database): void => {
 
   db.run(`
     CREATE INDEX IF NOT EXISTS idx_approvals_turn_id ON approvals(turn_id);
+  `);
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_approvals_thread_created ON approvals(thread_id, created_at);
   `);
 
   db.run(`

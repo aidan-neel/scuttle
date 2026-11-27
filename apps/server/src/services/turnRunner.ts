@@ -14,8 +14,15 @@ import type { ApprovalDecision, HarnessEvent } from "../providers/types.ts";
 import type * as EventBus from "./EventBus.ts";
 import { commitTurnContextEffects } from "./agent/agentContext.ts";
 import { readAgentByPrimaryThreadId } from "./agent/agentStore.ts";
-import { readThreadById, readTurnsForThread, updateTurnOutcomeRow } from "./threadStore.ts";
+import { LiveTurnBuffer } from "./liveTurnBuffer.ts";
+import { readThreadById, updateTurnOutcomeRow } from "./threadStore.ts";
 import { deriveThreadTitle, shouldRefreshThreadTitle } from "./threadTitle.ts";
+import {
+  readCompletedTurnCount,
+  readRecentCompletedTitleTurns,
+  readTurnById,
+  readTurnChildren,
+} from "./turnQueries.ts";
 
 export interface ActiveRun {
   readonly turnId: TurnId;
@@ -33,6 +40,7 @@ export interface TurnRunnerDeps {
   readonly eventBus: EventBus.EventBus["Service"];
   readonly activeRuns: Map<string, ActiveRun>;
   readonly pendingApprovals: Map<string, PendingApprovalResolver>;
+  readonly liveTurnBuffer?: LiveTurnBuffer;
   readonly updateThreadStatus: (threadId: ThreadId, status: ThreadStatus) => Thread | null;
   readonly onProjectActivity: (thread: Thread, summary: string) => void;
   readonly isDisposed?: () => boolean;
@@ -65,6 +73,7 @@ export const launchTurnExecution = (
     isDisposed,
   } = deps;
   const isClosed = () => isDisposed?.() === true;
+  const liveTurnBuffer = deps.liveTurnBuffer ?? new LiveTurnBuffer(db);
   const turnEpoch = turn.sessionEpoch ?? thread.sessionEpoch ?? 0;
   const controller = new AbortController();
   activeRuns.set(thread.id, { turnId: turn.id, controller });
@@ -77,6 +86,31 @@ export const launchTurnExecution = (
   let thinkingActivityKey: string | null = null;
   let currentPhase: "thinking" | "working" = "thinking";
   let latestUsage: TurnUsage | undefined;
+
+  const insertActivityRow = (seq: number, item: ActivityItem) => {
+    db.query(
+      `INSERT INTO activities
+         (id, turn_id, thread_id, seq, kind, label, active_label, detail, status, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      item.id,
+      item.turnId,
+      item.threadId,
+      seq,
+      item.kind,
+      item.label,
+      item.activeLabel,
+      item.detail ?? null,
+      item.status,
+      item.startedAt,
+    );
+  };
+
+  const finishActivityRow = (item: ActivityItem) => {
+    db.query(
+      "UPDATE activities SET status = ?, completed_at = ?, duration_ms = ? WHERE id = ?",
+    ).run(item.status, item.completedAt ?? null, item.durationMs ?? 0, item.id);
+  };
 
   const closeThinkingIfOpen = () => {
     if (!thinkingActivityKey) return;
@@ -92,9 +126,7 @@ export const launchTurnExecution = (
       durationMs,
     };
     activitiesByKey.set(item.id, updated);
-    db.prepare(
-      "UPDATE activities SET status = ?, completed_at = ?, duration_ms = ? WHERE id = ?",
-    ).run(updated.status, now, durationMs, updated.id);
+    finishActivityRow(updated);
     eventBus.publishSync({ kind: "turn.activity", activity: updated });
   };
 
@@ -115,22 +147,7 @@ export const launchTurnExecution = (
     };
     thinkingActivityKey = id;
     activitiesByKey.set(id, item);
-    db.prepare(
-      `INSERT INTO activities
-         (id, turn_id, thread_id, seq, kind, label, active_label, detail, status, started_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      id,
-      turn.id,
-      thread.id,
-      activitySeq,
-      item.kind,
-      item.label,
-      item.activeLabel,
-      null,
-      item.status,
-      now,
-    );
+    insertActivityRow(activitySeq, item);
     eventBus.publishSync({ kind: "turn.activity", activity: item });
   };
 
@@ -139,7 +156,7 @@ export const launchTurnExecution = (
     switch (event.kind) {
       case "session": {
         const res = db
-          .prepare(
+          .query(
             "UPDATE threads SET provider_session_id = ?, updated_at = ? WHERE id = ? AND session_epoch = ?",
           )
           .run(event.providerSessionId, new Date().toISOString(), thread.id, turnEpoch);
@@ -152,7 +169,7 @@ export const launchTurnExecution = (
       case "thinking.delta": {
         ensureThinkingActivity();
         thinkingText += event.text;
-        db.prepare("UPDATE turns SET thinking_text = ? WHERE id = ?").run(thinkingText, turn.id);
+        liveTurnBuffer.update(turn.id, assistantText, thinkingText);
         eventBus.publishSync({
           kind: "turn.delta",
           threadId: thread.id,
@@ -165,10 +182,7 @@ export const launchTurnExecution = (
       case "assistant.delta": {
         closeThinkingIfOpen();
         assistantText += event.text;
-        db.prepare("UPDATE turns SET assistant_message = ? WHERE id = ?").run(
-          assistantText,
-          turn.id,
-        );
+        liveTurnBuffer.update(turn.id, assistantText, thinkingText);
         eventBus.publishSync({
           kind: "turn.delta",
           threadId: thread.id,
@@ -181,13 +195,11 @@ export const launchTurnExecution = (
       case "assistant.replace": {
         closeThinkingIfOpen();
         assistantText = event.text;
-        db.prepare("UPDATE turns SET assistant_message = ? WHERE id = ?").run(
-          assistantText,
-          turn.id,
-        );
+        liveTurnBuffer.update(turn.id, assistantText, thinkingText);
+        liveTurnBuffer.flush(turn.id);
         const refreshed = readThreadById(db, thread.id);
         if (refreshed) {
-          const currentTurn = readTurnsForThread(db, refreshed).find((t) => t.id === turn.id);
+          const currentTurn = readTurnById(db, turn.id, refreshed.modelSelection);
           if (currentTurn) eventBus.publishSync({ kind: "turn.upserted", turn: currentTurn });
         }
         return;
@@ -218,22 +230,7 @@ export const launchTurnExecution = (
           startedAt: now,
         };
         activitiesByKey.set(event.key, item);
-        db.prepare(
-          `INSERT INTO activities
-             (id, turn_id, thread_id, seq, kind, label, active_label, detail, status, started_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).run(
-          id,
-          turn.id,
-          thread.id,
-          activitySeq,
-          item.kind,
-          item.label,
-          item.activeLabel,
-          item.detail ?? null,
-          item.status,
-          now,
-        );
+        insertActivityRow(activitySeq, item);
         eventBus.publishSync({ kind: "turn.activity", activity: item });
         return;
       }
@@ -259,7 +256,7 @@ export const launchTurnExecution = (
           ...(durationMs !== undefined ? { durationMs } : {}),
         };
         activitiesByKey.set(event.key, updated);
-        db.prepare(
+        db.query(
           `UPDATE activities
            SET status = ?, label = ?, active_label = ?, detail = ?, completed_at = ?, duration_ms = ?
            WHERE id = ?`,
@@ -290,7 +287,7 @@ export const launchTurnExecution = (
           status: "pending",
           createdAt: now,
         };
-        db.prepare(
+        db.query(
           `INSERT INTO approvals
              (id, thread_id, turn_id, kind, title, description, command, options_json, status, selected_option_id, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
@@ -319,30 +316,20 @@ export const launchTurnExecution = (
         latestUsage = event.usage;
         const encoded = JSON.stringify(event.usage);
         const now = new Date().toISOString();
-        db.prepare("UPDATE turns SET usage_json = ? WHERE id = ?").run(encoded, turn.id);
-        db.prepare(
+        liveTurnBuffer.flush(turn.id);
+        db.query("UPDATE turns SET usage_json = ? WHERE id = ?").run(encoded, turn.id);
+        db.query(
           "UPDATE threads SET last_usage_json = ?, updated_at = ? WHERE id = ? AND session_epoch = ?",
         ).run(encoded, now, thread.id, turnEpoch);
         const refreshed = readThreadById(db, thread.id);
         if (refreshed) {
           eventBus.publishSync({ kind: "thread.upserted", thread: refreshed });
-          const currentTurn = readTurnsForThread(db, refreshed).find((t) => t.id === turn.id);
+          const currentTurn = readTurnById(db, turn.id, refreshed.modelSelection);
           if (currentTurn) eventBus.publishSync({ kind: "turn.upserted", turn: currentTurn });
         }
         return;
       }
     }
-  };
-
-  const readLatestTurnChildren = () => {
-    const refreshed = readThreadById(db, thread.id);
-    const current = refreshed
-      ? readTurnsForThread(db, refreshed).find((t) => t.id === turn.id)
-      : undefined;
-    return {
-      activities: current?.activities ?? [],
-      approvals: current?.approvals ?? [],
-    };
   };
 
   const closeRunningActivities = (completedAt: string, finalStatus: "completed" | "failed") => {
@@ -355,9 +342,7 @@ export const launchTurnExecution = (
         durationMs: Math.max(0, Date.parse(completedAt) - Date.parse(item.startedAt)),
       };
       activitiesByKey.set(key, doneItem);
-      db.prepare(
-        "UPDATE activities SET status = ?, completed_at = ?, duration_ms = ? WHERE id = ?",
-      ).run(doneItem.status, completedAt, doneItem.durationMs ?? 0, doneItem.id);
+      finishActivityRow(doneItem);
       eventBus.publishSync({ kind: "turn.activity", activity: doneItem });
     }
   };
@@ -365,15 +350,14 @@ export const launchTurnExecution = (
   const refreshThreadTitle = () => {
     try {
       if (readAgentByPrimaryThreadId(db, thread.id) !== null) return;
+      const completedCount = readCompletedTurnCount(db, thread.id);
+      if (!shouldRefreshThreadTitle(completedCount)) return;
       const current = readThreadById(db, thread.id);
       if (!current) return;
-      const completedTurns = readTurnsForThread(db, current).filter(
-        (t) => t.status === "completed",
-      );
-      if (!shouldRefreshThreadTitle(completedTurns.length)) return;
-      const nextTitle = deriveThreadTitle(completedTurns);
+      const recentTurns = readRecentCompletedTitleTurns(db, thread.id, 3);
+      const nextTitle = deriveThreadTitle(recentTurns);
       if (nextTitle.length === 0 || nextTitle === current.title) return;
-      db.prepare("UPDATE threads SET title = ?, updated_at = ? WHERE id = ?").run(
+      db.query("UPDATE threads SET title = ?, updated_at = ? WHERE id = ?").run(
         nextTitle,
         new Date().toISOString(),
         thread.id,
@@ -424,7 +408,7 @@ export const launchTurnExecution = (
       closeRunningActivities(completedAt, "completed");
       const finalMessage =
         assistantText.length > 0 ? assistantText : (result.finalText ?? assistantText);
-      const { activities, approvals } = readLatestTurnChildren();
+      const { activities, approvals } = readTurnChildren(db, turn.id);
       const finalUsage = result.usage ?? latestUsage;
       const finalTurn: ThreadTurn = {
         ...turn,
@@ -438,7 +422,9 @@ export const launchTurnExecution = (
         activities,
         approvals,
       };
+      liveTurnBuffer.flush(turn.id);
       updateTurnOutcomeRow(db, thread.id, turnEpoch, finalTurn);
+      liveTurnBuffer.delete(turn.id);
       if (!result.interrupted) {
         commitTurnContextEffects({
           db,
@@ -471,7 +457,7 @@ export const launchTurnExecution = (
       const durationMs = Math.max(0, Date.parse(completedAt) - startedMs);
       closeRunningActivities(completedAt, controller.signal.aborted ? "completed" : "failed");
       const errorMessage = error instanceof Error ? error.message : String(error);
-      const { activities, approvals } = readLatestTurnChildren();
+      const { activities, approvals } = readTurnChildren(db, turn.id);
       const failedTurn: ThreadTurn = {
         ...turn,
         assistantMessage: assistantText,
@@ -484,13 +470,18 @@ export const launchTurnExecution = (
         activities,
         approvals,
       };
+      liveTurnBuffer.flush(turn.id);
       releaseRun();
       updateTurnOutcomeRow(db, thread.id, turnEpoch, failedTurn);
+      liveTurnBuffer.delete(turn.id);
       updateThreadStatus(
         thread.id,
         controller.signal.aborted ? { kind: "idle" } : { kind: "error", message: errorMessage },
       );
       eventBus.publishSync({ kind: "turn.upserted", turn: failedTurn });
     })
-    .finally(releaseRun);
+    .finally(() => {
+      releaseRun();
+      liveTurnBuffer.delete(turn.id);
+    });
 };

@@ -22,6 +22,7 @@ import * as ServerConfig from "../config.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as EventBus from "./EventBus.ts";
 import * as GitService from "./GitService.ts";
+import { LiveTurnBuffer } from "./liveTurnBuffer.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as ProviderService from "./ProviderService.ts";
 import { maybeRolloverThreadSession, rolloverThreadSession } from "./threadCompaction.ts";
@@ -106,6 +107,7 @@ const make = Effect.gen(function* () {
 
   const activeRuns = new Map<string, ActiveRun>();
   const pendingApprovals = new Map<string, PendingApprovalResolver>();
+  const liveTurnBuffer = new LiveTurnBuffer(db);
   let disposed = false;
 
   yield* Effect.acquireRelease(Effect.void, () =>
@@ -116,13 +118,14 @@ const make = Effect.gen(function* () {
       }
       activeRuns.clear();
       pendingApprovals.clear();
+      liveTurnBuffer.dispose();
     }),
   );
 
   const updateThreadStatus = (threadId: ThreadId, status: ThreadStatus): Thread | null => {
     if (disposed) return null;
     const now = new Date().toISOString();
-    db.prepare("UPDATE threads SET status_json = ?, updated_at = ? WHERE id = ?").run(
+    db.query("UPDATE threads SET status_json = ?, updated_at = ? WHERE id = ?").run(
       JSON.stringify(status),
       now,
       threadId,
@@ -139,6 +142,7 @@ const make = Effect.gen(function* () {
     eventBus,
     activeRuns,
     pendingApprovals,
+    liveTurnBuffer,
     updateThreadStatus,
     onProjectActivity: (thread: Thread, summary: string) => {
       if (!disposed) {
@@ -160,7 +164,7 @@ const make = Effect.gen(function* () {
 
   const getDetail = Effect.fn("ThreadService.getDetail")(function* (threadId: ThreadId) {
     const thread = yield* requireThread(threadId);
-    const turns = readTurnsForThread(db, thread);
+    const turns = readTurnsForThread(db, thread).map((turn) => liveTurnBuffer.overlayTurn(turn));
     return { thread, turns };
   });
 
@@ -295,7 +299,7 @@ const make = Effect.gen(function* () {
     const nextRuntimeMode = input.runtimeMode ?? rolledThread.runtimeMode;
     const nextInteractionMode = input.interactionMode ?? rolledThread.interactionMode;
 
-    db.prepare(
+    db.query(
       `UPDATE threads
        SET provider_id = ?, provider_kind = ?, model = ?, effort = ?, runtime_mode = ?, interaction_mode = ?,
            provider_session_id = ?, settled_at = NULL, updated_at = ?
@@ -350,7 +354,7 @@ const make = Effect.gen(function* () {
   ) {
     yield* requireThread(threadId);
     const now = new Date().toISOString();
-    db.prepare("UPDATE threads SET settled_at = ?, updated_at = ? WHERE id = ?").run(
+    db.query("UPDATE threads SET settled_at = ?, updated_at = ? WHERE id = ?").run(
       settled ? now : null,
       now,
       threadId,
@@ -442,7 +446,7 @@ const make = Effect.gen(function* () {
         yield* git.removeWorktree(project.value.path, existing.worktreePath);
       }
     }
-    db.prepare("DELETE FROM threads WHERE id = ?").run(threadId);
+    db.query("DELETE FROM threads WHERE id = ?").run(threadId);
     eventBus.publishSync({ kind: "thread.deleted", threadId });
   });
 

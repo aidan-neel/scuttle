@@ -31,9 +31,11 @@ export class SqliteDatabase extends Context.Service<
 const configurePragmas = (db: Database, isMemory: boolean) => {
   db.run("PRAGMA foreign_keys = ON;");
   db.run("PRAGMA busy_timeout = 5000;");
+  db.run("PRAGMA cache_size = -16000;");
   if (!isMemory) {
     db.run("PRAGMA journal_mode = WAL;");
     db.run("PRAGMA synchronous = NORMAL;");
+    db.run("PRAGMA mmap_size = 268435456;");
   }
   db.run("PRAGMA temp_store = MEMORY;");
   applyScuttleMigrations(db);
