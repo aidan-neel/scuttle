@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 
 const MAX_CONSECUTIVE_FAILURES = 3;
 const CIRCUIT_BREAKER_COOLDOWN_MS = 60_000;
-const failedUrls = new Set<string>();
+const failedUrls = new Map<string, number>();
 const listeners = new Set<() => void>();
 let consecutiveFailures = 0;
 let disabledUntil = 0;
@@ -33,32 +33,67 @@ function getServerFailureVersion(): number {
   return 0;
 }
 
-function recordLoadSuccess(): void {
-  consecutiveFailures = 0;
-  disabledUntil = 0;
+function clearCooldownTimer(): void {
   if (cooldownTimer !== null) {
     clearTimeout(cooldownTimer);
     cooldownTimer = null;
   }
 }
 
-function recordLoadFailure(url: string): void {
-  if (failedUrls.has(url)) return;
-  failedUrls.add(url);
-  consecutiveFailures += 1;
-  if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-    disabledUntil = Date.now() + CIRCUIT_BREAKER_COOLDOWN_MS;
-    if (cooldownTimer !== null) {
-      clearTimeout(cooldownTimer);
+function scheduleRecoveryTimer(now: number): void {
+  clearCooldownTimer();
+  let nextWake = disabledUntil > now ? disabledUntil : Number.POSITIVE_INFINITY;
+  for (const failedAt of failedUrls.values()) {
+    const expiresAt = failedAt + CIRCUIT_BREAKER_COOLDOWN_MS;
+    if (expiresAt < nextWake) {
+      nextWake = expiresAt;
     }
-    cooldownTimer = setTimeout(() => {
-      cooldownTimer = null;
+  }
+  if (!Number.isFinite(nextWake)) return;
+  const delayMs = Math.max(1, nextWake - now);
+  cooldownTimer = setTimeout(() => {
+    cooldownTimer = null;
+    const tickNow = Date.now();
+    let changed = false;
+    if (disabledUntil > 0 && tickNow >= disabledUntil) {
       disabledUntil = 0;
       consecutiveFailures = 0;
-      failedUrls.clear();
+      changed = true;
+    }
+    for (const [url, failedAt] of failedUrls) {
+      if (tickNow - failedAt >= CIRCUIT_BREAKER_COOLDOWN_MS) {
+        failedUrls.delete(url);
+        changed = true;
+      }
+    }
+    scheduleRecoveryTimer(tickNow);
+    if (changed) {
       notifyListeners();
-    }, CIRCUIT_BREAKER_COOLDOWN_MS);
+    }
+  }, delayMs);
+}
+
+function isUrlFailed(url: string, now: number): boolean {
+  const failedAt = failedUrls.get(url);
+  return failedAt !== undefined && now - failedAt < CIRCUIT_BREAKER_COOLDOWN_MS;
+}
+
+function recordLoadSuccess(url: string): void {
+  failedUrls.delete(url);
+  consecutiveFailures = 0;
+  disabledUntil = 0;
+  scheduleRecoveryTimer(Date.now());
+}
+
+function recordLoadFailure(url: string): void {
+  const now = Date.now();
+  if (isUrlFailed(url, now)) return;
+  failedUrls.set(url, now);
+  consecutiveFailures += 1;
+  if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+    disabledUntil = now + CIRCUIT_BREAKER_COOLDOWN_MS;
   }
+  scheduleRecoveryTimer(now);
   notifyListeners();
 }
 
@@ -112,8 +147,9 @@ export function Identicon({ name, size, className }: IdenticonProps) {
   const { box, classes } = SIZES[size];
   const url = dicebearIdenticonUrl(name);
   useSyncExternalStore(subscribe, getFailureVersion, getServerFailureVersion);
+  const now = Date.now();
 
-  if (disabledUntil > 0 || failedUrls.has(url)) {
+  if (disabledUntil > now || isUrlFailed(url, now)) {
     return (
       <FallbackIdenticon
         name={name}
@@ -132,7 +168,7 @@ export function Identicon({ name, size, className }: IdenticonProps) {
       height={box}
       loading="lazy"
       decoding="async"
-      onLoad={recordLoadSuccess}
+      onLoad={() => recordLoadSuccess(url)}
       onError={() => recordLoadFailure(url)}
       className={cn("shrink-0 bg-white/[0.06] object-cover select-none", classes, className)}
     />

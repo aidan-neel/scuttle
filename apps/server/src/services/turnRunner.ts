@@ -168,6 +168,7 @@ export const launchTurnExecution = (
       }
       case "thinking.delta": {
         ensureThinkingActivity();
+        const offset = thinkingText.length;
         thinkingText += event.text;
         liveTurnBuffer.update(turn.id, assistantText, thinkingText);
         eventBus.publishSync({
@@ -176,11 +177,13 @@ export const launchTurnExecution = (
           turnId: turn.id,
           channel: "thinking",
           delta: event.text,
+          offset,
         });
         return;
       }
       case "assistant.delta": {
         closeThinkingIfOpen();
+        const offset = assistantText.length;
         assistantText += event.text;
         liveTurnBuffer.update(turn.id, assistantText, thinkingText);
         eventBus.publishSync({
@@ -189,6 +192,7 @@ export const launchTurnExecution = (
           turnId: turn.id,
           channel: "assistant",
           delta: event.text,
+          offset,
         });
         return;
       }

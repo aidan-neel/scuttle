@@ -1,17 +1,14 @@
-import {
-  EMPTY_SCOPED_MODEL_TIERS,
-  type Agent,
-  type AgentDetail,
-  type GitBranchInfo,
-  type ModelSelection,
-  type Project,
-  type ProviderSnapshot,
-  type ScopedModelTierConfigs,
-  type ScuttleSkill,
-  type ServerPushEvent,
-  type Thread,
-  type ThreadDetail,
-  type ThreadTurn,
+import type {
+  Agent,
+  AgentDetail,
+  GitBranchInfo,
+  ModelSelection,
+  Project,
+  ProviderSnapshot,
+  ServerPushEvent,
+  Thread,
+  ThreadDetail,
+  ThreadTurn,
 } from "@scuttle/contracts";
 import type { ProjectId } from "@scuttle/shared/ids";
 import { type AgentSlice, agentDetailLoaded, applyAgentEvent } from "./agentState.ts";
@@ -22,16 +19,20 @@ import {
   readStoredSelection,
   writeStoredSelection,
 } from "./modelSelection.ts";
-
-const THREAD_DETAILS_CACHE_LIMIT = 12;
+import {
+  applyChannelDelta,
+  applyPendingTurnDeltas,
+  mergeThreadDetailSnapshot,
+  type PendingTurnDelta,
+  queuePendingDelta,
+  touchThreadDetail,
+} from "./threadDetailReducer.ts";
 
 export interface WorkspaceState extends AgentSlice {
   readonly loading: boolean;
   readonly projects: ReadonlyArray<Project>;
   readonly threads: ReadonlyArray<Thread>;
   readonly providers: ReadonlyArray<ProviderSnapshot>;
-  readonly skills: ReadonlyArray<ScuttleSkill>;
-  readonly modelTiers: ScopedModelTierConfigs;
   readonly threadDetails: Readonly<Record<string, ThreadDetail>>;
   readonly branchesByProject: Readonly<Record<string, ReadonlyArray<GitBranchInfo>>>;
   readonly selectedProjectId: ProjectId | null;
@@ -48,8 +49,6 @@ export type Action =
       readonly threads: ReadonlyArray<Thread>;
       readonly providers: ReadonlyArray<ProviderSnapshot>;
       readonly agents: ReadonlyArray<Agent>;
-      readonly skills?: ReadonlyArray<ScuttleSkill> | undefined;
-      readonly modelTiers?: ScopedModelTierConfigs | undefined;
     }
   | { readonly kind: "error"; readonly message: string | null }
   | { readonly kind: "selectProject"; readonly projectId: ProjectId | null }
@@ -70,8 +69,6 @@ export const createInitialWorkspaceState = (): WorkspaceState => ({
   projects: [],
   threads: [],
   providers: [],
-  skills: [],
-  modelTiers: EMPTY_SCOPED_MODEL_TIERS,
   threadDetails: {},
   agents: [],
   agentWork: {},
@@ -85,31 +82,6 @@ export const createInitialWorkspaceState = (): WorkspaceState => ({
 
 const computeAgentThreadIds = (agents: ReadonlyArray<Agent>): ReadonlySet<string> =>
   new Set(agents.map((agent) => agent.primaryThreadId));
-
-const touchThreadDetail = (
-  threadDetails: Readonly<Record<string, ThreadDetail>>,
-  threadId: string,
-  detail: ThreadDetail,
-  activeThreadId: string | null,
-): Readonly<Record<string, ThreadDetail>> => {
-  const keys = Object.keys(threadDetails);
-  const existing = Object.hasOwn(threadDetails, threadId);
-  let skipCount = keys.length + (existing ? 0 : 1) - THREAD_DETAILS_CACHE_LIMIT;
-  const next: Record<string, ThreadDetail> = {};
-  for (const key of keys) {
-    if (key === threadId) continue;
-    if (skipCount > 0 && key !== activeThreadId) {
-      skipCount -= 1;
-      continue;
-    }
-    const entry = threadDetails[key];
-    if (entry !== undefined) {
-      next[key] = entry;
-    }
-  }
-  next[threadId] = detail;
-  return next;
-};
 
 const upsertThreadSorted = (
   threads: ReadonlyArray<Thread>,
@@ -143,46 +115,15 @@ const upsertThreadSorted = (
   return copy.toSorted((a, b) => compareIsoDesc(a.updatedAt, b.updatedAt));
 };
 
-interface PendingTurnDelta {
-  assistant: string;
-  thinking: string;
-}
-
 const flushPendingDeltas = (
   state: WorkspaceState,
   pendingByThread: Map<string, Map<string, PendingTurnDelta>>,
 ): WorkspaceState => {
-  if (pendingByThread.size === 0) return state;
-
-  let nextThreadDetails = state.threadDetails;
-  for (const [threadId, turnsMap] of pendingByThread) {
-    const detail = nextThreadDetails[threadId];
-    if (detail === undefined) continue;
-    let changed = false;
-    const turns = detail.turns.map((turn): ThreadTurn => {
-      const delta = turnsMap.get(turn.id);
-      if (delta === undefined) return turn;
-      changed = true;
-      return {
-        ...turn,
-        assistantMessage:
-          delta.assistant.length > 0
-            ? turn.assistantMessage + delta.assistant
-            : turn.assistantMessage,
-        thinkingText:
-          delta.thinking.length > 0 ? turn.thinkingText + delta.thinking : turn.thinkingText,
-      };
-    });
-    if (changed) {
-      nextThreadDetails = touchThreadDetail(
-        nextThreadDetails,
-        threadId,
-        { ...detail, turns },
-        state.activeThreadId,
-      );
-    }
-  }
-  pendingByThread.clear();
+  const nextThreadDetails = applyPendingTurnDeltas(
+    state.threadDetails,
+    state.activeThreadId,
+    pendingByThread,
+  );
   return nextThreadDetails === state.threadDetails
     ? state
     : { ...state, threadDetails: nextThreadDetails };
@@ -248,10 +189,16 @@ const applyCoreEvent = (state: WorkspaceState, event: ServerPushEvent): Workspac
       let changed = false;
       const turns = detail.turns.map((turn): ThreadTurn => {
         if (turn.id !== event.turnId) return turn;
+        if (event.channel === "assistant") {
+          const next = applyChannelDelta(turn.assistantMessage, event.delta, event.offset);
+          if (next === turn.assistantMessage) return turn;
+          changed = true;
+          return { ...turn, assistantMessage: next };
+        }
+        const next = applyChannelDelta(turn.thinkingText, event.delta, event.offset);
+        if (next === turn.thinkingText) return turn;
         changed = true;
-        return event.channel === "assistant"
-          ? { ...turn, assistantMessage: turn.assistantMessage + event.delta }
-          : { ...turn, thinkingText: turn.thinkingText + event.delta };
+        return { ...turn, thinkingText: next };
       });
       if (!changed) return state;
       return {
@@ -318,8 +265,6 @@ const applyCoreEvent = (state: WorkspaceState, event: ServerPushEvent): Workspac
       const defaultModelSelection = pickBestSelection(providers, state.defaultModelSelection);
       return { ...state, providers, defaultModelSelection };
     }
-    case "modelTiers.updated":
-      return { ...state, modelTiers: event.modelTiers };
     default:
       return state;
   }
@@ -351,20 +296,25 @@ const applyPushBatch = (
 
   for (const event of events) {
     if (event.kind === "turn.delta") {
-      let turnsMap = pendingByThread.get(event.threadId);
-      if (turnsMap === undefined) {
-        turnsMap = new Map<string, PendingTurnDelta>();
-        pendingByThread.set(event.threadId, turnsMap);
-      }
-      let entry = turnsMap.get(event.turnId);
-      if (entry === undefined) {
-        entry = { assistant: "", thinking: "" };
-        turnsMap.set(event.turnId, entry);
-      }
-      if (event.channel === "assistant") {
-        entry.assistant += event.delta;
-      } else {
-        entry.thinking += event.delta;
+      if (
+        !queuePendingDelta(
+          pendingByThread,
+          event.threadId,
+          event.turnId,
+          event.channel,
+          event.delta,
+          event.offset,
+        )
+      ) {
+        nextState = flushPendingDeltas(nextState, pendingByThread);
+        queuePendingDelta(
+          pendingByThread,
+          event.threadId,
+          event.turnId,
+          event.channel,
+          event.delta,
+          event.offset,
+        );
       }
       continue;
     }
@@ -394,8 +344,6 @@ export const reduceWorkspaceState = (state: WorkspaceState, action: Action): Wor
         threads: action.threads,
         providers: action.providers,
         agents: action.agents,
-        skills: action.skills ?? state.skills,
-        modelTiers: action.modelTiers ?? state.modelTiers,
         agentThreadIds: computeAgentThreadIds(action.agents),
         selectedProjectId,
         defaultModelSelection,
@@ -418,19 +366,27 @@ export const reduceWorkspaceState = (state: WorkspaceState, action: Action): Wor
         ...state,
         branchesByProject: { ...state.branchesByProject, [action.projectId]: action.branches },
       };
-    case "threadDetailLoaded":
+    case "threadDetailLoaded": {
+      const merged = mergeThreadDetailSnapshot(
+        state.threadDetails[action.detail.thread.id],
+        action.detail,
+      );
       return {
         ...state,
-        threads: upsertById(state.threads, action.detail.thread, true),
+        threads: upsertById(state.threads, merged.thread, true),
         threadDetails: touchThreadDetail(
           state.threadDetails,
-          action.detail.thread.id,
-          action.detail,
+          merged.thread.id,
+          merged,
           state.activeThreadId,
         ),
       };
+    }
     case "agentDetailLoaded": {
-      const primary = action.detail.primaryThread;
+      const primary = mergeThreadDetailSnapshot(
+        state.threadDetails[action.detail.primaryThread.thread.id],
+        action.detail.primaryThread,
+      );
       const agentSlice = agentDetailLoaded(state, action.detail);
       return {
         ...state,

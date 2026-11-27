@@ -34,6 +34,7 @@ describe("client-runtime connection helpers", () => {
       turnId: "turn-1",
       channel: "assistant",
       delta: "hello",
+      offset: 5,
     });
     expect(valid).toEqual({
       kind: "turn.delta",
@@ -41,6 +42,7 @@ describe("client-runtime connection helpers", () => {
       turnId: TurnId.make("turn-1"),
       channel: "assistant",
       delta: "hello",
+      offset: 5,
     });
 
     expect(

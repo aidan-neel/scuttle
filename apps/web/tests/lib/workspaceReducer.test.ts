@@ -332,4 +332,87 @@ describe("workspaceReducer", () => {
     expect(notifications).toBe(1);
     unsubscribe();
   });
+
+  test("turn.delta with offset is idempotent against snapshot overlap and stale snapshots do not clobber running text", () => {
+    const tId = ThreadId.make("thread-1");
+    const turnId = TurnId.make("turn-1");
+
+    let state = reduceWorkspaceState(createInitialWorkspaceState(), {
+      kind: "threadDetailLoaded",
+      detail: makeDetail("thread-1", "2026-11-26T00:00:00.000Z", [
+        { ...makeTurn("thread-1", "turn-1", "AB"), thinkingText: "XY" },
+      ]),
+    });
+
+    state = reduceWorkspaceState(state, {
+      kind: "push",
+      event: {
+        kind: "turn.delta",
+        threadId: tId,
+        turnId,
+        channel: "assistant",
+        delta: "B",
+        offset: 1,
+      },
+    });
+    expect(state.threadDetails["thread-1"]?.turns[0]?.assistantMessage).toBe("AB");
+
+    state = reduceWorkspaceState(state, {
+      kind: "pushBatch",
+      events: [
+        {
+          kind: "turn.delta",
+          threadId: tId,
+          turnId,
+          channel: "assistant",
+          delta: "BC",
+          offset: 1,
+        },
+        {
+          kind: "turn.delta",
+          threadId: tId,
+          turnId,
+          channel: "assistant",
+          delta: "D",
+          offset: 3,
+        },
+        {
+          kind: "turn.delta",
+          threadId: tId,
+          turnId,
+          channel: "thinking",
+          delta: "Y",
+          offset: 1,
+        },
+        {
+          kind: "turn.delta",
+          threadId: tId,
+          turnId,
+          channel: "thinking",
+          delta: "Z",
+          offset: 2,
+        },
+      ],
+    });
+    expect(state.threadDetails["thread-1"]?.turns[0]?.assistantMessage).toBe("ABCD");
+    expect(state.threadDetails["thread-1"]?.turns[0]?.thinkingText).toBe("XYZ");
+
+    state = reduceWorkspaceState(state, {
+      kind: "threadDetailLoaded",
+      detail: makeDetail("thread-1", "2026-11-26T00:00:01.000Z", [
+        { ...makeTurn("thread-1", "turn-1", "AB"), thinkingText: "X" },
+      ]),
+    });
+    expect(state.threadDetails["thread-1"]?.turns[0]?.assistantMessage).toBe("ABCD");
+    expect(state.threadDetails["thread-1"]?.turns[0]?.thinkingText).toBe("XYZ");
+
+    state = reduceWorkspaceState(state, {
+      kind: "threadDetailLoaded",
+      detail: makeDetail("thread-1", "2026-11-26T00:00:02.000Z", [
+        { ...makeTurn("thread-1", "turn-1", "Final"), status: "completed", thinkingText: "Done" },
+      ]),
+    });
+    expect(state.threadDetails["thread-1"]?.turns[0]?.assistantMessage).toBe("Final");
+    expect(state.threadDetails["thread-1"]?.turns[0]?.thinkingText).toBe("Done");
+  });
 });

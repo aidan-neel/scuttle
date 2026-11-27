@@ -102,6 +102,7 @@ export const TurnDeltaEvent = Schema.Struct({
   turnId: TurnId,
   channel: Schema.Literals(["assistant", "thinking"]),
   delta: Schema.String,
+  offset: Schema.optionalKey(Schema.Number),
 });
 
 export const TurnActivityEvent = Schema.Struct({

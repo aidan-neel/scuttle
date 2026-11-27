@@ -13,10 +13,8 @@ import * as EventBus from "./services/EventBus.ts";
 import * as GitForgeService from "./services/GitForgeService.ts";
 import * as GitService from "./services/GitService.ts";
 import * as HealthService from "./services/HealthService.ts";
-import * as ModelTierService from "./services/ModelTierService.ts";
 import * as ProjectService from "./services/ProjectService.ts";
 import * as ProviderService from "./services/ProviderService.ts";
-import * as SkillService from "./services/SkillService.ts";
 import * as ThreadService from "./services/ThreadService.ts";
 
 export interface ScuttleServerHandle {
@@ -41,11 +39,6 @@ export const makeAppLayer = (
   const healthLayer = HealthService.layer.pipe(
     Layer.provide(sqliteLayer),
     Layer.provide(configLayer),
-  );
-  const skillLayer = SkillService.layer.pipe(Layer.provide(configLayer));
-  const modelTierLayer = ModelTierService.layer.pipe(
-    Layer.provide(sqliteLayer),
-    Layer.provide(eventBusLayer),
   );
   const providerLayer = ProviderService.layer.pipe(
     Layer.provide(sqliteLayer),
@@ -91,8 +84,6 @@ export const makeAppLayer = (
     eventBusLayer,
     gitLayer,
     healthLayer,
-    skillLayer,
-    modelTierLayer,
     providerLayer,
     projectLayer,
     threadLayer,
