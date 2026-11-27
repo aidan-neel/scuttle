@@ -17,7 +17,7 @@ import { DotSpinner } from "@/components/ui/DotSpinner.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
 import { easeOut } from "@/lib/motion.ts";
-import { useWorkspace } from "@/lib/workspace.tsx";
+import { useThreadDetail, useWorkspaceActions, useWorkspaceSelector } from "@/lib/workspace.tsx";
 
 export const Route = createFileRoute("/threads/$threadId")({
   component: ThreadPage,
@@ -26,9 +26,8 @@ export const Route = createFileRoute("/threads/$threadId")({
 function ThreadPage() {
   const { threadId } = Route.useParams();
   const navigate = useNavigate();
-  const { threadDetails, loadThreadDetail } = useWorkspace();
-
-  const detail = threadDetails[threadId];
+  const detail = useThreadDetail(threadId);
+  const { loadThreadDetail } = useWorkspaceActions();
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -67,8 +66,9 @@ function ThreadPage() {
 }
 
 function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
-  const { providers, sendTurn, interruptTurn, updateThread, compactThread, respondApproval } =
-    useWorkspace();
+  const providers = useWorkspaceSelector((s) => s.providers);
+  const { sendTurn, interruptTurn, updateThread, compactThread, respondApproval } =
+    useWorkspaceActions();
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [compacting, setCompacting] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);

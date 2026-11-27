@@ -9,3 +9,7 @@ export const upsertById = <T extends { readonly id: string }>(
   copy[index] = next;
   return copy;
 };
+
+export const compareIsoDesc = (a: string, b: string): number => (a === b ? 0 : b > a ? 1 : -1);
+
+export const compareIsoAsc = (a: string, b: string): number => (a === b ? 0 : a > b ? 1 : -1);

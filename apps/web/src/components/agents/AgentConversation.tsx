@@ -12,7 +12,7 @@ import { useStickToBottom } from "@/components/thread/useStickToBottom.ts";
 import { DotSpinner } from "@/components/ui/DotSpinner.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
 import { easeOut } from "@/lib/motion.ts";
-import { useWorkspace } from "@/lib/workspace.tsx";
+import { useWorkspaceActions, useWorkspaceSelector } from "@/lib/workspace.tsx";
 import { useTask } from "./useTask.ts";
 
 interface AgentConversationProps {
@@ -22,8 +22,8 @@ interface AgentConversationProps {
 }
 
 export function AgentConversation({ agent, detail, onViewAgent }: AgentConversationProps) {
+  const providers = useWorkspaceSelector((s) => s.providers);
   const {
-    providers,
     sendAgentTurn,
     startAgentSetup,
     updateAgent,
@@ -31,7 +31,7 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
     compactThread,
     interruptTurn,
     respondApproval,
-  } = useWorkspace();
+  } = useWorkspaceActions();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [compacting, setCompacting] = useState(false);

@@ -16,12 +16,13 @@ import { Icon } from "@/components/ui/Icon.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
 import { ContextMenuItem, ContextMenuPopup, ContextMenuSeparator } from "@/components/ui/Menu.tsx";
 import { SwapText } from "@/components/ui/SwapText.tsx";
-import { isAgentThread } from "@/lib/agentState.ts";
 import { easeOut, spring } from "@/lib/motion";
-import { useWorkspace } from "@/lib/workspace.tsx";
+import { useWorkspaceActions, useWorkspaceSelector } from "@/lib/workspace.tsx";
 
 export function SettledSection({ projectId }: { readonly projectId: ProjectId | null }) {
-  const { agents, threads, settleThread, deleteThread } = useWorkspace();
+  const threads = useWorkspaceSelector((s) => s.threads);
+  const agentThreadIds = useWorkspaceSelector((s) => s.agentThreadIds);
+  const { settleThread, deleteThread } = useWorkspaceActions();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const [expanded, setExpanded] = useState(false);
@@ -29,7 +30,7 @@ export function SettledSection({ projectId }: { readonly projectId: ProjectId | 
   const done = threads.filter(
     (thread) =>
       thread.settledAt !== undefined &&
-      !isAgentThread(agents, thread.id) &&
+      !agentThreadIds.has(thread.id) &&
       (projectId === null || thread.projectId === projectId),
   );
 

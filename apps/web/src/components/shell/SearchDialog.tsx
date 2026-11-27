@@ -7,11 +7,10 @@ import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState 
 import { BrandLogo } from "@/components/ui/BrandLogo.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
-import { isAgentThread } from "@/lib/agentState.ts";
 import { formatRelativeAge } from "@/lib/format.ts";
 import { easeOut, spring } from "@/lib/motion.ts";
 import { cn } from "@/lib/utils";
-import { useWorkspace } from "@/lib/workspace.tsx";
+import { useWorkspaceActions, useWorkspaceSelector } from "@/lib/workspace.tsx";
 
 const THREAD_LIMIT = 12;
 
@@ -26,13 +25,6 @@ type Result =
   | { readonly kind: "project"; readonly project: Project };
 
 export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
-  const { agents, projects, threads, selectProject } = useWorkspace();
-  const navigate = useNavigate();
-  const baseId = useId();
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [query, setQuery] = useState("");
-  const [activeIndex, setActiveIndex] = useState(0);
-
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
@@ -43,6 +35,27 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [open, onOpenChange]);
+
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <AnimatePresence>
+        {open && <SearchDialogContent key="search-dialog" onOpenChange={onOpenChange} />}
+      </AnimatePresence>
+    </Dialog.Root>
+  );
+}
+
+function SearchDialogContent({ onOpenChange }: { readonly onOpenChange: (open: boolean) => void }) {
+  const agents = useWorkspaceSelector((s) => s.agents);
+  const projects = useWorkspaceSelector((s) => s.projects);
+  const threads = useWorkspaceSelector((s) => s.threads);
+  const agentThreadIds = useWorkspaceSelector((s) => s.agentThreadIds);
+  const { selectProject } = useWorkspaceActions();
+  const navigate = useNavigate();
+  const baseId = useId();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState(0);
 
   const q = query.trim().toLowerCase();
   const matchedAgents = agents.filter(
@@ -55,7 +68,7 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
   const matchedThreads = threads
     .filter(
       (t) =>
-        !isAgentThread(agents, t.id) &&
+        !agentThreadIds.has(t.id) &&
         (q.length === 0 ||
           t.title.toLowerCase().includes(q) ||
           t.projectName.toLowerCase().includes(q) ||
@@ -108,171 +121,154 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
   };
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <AnimatePresence
-        onExitComplete={() => {
-          setQuery("");
-          setActiveIndex(0);
-        }}
+    <Dialog.Portal keepMounted>
+      <Dialog.Backdrop
+        render={
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1, transition: { duration: 0.16, ease: easeOut } }}
+            exit={{ opacity: 0, transition: { duration: 0.12, ease: easeOut } }}
+          />
+        }
+        className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px]"
+      />
+      <Dialog.Popup
+        initialFocus={inputRef}
+        render={
+          <motion.div
+            initial={{ opacity: 0, y: 8, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1, transition: spring.snappy }}
+            exit={{ opacity: 0, y: 4, scale: 0.985, transition: { duration: 0.12 } }}
+          />
+        }
+        className="fixed inset-x-0 top-[14vh] z-50 mx-auto flex w-[min(540px,calc(100vw-2rem))] flex-col overflow-hidden rounded-canvas bg-menu shadow-menu outline-none"
       >
-        {open && (
-          <Dialog.Portal keepMounted>
-            <Dialog.Backdrop
-              render={
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1, transition: { duration: 0.16, ease: easeOut } }}
-                  exit={{ opacity: 0, transition: { duration: 0.12, ease: easeOut } }}
-                />
-              }
-              className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px]"
-            />
-            <Dialog.Popup
-              initialFocus={inputRef}
-              render={
-                <motion.div
-                  initial={{ opacity: 0, y: 8, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1, transition: spring.snappy }}
-                  exit={{ opacity: 0, y: 4, scale: 0.985, transition: { duration: 0.12 } }}
-                />
-              }
-              className="fixed inset-x-0 top-[14vh] z-50 mx-auto flex w-[min(540px,calc(100vw-2rem))] flex-col overflow-hidden rounded-canvas bg-menu shadow-menu outline-none"
+        <Dialog.Title className="sr-only">Search</Dialog.Title>
+        <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-line px-3.5">
+          <Icon icon={Search01Icon} className="size-4 shrink-0 text-fg-muted" />
+          <input
+            ref={inputRef}
+            type="text"
+            role="combobox"
+            aria-label="Search agents, threads, and projects"
+            aria-expanded
+            aria-controls={`${baseId}-list`}
+            aria-activedescendant={results.length > 0 ? rowId(active) : undefined}
+            autoComplete="off"
+            spellCheck={false}
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setActiveIndex(0);
+            }}
+            onKeyDown={onKeyDown}
+            placeholder="Search agents, threads, and projects…"
+            className="min-w-0 flex-1 bg-transparent text-body text-fg outline-none placeholder:text-fg-muted"
+          />
+          <kbd className="shrink-0 rounded-chip bg-white/6 px-1.5 py-0.5 font-mono text-[11px] text-fg-muted">
+            ESC
+          </kbd>
+        </div>
+
+        <div
+          id={`${baseId}-list`}
+          role="listbox"
+          aria-label="Results"
+          className="h-80 shrink-0 overflow-y-auto overscroll-contain p-1.5"
+        >
+          {matchedAgents.length > 0 && (
+            <div role="group" aria-label="Agents">
+              <div className="flex h-7 items-center px-2 text-meta font-medium text-fg-muted">
+                Agents
+              </div>
+              {matchedAgents.map((agent, index) => (
+                <ResultRow
+                  key={agent.id}
+                  id={rowId(index)}
+                  active={index === active}
+                  onHover={() => setActiveIndex(index)}
+                  onChoose={() => choose({ kind: "agent", agent })}
+                >
+                  <Identicon name={agent.name} size="sm" />
+                  <span className="min-w-0 flex-1 truncate text-body font-medium text-fg">
+                    {agent.name}
+                  </span>
+                  <span className="shrink-0 truncate text-meta text-fg-muted">
+                    {agent.projectName}
+                  </span>
+                </ResultRow>
+              ))}
+            </div>
+          )}
+
+          {matchedThreads.length > 0 && (
+            <div
+              role="group"
+              aria-label="Threads"
+              className={cn(matchedAgents.length > 0 && "mt-1.5")}
             >
-              <Dialog.Title className="sr-only">Search</Dialog.Title>
-              <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-line px-3.5">
-                <Icon icon={Search01Icon} className="size-4 shrink-0 text-fg-muted" />
-                <input
-                  ref={inputRef}
-                  type="text"
-                  role="combobox"
-                  aria-label="Search agents, threads, and projects"
-                  aria-expanded
-                  aria-controls={`${baseId}-list`}
-                  aria-activedescendant={results.length > 0 ? rowId(active) : undefined}
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={query}
-                  onChange={(event) => {
-                    setQuery(event.target.value);
-                    setActiveIndex(0);
-                  }}
-                  onKeyDown={onKeyDown}
-                  placeholder="Search agents, threads, and projects…"
-                  className="min-w-0 flex-1 bg-transparent text-body text-fg outline-none placeholder:text-fg-muted"
-                />
-                <kbd className="shrink-0 rounded-chip bg-white/6 px-1.5 py-0.5 font-mono text-[11px] text-fg-muted">
-                  ESC
-                </kbd>
+              <div className="flex h-7 items-center px-2 text-meta font-medium text-fg-muted">
+                Threads
               </div>
+              {matchedThreads.map((thread, index) => (
+                <ResultRow
+                  key={thread.id}
+                  id={rowId(threadOffset + index)}
+                  active={threadOffset + index === active}
+                  onHover={() => setActiveIndex(threadOffset + index)}
+                  onChoose={() => choose({ kind: "thread", thread })}
+                >
+                  <Identicon name={thread.projectName} size="sm" />
+                  <span className="min-w-0 flex-1 truncate text-body text-fg">{thread.title}</span>
+                  <BrandLogo
+                    brand={thread.modelSelection.providerKind}
+                    className="size-3 shrink-0"
+                  />
+                  <span className="w-8 shrink-0 text-right text-meta text-fg-muted tabular-nums">
+                    {formatRelativeAge(thread.updatedAt)}
+                  </span>
+                </ResultRow>
+              ))}
+            </div>
+          )}
 
-              <div
-                id={`${baseId}-list`}
-                role="listbox"
-                aria-label="Results"
-                className="h-80 shrink-0 overflow-y-auto overscroll-contain p-1.5"
-              >
-                {matchedAgents.length > 0 && (
-                  <div role="group" aria-label="Agents">
-                    <div className="flex h-7 items-center px-2 text-meta font-medium text-fg-muted">
-                      Agents
-                    </div>
-                    {matchedAgents.map((agent, index) => (
-                      <ResultRow
-                        key={agent.id}
-                        id={rowId(index)}
-                        active={index === active}
-                        onHover={() => setActiveIndex(index)}
-                        onChoose={() => choose({ kind: "agent", agent })}
-                      >
-                        <Identicon name={agent.name} size="sm" />
-                        <span className="min-w-0 flex-1 truncate text-body font-medium text-fg">
-                          {agent.name}
-                        </span>
-                        <span className="shrink-0 truncate text-meta text-fg-muted">
-                          {agent.projectName}
-                        </span>
-                      </ResultRow>
-                    ))}
-                  </div>
-                )}
-
-                {matchedThreads.length > 0 && (
-                  <div
-                    role="group"
-                    aria-label="Threads"
-                    className={cn(matchedAgents.length > 0 && "mt-1.5")}
-                  >
-                    <div className="flex h-7 items-center px-2 text-meta font-medium text-fg-muted">
-                      Threads
-                    </div>
-                    {matchedThreads.map((thread, index) => (
-                      <ResultRow
-                        key={thread.id}
-                        id={rowId(threadOffset + index)}
-                        active={threadOffset + index === active}
-                        onHover={() => setActiveIndex(threadOffset + index)}
-                        onChoose={() => choose({ kind: "thread", thread })}
-                      >
-                        <Identicon name={thread.projectName} size="sm" />
-                        <span className="min-w-0 flex-1 truncate text-body text-fg">
-                          {thread.title}
-                        </span>
-                        <BrandLogo
-                          brand={thread.modelSelection.providerKind}
-                          className="size-3 shrink-0"
-                        />
-                        <span className="w-8 shrink-0 text-right text-meta text-fg-muted tabular-nums">
-                          {formatRelativeAge(thread.updatedAt)}
-                        </span>
-                      </ResultRow>
-                    ))}
-                  </div>
-                )}
-
-                {matchedProjects.length > 0 && (
-                  <div
-                    role="group"
-                    aria-label="Projects"
-                    className={cn(projectOffset > 0 && "mt-1.5")}
-                  >
-                    <div className="flex h-7 items-center px-2 text-meta font-medium text-fg-muted">
-                      Projects
-                    </div>
-                    {matchedProjects.map((project, index) => (
-                      <ResultRow
-                        key={project.id}
-                        id={rowId(projectOffset + index)}
-                        active={projectOffset + index === active}
-                        onHover={() => setActiveIndex(projectOffset + index)}
-                        onChoose={() => choose({ kind: "project", project })}
-                      >
-                        <Identicon name={project.name} size="sm" />
-                        <span className="min-w-0 flex-1 truncate text-body font-medium text-fg">
-                          {project.name}
-                        </span>
-                        {project.isGitRepo && (
-                          <span className="shrink-0 rounded-chip bg-white/6 px-1.5 py-0.5 font-mono text-meta text-fg-muted">
-                            {project.defaultBranch}
-                          </span>
-                        )}
-                      </ResultRow>
-                    ))}
-                  </div>
-                )}
-
-                {results.length === 0 && (
-                  <p className="grid h-full place-items-center px-6 text-center text-label text-fg-muted">
-                    {q.length > 0
-                      ? `Nothing matches “${query.trim()}”.`
-                      : "No agents, threads, or projects yet."}
-                  </p>
-                )}
+          {matchedProjects.length > 0 && (
+            <div role="group" aria-label="Projects" className={cn(projectOffset > 0 && "mt-1.5")}>
+              <div className="flex h-7 items-center px-2 text-meta font-medium text-fg-muted">
+                Projects
               </div>
-            </Dialog.Popup>
-          </Dialog.Portal>
-        )}
-      </AnimatePresence>
-    </Dialog.Root>
+              {matchedProjects.map((project, index) => (
+                <ResultRow
+                  key={project.id}
+                  id={rowId(projectOffset + index)}
+                  active={projectOffset + index === active}
+                  onHover={() => setActiveIndex(projectOffset + index)}
+                  onChoose={() => choose({ kind: "project", project })}
+                >
+                  <Identicon name={project.name} size="sm" />
+                  <span className="min-w-0 flex-1 truncate text-body font-medium text-fg">
+                    {project.name}
+                  </span>
+                  {project.isGitRepo && (
+                    <span className="shrink-0 rounded-chip bg-white/6 px-1.5 py-0.5 font-mono text-meta text-fg-muted">
+                      {project.defaultBranch}
+                    </span>
+                  )}
+                </ResultRow>
+              ))}
+            </div>
+          )}
+
+          {results.length === 0 && (
+            <p className="grid h-full place-items-center px-6 text-center text-label text-fg-muted">
+              {q.length > 0
+                ? `Nothing matches “${query.trim()}”.`
+                : "No agents, threads, or projects yet."}
+            </p>
+          )}
+        </div>
+      </Dialog.Popup>
+    </Dialog.Portal>
   );
 }
 

@@ -15,7 +15,7 @@ import { SettingsSidebarNav } from "@/components/settings/SettingsNav.tsx";
 import { Button, buttonClass } from "@/components/ui/Button.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { easeOut } from "@/lib/motion";
-import { useWorkspace } from "@/lib/workspace.tsx";
+import { useWorkspaceActions, useWorkspaceSelector } from "@/lib/workspace.tsx";
 import { AgentList } from "./AgentList.tsx";
 import { ConnectionStatus } from "./ConnectionStatus.tsx";
 import { CreateAgentDialog } from "./CreateAgentDialog.tsx";
@@ -46,7 +46,8 @@ export function Sidebar({
   onExpand,
   onNewThread,
 }: SidebarProps) {
-  const { projects, settleThread } = useWorkspace();
+  const projects = useWorkspaceSelector((s) => s.projects);
+  const { settleThread } = useWorkspaceActions();
   const navigate = useNavigate();
   const [projectFilter, setProjectFilter] = useState<ProjectId | null>(null);
   const filterProjectId = projects.some((project) => project.id === projectFilter)

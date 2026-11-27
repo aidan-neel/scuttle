@@ -6,7 +6,7 @@ import { Composer, type ComposerSubmitPayload } from "@/components/home/Composer
 import { ComposerContextBar } from "@/components/home/ComposerContextBar.tsx";
 import { useDitherBackground } from "@/components/settings/preferences.ts";
 import { AddProjectDialog } from "@/components/shell/AddProjectDialog.tsx";
-import { useWorkspace } from "@/lib/workspace.tsx";
+import { useWorkspaceActions, useWorkspaceSelector } from "@/lib/workspace.tsx";
 
 export const Route = createFileRoute("/")({
   component: HomePage,
@@ -14,17 +14,13 @@ export const Route = createFileRoute("/")({
 
 function HomePage() {
   const navigate = useNavigate();
-  const {
-    projects,
-    providers,
-    selectedProjectId,
-    selectProject,
-    branchesByProject,
-    loadBranches,
-    defaultModelSelection,
-    setDefaultModelSelection,
-    createThread,
-  } = useWorkspace();
+  const projects = useWorkspaceSelector((s) => s.projects);
+  const providers = useWorkspaceSelector((s) => s.providers);
+  const selectedProjectId = useWorkspaceSelector((s) => s.selectedProjectId);
+  const branchesByProject = useWorkspaceSelector((s) => s.branchesByProject);
+  const defaultModelSelection = useWorkspaceSelector((s) => s.defaultModelSelection);
+  const { selectProject, loadBranches, setDefaultModelSelection, createThread } =
+    useWorkspaceActions();
 
   const ditherBackground = useDitherBackground();
   const [runtime, setRuntime] = useState<ThreadRuntime>("local");

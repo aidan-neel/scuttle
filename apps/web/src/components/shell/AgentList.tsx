@@ -7,9 +7,10 @@ import { AgentContextMenuContent } from "@/components/agents/AgentActionsMenu.ts
 import { AgentProfileDialog } from "@/components/agents/AgentProfileDialog.tsx";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
+import { compareIsoDesc } from "@/lib/collections.ts";
 import { formatRelativeAge } from "@/lib/format.ts";
 import { cn } from "@/lib/utils";
-import { useWorkspace } from "@/lib/workspace.tsx";
+import { useWorkspaceActions, useWorkspaceSelector } from "@/lib/workspace.tsx";
 import { SectionHeader, type SectionMenuEntry } from "./SectionHeader.tsx";
 
 type AgentSort = "recent" | "name";
@@ -22,7 +23,7 @@ const SORT_OPTIONS = [
 const sortAgents = (agents: ReadonlyArray<Agent>, sort: AgentSort) =>
   sort === "name"
     ? agents.toSorted((a, b) => a.name.localeCompare(b.name))
-    : agents.toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    : agents.toSorted((a, b) => compareIsoDesc(a.updatedAt, b.updatedAt));
 
 const agentSubtitle = (agent: Agent) =>
   agent.lastSummary ??
@@ -37,7 +38,8 @@ interface AgentListProps {
 }
 
 export function AgentList({ filterProjectId, onFilterChange, onCreateAgent }: AgentListProps) {
-  const { agents, deleteAgent } = useWorkspace();
+  const agents = useWorkspaceSelector((s) => s.agents);
+  const { deleteAgent } = useWorkspaceActions();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const [sort, setSort] = useState<AgentSort>("recent");
