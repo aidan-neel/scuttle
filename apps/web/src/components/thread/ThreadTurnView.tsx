@@ -24,7 +24,14 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   const clockTime = isSystem ? formatClockTime(turn.startedAt) : "";
 
   return (
-    <article data-turn-id={turn.id} className="scroll-mt-6 space-y-3">
+    <article
+      data-turn-id={turn.id}
+      className={
+        streaming
+          ? "scroll-mt-6 space-y-3"
+          : "scroll-mt-6 space-y-3 [content-visibility:auto] [contain-intrinsic-size:auto_320px]"
+      }
+    >
       {isSystem ? (
         clockTime.length > 0 && (
           <p className="text-center text-meta text-fg-faint tabular-nums">{clockTime}</p>

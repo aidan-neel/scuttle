@@ -14,7 +14,13 @@ import { estimateContextUsage } from "@/components/home/contextUsage.ts";
 import { useThreadLocationControls } from "@/components/home/useThreadLocationControls.ts";
 import { ScrollRuler } from "@/components/thread/ScrollRuler.tsx";
 import { ScrollToEndButton } from "@/components/thread/ScrollToEndButton.tsx";
-import { ThreadTurnView } from "@/components/thread/ThreadTurnView.tsx";
+import {
+  computeInitialVisibleStart,
+  expandVisibleStart,
+  INITIAL_VISIBLE_TURNS,
+  LOAD_EARLIER_BATCH,
+  ThreadTurnList,
+} from "@/components/thread/ThreadTurnList.tsx";
 import { useStickToBottom } from "@/components/thread/useStickToBottom.ts";
 import { DotSpinner } from "@/components/ui/DotSpinner.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
@@ -42,14 +48,53 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
     respondApproval,
   } = useWorkspaceActions();
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [compacting, setCompacting] = useState(false);
   const [waitingDismissed, setWaitingDismissed] = useState(false);
   const introTask = useTask();
   const { thread, turns } = detail;
+  const [visibleWindow, setVisibleWindow] = useState<{
+    readonly threadId: string;
+    readonly start: number;
+  }>(() => ({
+    threadId: thread.id,
+    start: computeInitialVisibleStart(turns.length, INITIAL_VISIBLE_TURNS),
+  }));
+  const visibleStart =
+    visibleWindow.threadId === thread.id
+      ? Math.min(visibleWindow.start, turns.length)
+      : computeInitialVisibleStart(turns.length, INITIAL_VISIBLE_TURNS);
+
+  const handleLoadEarlier = () => {
+    setVisibleWindow((prev) => {
+      const base =
+        prev.threadId === thread.id
+          ? Math.min(prev.start, turns.length)
+          : computeInitialVisibleStart(turns.length, INITIAL_VISIBLE_TURNS);
+      return {
+        threadId: thread.id,
+        start: expandVisibleStart(base, LOAD_EARLIER_BATCH),
+      };
+    });
+  };
+
+  const handleEnsureTurnVisible = (turnIndex: number) => {
+    setVisibleWindow((prev) => {
+      const base =
+        prev.threadId === thread.id
+          ? Math.min(prev.start, turns.length)
+          : computeInitialVisibleStart(turns.length, INITIAL_VISIBLE_TURNS);
+      if (turnIndex >= base) {
+        return prev.threadId === thread.id ? prev : { threadId: thread.id, start: base };
+      }
+      return { threadId: thread.id, start: Math.max(0, turnIndex) };
+    });
+  };
+
   const isRunning = thread.status.kind === "running" || thread.status.kind === "needs-input";
   const composerId = `composer-agent-${agent.id}`;
-  const { isAtBottom, scrollToBottom } = useStickToBottom(scrollRef, turns, thread.id);
+  const { isAtBottom, scrollToBottom } = useStickToBottom(scrollRef, contentRef, turns, thread.id);
   const contextUsage = estimateContextUsage({
     turns: thread.lastUsage ? EMPTY_TURNS : turns,
     model: thread.modelSelection.model,
@@ -121,7 +166,14 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
         transition={{ duration: 0.11, ease: easeOut }}
         className="relative flex min-h-0 flex-1 flex-col"
       >
-        {turns.length > 0 && <ScrollRuler turns={turns} scrollRef={scrollRef} />}
+        {turns.length > 0 && (
+          <ScrollRuler
+            turns={turns}
+            scrollRef={scrollRef}
+            mountedStart={visibleStart}
+            onEnsureTurnVisible={handleEnsureTurnVisible}
+          />
+        )}
         <div
           ref={scrollRef}
           className="flex flex-1 flex-col overflow-y-auto px-4 pt-8 pb-10 sm:px-10"
@@ -167,13 +219,15 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
               )}
             </header>
 
-            {turns.length > 0 && (
-              <div className="flex flex-col gap-9">
-                {turns.map((turn) => (
-                  <ThreadTurnView key={turn.id} turn={turn} onRespondApproval={respondApproval} />
-                ))}
-              </div>
-            )}
+            <ThreadTurnList
+              turns={turns}
+              threadId={thread.id}
+              scrollRef={scrollRef}
+              contentRef={contentRef}
+              visibleStart={visibleStart}
+              onLoadEarlier={handleLoadEarlier}
+              onRespondApproval={respondApproval}
+            />
 
             <AnimatePresence initial={false}>
               {needsPurpose && (
