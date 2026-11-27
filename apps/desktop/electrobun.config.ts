@@ -11,5 +11,14 @@ export default {
     copy: {
       "../web/dist": "views/mainview",
     },
+    mac: {
+      icons: "assets/icon.iconset",
+    },
+    linux: {
+      icon: "assets/icon.png",
+    },
+    win: {
+      icon: "assets/icon.png",
+    },
   },
 };
