@@ -34,7 +34,7 @@ function useLiveNow(active: boolean): number {
   useEffect(() => {
     if (!active) return;
     setNow(Date.now());
-    const id = setInterval(() => setNow(Date.now()), 250);
+    const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, [active]);
   return now;

@@ -2,7 +2,7 @@ import type { RespondApprovalInput, ThreadTurn } from "@scuttle/contracts";
 import { memo } from "react";
 import { formatClockTime } from "@/lib/format.ts";
 import { ApprovalCard } from "./ApprovalCard.tsx";
-import { MarkdownView, useSmoothedStream } from "./MarkdownView.tsx";
+import { MarkdownView } from "./MarkdownView.tsx";
 import { WorkProgress } from "./WorkProgress.tsx";
 
 interface ThreadTurnViewProps {
@@ -20,7 +20,6 @@ export const ThreadTurnView = memo(function ThreadTurnView({
 }: ThreadTurnViewProps) {
   const pendingApprovals = turn.approvals.filter((a) => a.status === "pending");
   const streaming = turn.status === "running";
-  const assistantMessage = useSmoothedStream(turn.assistantMessage, streaming);
   const isSystem = turn.origin === "system";
   const clockTime = isSystem ? formatClockTime(turn.startedAt) : "";
 
@@ -48,9 +47,9 @@ export const ThreadTurnView = memo(function ThreadTurnView({
         />
       ))}
 
-      {assistantMessage.trim().length > 0 && (
+      {turn.assistantMessage.trim().length > 0 && (
         <div className="pt-1">
-          <MarkdownView content={assistantMessage} streaming={streaming} />
+          <MarkdownView content={turn.assistantMessage} streaming={streaming} />
         </div>
       )}
 
