@@ -78,11 +78,6 @@ export const launchTurnExecution = (
   let currentPhase: "thinking" | "working" = "thinking";
   let latestUsage: TurnUsage | undefined;
 
-  const persistTurn = (next: ThreadTurn) => {
-    updateTurnOutcomeRow(db, thread.id, turnEpoch, next);
-    eventBus.publishSync({ kind: "turn.upserted", turn: next });
-  };
-
   const closeThinkingIfOpen = () => {
     if (!thinkingActivityKey) return;
     const item = activitiesByKey.get(thinkingActivityKey);
@@ -390,6 +385,17 @@ export const launchTurnExecution = (
     }
   };
 
+  const releaseRun = () => {
+    if (activeRuns.get(thread.id)?.turnId === turn.id) {
+      activeRuns.delete(thread.id);
+    }
+    for (const [approvalId, entry] of pendingApprovals.entries()) {
+      if (entry.turnId === turn.id) {
+        pendingApprovals.delete(approvalId);
+      }
+    }
+  };
+
   const adapter = getHarnessAdapter(thread.modelSelection.providerKind);
   void Promise.resolve()
     .then(() =>
@@ -420,7 +426,7 @@ export const launchTurnExecution = (
         assistantText.length > 0 ? assistantText : (result.finalText ?? assistantText);
       const { activities, approvals } = readLatestTurnChildren();
       const finalUsage = result.usage ?? latestUsage;
-      persistTurn({
+      const finalTurn: ThreadTurn = {
         ...turn,
         assistantMessage: finalMessage,
         thinkingText,
@@ -431,7 +437,8 @@ export const launchTurnExecution = (
         ...(finalUsage ? { usage: finalUsage } : {}),
         activities,
         approvals,
-      });
+      };
+      updateTurnOutcomeRow(db, thread.id, turnEpoch, finalTurn);
       if (!result.interrupted) {
         commitTurnContextEffects({
           db,
@@ -452,7 +459,9 @@ export const launchTurnExecution = (
         });
         refreshThreadTitle();
       }
+      releaseRun();
       updateThreadStatus(thread.id, { kind: "idle" });
+      eventBus.publishSync({ kind: "turn.upserted", turn: finalTurn });
       onProjectActivity(thread, finalMessage.trim() || turn.userMessage);
     })
     .catch((error: unknown) => {
@@ -463,7 +472,7 @@ export const launchTurnExecution = (
       closeRunningActivities(completedAt, controller.signal.aborted ? "completed" : "failed");
       const errorMessage = error instanceof Error ? error.message : String(error);
       const { activities, approvals } = readLatestTurnChildren();
-      persistTurn({
+      const failedTurn: ThreadTurn = {
         ...turn,
         assistantMessage: assistantText,
         thinkingText,
@@ -474,20 +483,14 @@ export const launchTurnExecution = (
         ...(controller.signal.aborted ? {} : { error: errorMessage }),
         activities,
         approvals,
-      });
+      };
+      releaseRun();
+      updateTurnOutcomeRow(db, thread.id, turnEpoch, failedTurn);
       updateThreadStatus(
         thread.id,
         controller.signal.aborted ? { kind: "idle" } : { kind: "error", message: errorMessage },
       );
+      eventBus.publishSync({ kind: "turn.upserted", turn: failedTurn });
     })
-    .finally(() => {
-      if (activeRuns.get(thread.id)?.turnId === turn.id) {
-        activeRuns.delete(thread.id);
-      }
-      for (const [approvalId, entry] of pendingApprovals.entries()) {
-        if (entry.turnId === turn.id) {
-          pendingApprovals.delete(approvalId);
-        }
-      }
-    });
+    .finally(releaseRun);
 };

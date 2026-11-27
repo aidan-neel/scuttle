@@ -1,4 +1,5 @@
 import {
+  AskDelegationParentInput,
   AssignAgentIssueInput,
   CreateAgentInput,
   CreateIssueInput,
@@ -193,6 +194,35 @@ export const handleAgentApiRequest = (
           Effect.flatMap((input) => agents.delegateTask(id, input)),
         ),
         201,
+      );
+    }
+
+    const delegationAsk = matchRoute(
+      pathname,
+      /^\/api\/agents\/([^/]+)\/delegations\/([^/]+)\/ask$/,
+    );
+    if (method === "POST" && delegationAsk !== null) {
+      const id = AgentId.make(delegationAsk[0]!);
+      const delegationId = AgentDelegationId.make(delegationAsk[1]!);
+      return yield* respond(
+        readAndDecode(request, AskDelegationParentInput).pipe(
+          Effect.flatMap((input) =>
+            agents.askParent(id, delegationId, input, { signal: request.signal }),
+          ),
+        ),
+      );
+    }
+
+    const delegationQuestions = matchRoute(
+      pathname,
+      /^\/api\/agents\/([^/]+)\/delegations\/([^/]+)\/questions$/,
+    );
+    if (method === "GET" && delegationQuestions !== null) {
+      return yield* respond(
+        agents.listDelegationQuestions(
+          AgentId.make(delegationQuestions[0]!),
+          AgentDelegationId.make(delegationQuestions[1]!),
+        ),
       );
     }
 

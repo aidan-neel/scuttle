@@ -7,7 +7,14 @@ import {
   TurnId,
 } from "@scuttle/shared/ids";
 import * as Schema from "effect/Schema";
-import { Agent, AgentCheckIn, AgentDelegation, AgentIssue, AgentMemory } from "./agent.ts";
+import {
+  Agent,
+  AgentCheckIn,
+  AgentDelegation,
+  AgentDelegationQuestion,
+  AgentIssue,
+  AgentMemory,
+} from "./agent.ts";
 import { ProviderSnapshot } from "./provider.ts";
 import { ActivityItem, PendingApproval, Project, Thread, ThreadTurn } from "./workspace.ts";
 
@@ -149,6 +156,11 @@ export const AgentDelegationUpsertedEvent = Schema.Struct({
   delegation: AgentDelegation,
 });
 
+export const AgentDelegationQuestionUpsertedEvent = Schema.Struct({
+  kind: Schema.Literals(["agent.delegation.question.upserted"]),
+  question: AgentDelegationQuestion,
+});
+
 export const AgentCheckInCreatedEvent = Schema.Struct({
   kind: Schema.Literals(["agent.checkin.created"]),
   checkIn: AgentCheckIn,
@@ -171,6 +183,7 @@ export const ServerPushEvent = Schema.Union([
   AgentIssueUpsertedEvent,
   AgentIssueDeletedEvent,
   AgentDelegationUpsertedEvent,
+  AgentDelegationQuestionUpsertedEvent,
   AgentCheckInCreatedEvent,
 ]);
 export type ServerPushEvent = typeof ServerPushEvent.Type;
@@ -195,6 +208,7 @@ export const ServerWsMessage = Schema.Union([
   AgentIssueUpsertedEvent,
   AgentIssueDeletedEvent,
   AgentDelegationUpsertedEvent,
+  AgentDelegationQuestionUpsertedEvent,
   AgentCheckInCreatedEvent,
 ]);
 export type ServerWsMessage = typeof ServerWsMessage.Type;

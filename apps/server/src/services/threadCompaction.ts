@@ -148,7 +148,12 @@ export const buildCompactionSummary = (input: {
     );
 
     const relevantDelegations = listDelegations(db, agent.id, 30)
-      .filter((d) => d.status === "running" || d.parentNotifiedAt === undefined)
+      .filter(
+        (d) =>
+          d.status === "running" ||
+          d.status === "waiting_parent" ||
+          d.parentNotifiedAt === undefined,
+      )
       .slice(0, 10);
     delegationsSection = formatSectionWithBudget(
       "Active & Unnotified Delegations:",

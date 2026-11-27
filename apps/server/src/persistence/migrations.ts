@@ -290,9 +290,42 @@ export const applyScuttleMigrations = (db: Database): void => {
     db.run(`
       UPDATE agent_delegations
       SET parent_notified_at = COALESCE(completed_at, created_at)
-      WHERE status != 'running' AND parent_notified_at IS NULL;
+      WHERE status NOT IN ('running', 'waiting_parent') AND parent_notified_at IS NULL;
     `);
   }
+
+  ensureColumn(db, "agent_delegations", "bounce_count", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "agent_delegations", "max_bounces", "INTEGER NOT NULL DEFAULT 3");
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS agent_delegation_questions (
+      id TEXT PRIMARY KEY NOT NULL,
+      delegation_id TEXT NOT NULL REFERENCES agent_delegations(id) ON DELETE CASCADE,
+      agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      child_thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+      parent_thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+      parent_turn_id TEXT REFERENCES turns(id) ON DELETE SET NULL,
+      kind TEXT NOT NULL DEFAULT 'other',
+      question TEXT NOT NULL,
+      attempted TEXT,
+      context TEXT,
+      status TEXT NOT NULL,
+      answer TEXT,
+      error TEXT,
+      bounce_number INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      answered_at TEXT
+    );
+  `);
+
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_agent_delegation_questions_delegation_id
+    ON agent_delegation_questions(delegation_id, created_at ASC);
+  `);
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_agent_delegation_questions_agent_status
+    ON agent_delegation_questions(agent_id, status, created_at ASC);
+  `);
 
   db.run(`
     CREATE TABLE IF NOT EXISTS agent_checkins (

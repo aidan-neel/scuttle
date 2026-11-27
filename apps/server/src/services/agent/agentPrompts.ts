@@ -1,14 +1,16 @@
 import type {
   Agent,
   AgentCheckIn,
+  AgentDelegation,
   AgentDelegationKind,
+  AgentDelegationQuestion,
   AgentIssue,
   AgentMemory,
   AgentModelRole,
   ModelSelection,
   ProviderSnapshot,
 } from "@scuttle/contracts";
-import { ProviderId } from "@scuttle/shared/ids";
+import { type AgentDelegationId, ProviderId } from "@scuttle/shared/ids";
 
 export { buildAgentContextBlock } from "./agentContext.ts";
 
@@ -75,13 +77,18 @@ You are **${agentName}**, a persistent Agent for **${projectName}** (\`${project
 5. **E2E PR Workflow**:
    - Prefer \`worktree\` runtime so each PR task works on an isolated branch.
    - Implement cleanly, run tests/lint/typecheck, commit with clear messages, push, and open a ready-for-review PR.
-   - Report the PR URL and verification results back cleanly.`;
+   - Report the PR URL and verification results back cleanly.
+6. **Worker Bounce-Back**:
+   - Delegated workers may ask you mid-turn when they hit unexpected failures, weird test errors, missing context, or plan conflicts.
+   - Their questions arrive on your primary thread; your reply is returned directly to the waiting worker so it can proceed.`;
 
 const truncate = (text: string, maxChars: number): string =>
   text.length <= maxChars ? text : `${text.slice(0, maxChars - 3)}...`;
 
 export const buildDelegationBrief = (input: {
   readonly agent: Agent;
+  readonly delegationId: AgentDelegationId | string;
+  readonly maxBounces: number;
   readonly role: AgentModelRole;
   readonly kind: AgentDelegationKind;
   readonly title: string;
@@ -92,6 +99,7 @@ export const buildDelegationBrief = (input: {
   const sections: string[] = [
     `You are a delegated **${input.role}** worker for Agent **${input.agent.name}** on project **${input.agent.projectName}** (\`${input.agent.projectPath}\`).`,
     `Task (${input.kind}): ${input.title}`,
+    `Delegation ID: ${input.delegationId}`,
     "",
     "## Brief",
     input.brief,
@@ -129,7 +137,54 @@ export const buildDelegationBrief = (input: {
     );
   }
 
+  if (input.maxBounces > 0) {
+    sections.push(
+      "",
+      "## Asking Your Parent Agent",
+      `If you hit an unexpected failure, weird test error, missing context, plan conflict, or remain stuck after 2 failed attempts, ask your parent Agent instead of retrying blindly (budget: ${input.maxBounces} question(s) max):`,
+      "```bash",
+      'curl -sS --max-time 300 -X POST "$SCUTTLE_API_URL/api/agents/$SCUTTLE_AGENT_ID/delegations/$SCUTTLE_DELEGATION_ID/ask" \\',
+      '  -H "Content-Type: application/json" \\',
+      '  -d \'{"kind":"missing_context","question":"...","attempted":"...","context":"..."}\'',
+      "```",
+      "Valid `kind` values: `missing_context`, `test_failure`, `unexpected_error`, `plan_conflict`, `other`. This request blocks until the parent Agent replies in its primary thread and returns JSON with `status` and `answer`.",
+      "Rules for handling the response:",
+      '- Only follow `answer` when the JSON response has `"status": "answered"`.',
+      '- If `curl` times out or disconnects before the parent finishes, poll `GET "$SCUTTLE_API_URL/api/agents/$SCUTTLE_AGENT_ID/delegations/$SCUTTLE_DELEGATION_ID/questions"` to read the answer once settled instead of re-asking.',
+      '- If the response returns `"status": "canceled"`, `"status": "failed"`, or HTTP `422` (`{"error": "..."}`, e.g. bounce budget exhausted), stop retrying and report the blocker cleanly in your final response.',
+    );
+  }
+
   return sections.join("\n");
+};
+
+export const buildParentQuestionPrompt = (input: {
+  readonly agent: Agent;
+  readonly delegation: AgentDelegation | null;
+  readonly question: AgentDelegationQuestion;
+}): string => {
+  const { delegation, question } = input;
+  const header = delegation
+    ? `Worker question from **${delegation.title}** (${delegation.role} / ${delegation.kind}, delegation \`${delegation.id}\`, bounce ${question.bounceNumber}/${delegation.maxBounces}):`
+    : `Worker question (delegation \`${question.delegationId}\`, bounce ${question.bounceNumber}):`;
+  const lines = [
+    header,
+    `Kind: \`${question.kind}\` (question \`${question.id}\`)`,
+    "",
+    "Question:",
+    question.question,
+  ];
+  if (question.attempted) {
+    lines.push("", "What the worker already attempted:", question.attempted);
+  }
+  if (question.context) {
+    lines.push("", "Additional context:", question.context);
+  }
+  lines.push(
+    "",
+    "Reply directly in this message with the concrete answer, decision, or fix guidance, or tell the worker to stop cleanly. Do not call `POST .../cancel` from inside this reply turn; your response goes straight back to the waiting worker so it can resume.",
+  );
+  return lines.join("\n");
 };
 
 export const buildSetupStartPrompt = (agent: Agent, extraInstructions?: string): string => {

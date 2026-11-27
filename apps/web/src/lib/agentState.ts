@@ -2,6 +2,7 @@ import type {
   Agent,
   AgentCheckIn,
   AgentDelegation,
+  AgentDelegationQuestion,
   AgentDetail,
   AgentIssue,
   AgentMemory,
@@ -13,6 +14,7 @@ export interface AgentWork {
   readonly memories: ReadonlyArray<AgentMemory>;
   readonly issues: ReadonlyArray<AgentIssue>;
   readonly delegations: ReadonlyArray<AgentDelegation>;
+  readonly questions: ReadonlyArray<AgentDelegationQuestion>;
   readonly checkIns: ReadonlyArray<AgentCheckIn>;
 }
 
@@ -63,6 +65,7 @@ export const agentDetailLoaded = (
       memories: detail.memories,
       issues: detail.issues,
       delegations: detail.delegations,
+      questions: slice.agentWork[detail.agent.id]?.questions ?? [],
       checkIns: detail.checkIns,
     },
   },
@@ -98,6 +101,11 @@ export const applyAgentEvent = (slice: AgentSlice, event: ServerPushEvent): Agen
       return withWork(slice, event.delegation.agentId, (work) => ({
         ...work,
         delegations: upsertById(work.delegations, event.delegation),
+      }));
+    case "agent.delegation.question.upserted":
+      return withWork(slice, event.question.agentId, (work) => ({
+        ...work,
+        questions: upsertById(work.questions, event.question, false),
       }));
     case "agent.checkin.created":
       return withWork(slice, event.checkIn.agentId, (work) => ({
