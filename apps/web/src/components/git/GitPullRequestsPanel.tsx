@@ -89,9 +89,8 @@ function CreateForm({
         tone: "error",
         text: describeApiError(error, `Could not open the ${noun.long}.`),
       });
-    } finally {
-      setBusy(false);
     }
+    setBusy(false);
   };
 
   return (

@@ -27,7 +27,7 @@ export interface ComposerSubmitPayload {
 
 interface ComposerProps {
   readonly id?: string;
-  readonly placeholder?: string;
+  readonly placeholder?: string | undefined;
   readonly providers: ReadonlyArray<ProviderSnapshot>;
   readonly modelSelection: ModelSelection;
   readonly onModelSelectionChange: (selection: ModelSelection) => void;
@@ -37,8 +37,8 @@ interface ComposerProps {
   readonly onStop?: () => void;
   readonly interactionMode?: InteractionMode;
   readonly onInteractionModeChange?: (mode: InteractionMode) => void;
-  readonly onCompact?: () => void;
-  readonly filesRoot?: string;
+  readonly onCompact?: (() => void) | undefined;
+  readonly filesRoot?: string | undefined;
   readonly status?: ComposerStatus;
   readonly contextUsage?: ComposerContextUsage;
 }
@@ -119,10 +119,10 @@ export function Composer({
     }
   }, [prompt]);
 
-  const submit = async () => {
+  const submit = () => {
     if (empty || disabled || submitting || running) return;
     setSubmitting(true);
-    try {
+    const run = async () => {
       await onSubmit({
         prompt: trimmed,
         modelSelection,
@@ -130,9 +130,10 @@ export function Composer({
       });
       applyEdit({ text: "", caret: 0 });
       setAttachments([]);
-    } finally {
+    };
+    void run().finally(() => {
       setSubmitting(false);
-    }
+    });
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {

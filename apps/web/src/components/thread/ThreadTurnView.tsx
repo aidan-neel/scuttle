@@ -1,4 +1,5 @@
 import type { RespondApprovalInput, ThreadTurn } from "@scuttle/contracts";
+import { memo } from "react";
 import { formatClockTime } from "@/lib/format.ts";
 import { ApprovalCard } from "./ApprovalCard.tsx";
 import { MarkdownView, useSmoothedStream } from "./MarkdownView.tsx";
@@ -6,10 +7,17 @@ import { WorkProgress } from "./WorkProgress.tsx";
 
 interface ThreadTurnViewProps {
   readonly turn: ThreadTurn;
-  readonly onRespondApproval: (approvalId: string, input: RespondApprovalInput) => Promise<void>;
+  readonly onRespondApproval: (
+    threadId: string,
+    approvalId: string,
+    input: RespondApprovalInput,
+  ) => Promise<void>;
 }
 
-export function ThreadTurnView({ turn, onRespondApproval }: ThreadTurnViewProps) {
+export const ThreadTurnView = memo(function ThreadTurnView({
+  turn,
+  onRespondApproval,
+}: ThreadTurnViewProps) {
   const pendingApprovals = turn.approvals.filter((a) => a.status === "pending");
   const streaming = turn.status === "running";
   const assistantMessage = useSmoothedStream(turn.assistantMessage, streaming);
@@ -36,7 +44,7 @@ export function ThreadTurnView({ turn, onRespondApproval }: ThreadTurnViewProps)
         <ApprovalCard
           key={approval.id}
           approval={approval}
-          onRespond={(input) => onRespondApproval(approval.id, input)}
+          onRespond={(input) => onRespondApproval(turn.threadId, approval.id, input)}
         />
       ))}
 
@@ -53,4 +61,4 @@ export function ThreadTurnView({ turn, onRespondApproval }: ThreadTurnViewProps)
       )}
     </article>
   );
-}
+});

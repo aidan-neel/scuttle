@@ -17,17 +17,15 @@ export function ApprovalCard({ approval, onRespond }: ApprovalCardProps) {
     return null;
   }
 
-  const pick = async (optionId: string, custom?: string) => {
+  const pick = (optionId: string, custom?: string) => {
     if (busy) return;
     setBusy(true);
-    try {
-      await onRespond({
-        optionId,
-        ...(custom && custom.trim().length > 0 ? { customText: custom.trim() } : {}),
-      });
-    } finally {
+    void onRespond({
+      optionId,
+      ...(custom && custom.trim().length > 0 ? { customText: custom.trim() } : {}),
+    }).finally(() => {
       setBusy(false);
-    }
+    });
   };
 
   return (

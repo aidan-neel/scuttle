@@ -81,13 +81,11 @@ function ProviderRuntime({ provider }: { readonly provider: ProviderSnapshot }) 
   const [busy, setBusy] = useState(false);
   const dirty = binaryPath !== provider.binaryPath || launchArgs !== provider.launchArgs;
 
-  const run = async (patch: Parameters<typeof updateProvider>[1]) => {
+  const run = (patch: Parameters<typeof updateProvider>[1]) => {
     setBusy(true);
-    try {
-      await updateProvider(provider.id, patch);
-    } finally {
+    void updateProvider(provider.id, patch).finally(() => {
       setBusy(false);
-    }
+    });
   };
 
   const needsAttention = provider.status === "unauthenticated" || provider.status === "unavailable";
@@ -168,13 +166,11 @@ export function ProvidersSection() {
   const [refreshing, setRefreshing] = useState(false);
   const active = providers.find((p) => p.id === selectedId) ?? providers[0] ?? null;
 
-  const refresh = async () => {
+  const refresh = () => {
     setRefreshing(true);
-    try {
-      await refreshProviders();
-    } finally {
+    void refreshProviders().finally(() => {
       setRefreshing(false);
-    }
+    });
   };
 
   return (

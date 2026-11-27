@@ -76,6 +76,38 @@ describe("estimateContextUsage", () => {
     expect(usage.segments.find((s) => s.key === "conversation")?.tokens).toBe(300);
     expect(usage.usedTokens).toBe(1_300);
   });
+
+  test("short-circuits without scanning turns when lastUsage is present", () => {
+    const poisonedTurn = {
+      get userMessage(): string {
+        throw new Error("should not scan userMessage when lastUsage is present");
+      },
+      get assistantMessage(): string {
+        throw new Error("should not scan assistantMessage when lastUsage is present");
+      },
+      get thinkingText(): string {
+        throw new Error("should not scan thinkingText when lastUsage is present");
+      },
+      get activities(): ReadonlyArray<{ readonly label: string }> {
+        throw new Error("should not scan activities when lastUsage is present");
+      },
+      get approvals(): ReadonlyArray<{ readonly title: string }> {
+        throw new Error("should not scan approvals when lastUsage is present");
+      },
+    };
+    const usage = estimateContextUsage({
+      turns: [poisonedTurn],
+      systemChars: 4_000,
+      model: "claude-sonnet-4-5",
+      lastUsage: { inputTokens: 1_500, outputTokens: 500 },
+    });
+    expect(usage.usedTokens).toBe(2_000);
+    expect(usage.segments.map((s) => [s.key, s.tokens])).toEqual([
+      ["system", 1_000],
+      ["tools", 0],
+      ["conversation", 1_000],
+    ]);
+  });
 });
 
 describe("contextWindowFor", () => {

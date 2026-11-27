@@ -97,9 +97,8 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
       void navigate({ to: "/agents/$agentId", params: { agentId: agent.id } });
     } catch (cause) {
       setError(describeApiError(cause, "Could not create the agent."));
-    } finally {
-      setCreating(false);
     }
+    setCreating(false);
   };
 
   return (

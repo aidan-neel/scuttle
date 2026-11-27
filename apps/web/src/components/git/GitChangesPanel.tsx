@@ -79,9 +79,8 @@ export function GitChangesPanel({
       if (kind === "commit") setMessage("");
     } catch (error) {
       setFeedback({ tone: "error", text: describeApiError(error, `Git ${kind} failed.`) });
-    } finally {
-      setBusy(null);
     }
+    setBusy(null);
   };
 
   const commit = () =>

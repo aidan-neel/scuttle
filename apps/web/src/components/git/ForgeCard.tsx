@@ -108,9 +108,8 @@ function TokenForm({
       onConnected(next);
     } catch (error) {
       setFeedback({ tone: "error", text: describeApiError(error, "Could not save the token.") });
-    } finally {
-      setBusy(false);
     }
+    setBusy(false);
   };
 
   return (
@@ -204,9 +203,8 @@ export function ForgeCard({
       setFlow(await api.startGithubDeviceFlow());
     } catch (error) {
       setFeedback({ tone: "error", text: describeApiError(error, "Could not start sign-in.") });
-    } finally {
-      setBusy(false);
     }
+    setBusy(false);
   };
 
   const signOut = async () => {
@@ -216,9 +214,8 @@ export function ForgeCard({
       onStatus(await api.disconnectForge(status.forge));
     } catch (error) {
       setFeedback({ tone: "error", text: describeApiError(error, "Could not sign out.") });
-    } finally {
-      setBusy(false);
     }
+    setBusy(false);
   };
 
   const showOAuth = status.oauthAvailable && !status.hasStoredCredential && flow === null;

@@ -1,5 +1,12 @@
 import { describeApiError } from "@scuttle/client-runtime";
-import type { Agent, ModelSelection, ThreadDetail } from "@scuttle/contracts";
+import type {
+  Agent,
+  InteractionMode,
+  ModelSelection,
+  ThreadDetail,
+  ThreadRuntime,
+  ThreadTurn,
+} from "@scuttle/contracts";
 import { AnimatePresence, motion } from "motion/react";
 import { useRef, useState } from "react";
 import { Composer, type ComposerSubmitPayload } from "@/components/home/Composer.tsx";
@@ -20,6 +27,8 @@ interface AgentConversationProps {
   readonly detail: ThreadDetail;
   readonly onViewAgent: () => void;
 }
+
+const EMPTY_TURNS: ReadonlyArray<ThreadTurn> = [];
 
 export function AgentConversation({ agent, detail, onViewAgent }: AgentConversationProps) {
   const providers = useWorkspaceSelector((s) => s.providers);
@@ -42,16 +51,17 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
   const composerId = `composer-agent-${agent.id}`;
   const { isAtBottom, scrollToBottom } = useStickToBottom(scrollRef, turns, thread.id);
   const contextUsage = estimateContextUsage({
-    turns,
+    turns: thread.lastUsage ? EMPTY_TURNS : turns,
     model: thread.modelSelection.model,
     ...(thread.lastUsage ? { lastUsage: thread.lastUsage } : {}),
     ...(thread.sessionEpoch !== undefined ? { sessionEpoch: thread.sessionEpoch } : {}),
     ...(thread.activeSummary ? { activeSummary: thread.activeSummary } : {}),
   });
+  const handleRuntimeUpdate = (runtime: ThreadRuntime) => updateAgent(agent.id, { runtime });
   const status = useThreadLocationControls({
     thread,
     disabled: isRunning,
-    onRuntimeUpdate: (runtime) => updateAgent(agent.id, { runtime }),
+    onRuntimeUpdate: handleRuntimeUpdate,
     onError: setSubmitError,
   });
 
@@ -74,26 +84,32 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
     }
   };
 
-  const handleCompact = async () => {
+  const handleCompact = () => {
     if (compacting || isRunning) return;
     setSubmitError(null);
     setCompacting(true);
-    try {
-      await compactThread(thread.id);
-    } catch (error) {
-      setSubmitError(describeApiError(error, "Failed to compact thread."));
-    } finally {
-      setCompacting(false);
-    }
+    void compactThread(thread.id)
+      .catch((error: unknown) => {
+        setSubmitError(describeApiError(error, "Failed to compact thread."));
+      })
+      .finally(() => {
+        setCompacting(false);
+      });
   };
 
-  const handleModelSelectionChange = async (modelSelection: ModelSelection) => {
+  const handleModelSelectionChange = (modelSelection: ModelSelection) => {
     setSubmitError(null);
-    try {
-      await updateAgent(agent.id, { modelSelection });
-    } catch (error) {
+    void updateAgent(agent.id, { modelSelection }).catch((error: unknown) => {
       setSubmitError(describeApiError(error, "Could not update model."));
-    }
+    });
+  };
+
+  const handleInteractionModeChange = (interactionMode: InteractionMode) => {
+    void updateThread(thread.id, { interactionMode });
+  };
+
+  const handleStop = () => {
+    void interruptTurn(thread.id);
   };
 
   return (
@@ -154,13 +170,7 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
             {turns.length > 0 && (
               <div className="flex flex-col gap-9">
                 {turns.map((turn) => (
-                  <ThreadTurnView
-                    key={turn.id}
-                    turn={turn}
-                    onRespondApproval={(approvalId, input) =>
-                      respondApproval(thread.id, approvalId, input)
-                    }
-                  />
+                  <ThreadTurnView key={turn.id} turn={turn} onRespondApproval={respondApproval} />
                 ))}
               </div>
             )}
@@ -221,20 +231,16 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
             }
             providers={providers}
             modelSelection={thread.modelSelection}
-            onModelSelectionChange={(modelSelection) =>
-              void handleModelSelectionChange(modelSelection)
-            }
+            onModelSelectionChange={handleModelSelectionChange}
             interactionMode={thread.interactionMode}
-            onInteractionModeChange={(interactionMode) =>
-              void updateThread(thread.id, { interactionMode })
-            }
-            {...(compacting ? {} : { onCompact: () => void handleCompact() })}
+            onInteractionModeChange={handleInteractionModeChange}
+            onCompact={compacting ? undefined : handleCompact}
             filesRoot={thread.cwd}
             status={status}
             contextUsage={contextUsage}
             running={isRunning}
             onSubmit={handleSubmit}
-            onStop={() => void interruptTurn(thread.id)}
+            onStop={handleStop}
           />
         </div>
       </div>

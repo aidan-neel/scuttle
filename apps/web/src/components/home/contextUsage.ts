@@ -89,17 +89,7 @@ export function estimateContextUsage({
     lastUsage?.contextWindowTokens && lastUsage.contextWindowTokens > 0
       ? lastUsage.contextWindowTokens
       : contextWindowFor(model);
-  const activeTurns =
-    sessionEpoch === undefined
-      ? turns
-      : turns.filter((turn) => (turn.sessionEpoch ?? 0) === sessionEpoch);
-  const summaryChars = activeSummary?.trim().length ?? 0;
-
   const estSystem = toTokens(systemChars);
-  const estTools = toTokens(activeTurns.reduce((sum, turn) => sum + toolChars(turn), 0));
-  const estConversation = toTokens(
-    summaryChars + activeTurns.reduce((sum, turn) => sum + conversationChars(turn), 0),
-  );
 
   if (lastUsage) {
     const usedTokens =
@@ -107,27 +97,30 @@ export function estimateContextUsage({
       (lastUsage.cacheReadTokens ?? 0) +
       (lastUsage.cacheCreationTokens ?? 0) +
       lastUsage.outputTokens;
-    const estTotal = estSystem + estTools + estConversation;
-    const systemTokens =
-      usedTokens === 0 || estTotal <= 0
-        ? 0
-        : Math.min(usedTokens, Math.round((usedTokens * estSystem) / estTotal));
-    const toolsTokens =
-      usedTokens === 0 || estTotal <= 0
-        ? 0
-        : Math.min(usedTokens - systemTokens, Math.round((usedTokens * estTools) / estTotal));
-    const conversationTokens = Math.max(0, usedTokens - systemTokens - toolsTokens);
+    const systemTokens = usedTokens === 0 ? 0 : Math.min(usedTokens, estSystem);
+    const conversationTokens = Math.max(0, usedTokens - systemTokens);
     return {
       usedTokens,
       windowTokens,
       compactAtTokens: Math.round(windowTokens * COMPACT_BUDGET_RATIO),
       segments: [
         { key: "system", label: "System prompt", tokens: systemTokens },
-        { key: "tools", label: "Tools & activities", tokens: toolsTokens },
+        { key: "tools", label: "Tools & activities", tokens: 0 },
         { key: "conversation", label: "Conversation", tokens: conversationTokens },
       ],
     };
   }
+
+  const activeTurns =
+    sessionEpoch === undefined
+      ? turns
+      : turns.filter((turn) => (turn.sessionEpoch ?? 0) === sessionEpoch);
+  const summaryChars = activeSummary?.trim().length ?? 0;
+
+  const estTools = toTokens(activeTurns.reduce((sum, turn) => sum + toolChars(turn), 0));
+  const estConversation = toTokens(
+    summaryChars + activeTurns.reduce((sum, turn) => sum + conversationChars(turn), 0),
+  );
 
   const segments: ReadonlyArray<ContextSegment> = [
     { key: "system", label: "System prompt", tokens: estSystem },

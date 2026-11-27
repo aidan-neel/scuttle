@@ -1,6 +1,12 @@
 import { StopIcon } from "@hugeicons/core-free-icons";
 import { describeApiError } from "@scuttle/client-runtime";
-import type { ModelSelection, ThreadDetail } from "@scuttle/contracts";
+import type {
+  InteractionMode,
+  ModelSelection,
+  ThreadDetail,
+  ThreadRuntime,
+  ThreadTurn,
+} from "@scuttle/contracts";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
@@ -65,6 +71,8 @@ function ThreadPage() {
   return <ThreadView detail={detail} />;
 }
 
+const EMPTY_TURNS: ReadonlyArray<ThreadTurn> = [];
+
 function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
   const providers = useWorkspaceSelector((s) => s.providers);
   const { sendTurn, interruptTurn, updateThread, compactThread, respondApproval } =
@@ -77,27 +85,27 @@ function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
   const { isAtBottom, scrollToBottom } = useStickToBottom(scrollRef, turns, thread.id);
   const isRunning = thread.status.kind === "running" || thread.status.kind === "needs-input";
   const contextUsage = estimateContextUsage({
-    turns,
+    turns: thread.lastUsage ? EMPTY_TURNS : turns,
     model: thread.modelSelection.model,
     ...(thread.lastUsage ? { lastUsage: thread.lastUsage } : {}),
     ...(thread.sessionEpoch !== undefined ? { sessionEpoch: thread.sessionEpoch } : {}),
     ...(thread.activeSummary ? { activeSummary: thread.activeSummary } : {}),
   });
 
+  const handleRuntimeUpdate = (runtime: ThreadRuntime) => updateThread(thread.id, { runtime });
+
   const status = useThreadLocationControls({
     thread,
     disabled: isRunning,
-    onRuntimeUpdate: (runtime) => updateThread(thread.id, { runtime }),
+    onRuntimeUpdate: handleRuntimeUpdate,
     onError: setSubmitError,
   });
 
-  const handleModelSelectionChange = async (modelSelection: ModelSelection) => {
+  const handleModelSelectionChange = (modelSelection: ModelSelection) => {
     setSubmitError(null);
-    try {
-      await updateThread(thread.id, { modelSelection });
-    } catch (error) {
+    void updateThread(thread.id, { modelSelection }).catch((error: unknown) => {
       setSubmitError(describeApiError(error, "Could not update model."));
-    }
+    });
   };
 
   const handleSubmit = async (payload: ComposerSubmitPayload) => {
@@ -113,17 +121,25 @@ function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
     }
   };
 
-  const handleCompact = async () => {
+  const handleCompact = () => {
     if (compacting || isRunning) return;
     setSubmitError(null);
     setCompacting(true);
-    try {
-      await compactThread(thread.id);
-    } catch (error) {
-      setSubmitError(describeApiError(error, "Failed to compact thread."));
-    } finally {
-      setCompacting(false);
-    }
+    void compactThread(thread.id)
+      .catch((error: unknown) => {
+        setSubmitError(describeApiError(error, "Failed to compact thread."));
+      })
+      .finally(() => {
+        setCompacting(false);
+      });
+  };
+
+  const handleStop = () => {
+    void interruptTurn(thread.id);
+  };
+
+  const handleInteractionModeChange = (interactionMode: InteractionMode) => {
+    void updateThread(thread.id, { interactionMode });
   };
 
   return (
@@ -141,7 +157,7 @@ function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
           refreshKey={`${thread.status.kind}:${turns.length}:${thread.branch}:${thread.runtime}`}
         />
         {isRunning && (
-          <Button variant="destructive" size="sm" onClick={() => void interruptTurn(thread.id)}>
+          <Button variant="destructive" size="sm" onClick={handleStop}>
             <Icon icon={StopIcon} />
             Stop
           </Button>
@@ -159,13 +175,7 @@ function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 pt-8 pb-10">
           <div className="mx-auto flex w-full max-w-composer flex-col gap-9">
             {turns.map((turn) => (
-              <ThreadTurnView
-                key={turn.id}
-                turn={turn}
-                onRespondApproval={(approvalId, input) =>
-                  respondApproval(thread.id, approvalId, input)
-                }
-              />
+              <ThreadTurnView key={turn.id} turn={turn} onRespondApproval={respondApproval} />
             ))}
           </div>
         </div>
@@ -185,22 +195,18 @@ function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
           )}
           <Composer
             id={`composer-${thread.id}`}
-            {...(isRunning
-              ? { placeholder: "Agent is working… press Esc or click Stop to interrupt" }
-              : {})}
+            placeholder={
+              isRunning ? "Agent is working… press Esc or click Stop to interrupt" : undefined
+            }
             providers={providers}
             modelSelection={thread.modelSelection}
-            onModelSelectionChange={(modelSelection) =>
-              void handleModelSelectionChange(modelSelection)
-            }
+            onModelSelectionChange={handleModelSelectionChange}
             running={isRunning}
             onSubmit={handleSubmit}
-            onStop={() => void interruptTurn(thread.id)}
+            onStop={handleStop}
             interactionMode={thread.interactionMode}
-            onInteractionModeChange={(interactionMode) =>
-              void updateThread(thread.id, { interactionMode })
-            }
-            {...(compacting ? {} : { onCompact: () => void handleCompact() })}
+            onInteractionModeChange={handleInteractionModeChange}
+            onCompact={compacting ? undefined : handleCompact}
             filesRoot={thread.cwd}
             status={status}
             contextUsage={contextUsage}

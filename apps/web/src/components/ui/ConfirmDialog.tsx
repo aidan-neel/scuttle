@@ -49,9 +49,8 @@ export function ConfirmDialog({
       onOpenChange(false);
     } catch {
       setFailed(true);
-    } finally {
-      setPending(false);
     }
+    setPending(false);
   };
 
   return (

@@ -23,9 +23,8 @@ export function GitSection() {
       setError(null);
     } catch (cause) {
       setError(describeApiError(cause, "Could not load Git accounts."));
-    } finally {
-      setRefreshing(false);
     }
+    setRefreshing(false);
   };
 
   useEffect(() => {

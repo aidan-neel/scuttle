@@ -21,14 +21,14 @@ export function useGitStatus(target: GitTargetRef, refreshKey: string): GitStatu
     try {
       const api = await getGitApi();
       const next = await api.getGitStatus(target);
-      if (!isActive()) return;
-      setStatus(next);
-      setError(null);
+      if (isActive()) {
+        setStatus(next);
+        setError(null);
+      }
     } catch (cause) {
       if (isActive()) setError(describeApiError(cause, "Could not read Git status."));
-    } finally {
-      if (isActive()) setLoading(false);
     }
+    if (isActive()) setLoading(false);
   };
 
   useEffect(() => {

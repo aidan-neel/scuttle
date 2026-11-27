@@ -1,9 +1,11 @@
 import { describeApiError } from "@scuttle/client-runtime";
-import type { Thread, ThreadRuntime } from "@scuttle/contracts";
+import type { GitBranchInfo, Thread, ThreadRuntime } from "@scuttle/contracts";
 import { useEffect, useState } from "react";
 import { getGitApi } from "@/components/git/gitApi.ts";
-import { useWorkspace } from "@/lib/workspace.tsx";
+import { useWorkspaceActions, useWorkspaceSelector } from "@/lib/workspace.tsx";
 import type { ComposerStatus } from "./ComposerBottomBar.tsx";
+
+const EMPTY_BRANCHES: ReadonlyArray<GitBranchInfo> = [];
 
 interface UseThreadLocationOptions {
   readonly thread: Thread;
@@ -18,14 +20,15 @@ export function useThreadLocationControls({
   onRuntimeUpdate,
   onError,
 }: UseThreadLocationOptions): ComposerStatus {
-  const { branchesByProject, loadBranches, loadThreadDetail } = useWorkspace();
+  const branches = useWorkspaceSelector(
+    (s) => s.branchesByProject[thread.projectId] ?? EMPTY_BRANCHES,
+  );
+  const { loadBranches, loadThreadDetail } = useWorkspaceActions();
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     void loadBranches(thread.projectId).catch(() => {});
   }, [thread.projectId]);
-
-  const branches = branchesByProject[thread.projectId] ?? [];
 
   const handleRuntimeChange = (nextRuntime: ThreadRuntime) => {
     if (nextRuntime === thread.runtime || busy || disabled) return;

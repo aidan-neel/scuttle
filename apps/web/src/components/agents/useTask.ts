@@ -15,15 +15,15 @@ export function useTask(): Task {
   const run = async (key: string, work: () => Promise<unknown>, fallback: string) => {
     setBusy(key);
     setError(null);
+    let ok = false;
     try {
       await work();
-      return true;
+      ok = true;
     } catch (cause) {
       setError(describeApiError(cause, fallback));
-      return false;
-    } finally {
-      setBusy((current) => (current === key ? null : current));
     }
+    setBusy((current) => (current === key ? null : current));
+    return ok;
   };
 
   return { busy, error, run, clearError: () => setError(null) };
