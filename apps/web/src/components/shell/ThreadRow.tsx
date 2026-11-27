@@ -6,6 +6,7 @@ import {
   Tick02Icon,
 } from "@hugeicons/core-free-icons";
 import type { Thread, ThreadStatus } from "@scuttle/contracts";
+import { memo } from "react";
 import { BrandLogo } from "@/components/ui/BrandLogo.tsx";
 import { Button } from "@/components/ui/Button.tsx";
 import { DotSpinner } from "@/components/ui/DotSpinner.tsx";
@@ -59,20 +60,25 @@ function StatusLabel({
 interface ThreadRowProps {
   readonly thread: Thread;
   readonly selected: boolean;
-  readonly onSelect: () => void;
-  readonly onSettle: () => void;
+  readonly onSelect: (threadId: Thread["id"]) => void;
+  readonly onSettle: (thread: Thread) => void;
 }
 
-export function ThreadRow({ thread, selected, onSelect, onSettle }: ThreadRowProps) {
+export const ThreadRow = memo(function ThreadRow({
+  thread,
+  selected,
+  onSelect,
+  onSettle,
+}: ThreadRowProps) {
   const local = thread.runtime === "local";
 
   return (
-    <div className="group/row relative">
+    <div className="group/row relative box-border h-[56px]">
       <button
         type="button"
         aria-current={selected}
-        onClick={onSelect}
-        className={`flex w-full flex-col gap-[5px] rounded-row px-2 py-[9px] text-left outline-none transition-colors duration-100 ease-out focus-visible:shadow-focus ${
+        onClick={() => onSelect(thread.id)}
+        className={`flex box-border h-[56px] w-full flex-col justify-center gap-[5px] rounded-row px-2 text-left outline-none transition-colors duration-100 ease-out focus-visible:shadow-focus ${
           selected ? "bg-white/7" : "group-hover/row:bg-white/4"
         }`}
       >
@@ -101,11 +107,11 @@ export function ThreadRow({ thread, selected, onSelect, onSettle }: ThreadRowPro
         variant="secondary"
         size="icon-sm"
         aria-label={`Settle ${thread.title}`}
-        onClick={onSettle}
+        onClick={() => onSettle(thread)}
         className="absolute top-[8px] right-2 scale-90 opacity-0 transition-[opacity,scale,background-color,box-shadow,--button-top,--button-bottom] duration-150 ease-out-quint group-hover/row:scale-100 group-hover/row:opacity-100 group-has-[:focus-visible]/row:scale-100 group-has-[:focus-visible]/row:opacity-100"
       >
         <Icon icon={Tick02Icon} />
       </Button>
     </div>
   );
-}
+});

@@ -8,16 +8,22 @@ import {
 import type { Thread } from "@scuttle/contracts";
 import type { ProjectId } from "@scuttle/shared/ids";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { AnimatePresence, motion } from "motion/react";
-import { useState } from "react";
+import { type MouseEvent, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button.tsx";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
 import { ContextMenuItem, ContextMenuPopup, ContextMenuSeparator } from "@/components/ui/Menu.tsx";
 import { SwapText } from "@/components/ui/SwapText.tsx";
-import { easeOut, spring } from "@/lib/motion";
 import { useWorkspaceActions, useWorkspaceSelector } from "@/lib/workspace.tsx";
+import { useListWindow } from "./useListWindow.ts";
+
+const SETTLED_ROW_STRIDE = 33;
+
+const resolveThreadId = (target: EventTarget | null) =>
+  target instanceof Element
+    ? (target.closest("[data-thread-id]")?.getAttribute("data-thread-id") ?? null)
+    : null;
 
 export function SettledSection({ projectId }: { readonly projectId: ProjectId | null }) {
   const threads = useWorkspaceSelector((s) => s.threads);
@@ -27,12 +33,42 @@ export function SettledSection({ projectId }: { readonly projectId: ProjectId | 
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const [expanded, setExpanded] = useState(false);
   const [deleting, setDeleting] = useState<Thread | null>(null);
+  const [menuThreadId, setMenuThreadId] = useState<string | null>(null);
+  const listRef = useRef<HTMLUListElement | null>(null);
+
   const done = threads.filter(
     (thread) =>
       thread.settledAt !== undefined &&
       !agentThreadIds.has(thread.id) &&
       (projectId === null || thread.projectId === projectId),
   );
+  const { startIndex, endIndex, paddingTop, paddingBottom } = useListWindow({
+    count: done.length,
+    rowStride: SETTLED_ROW_STRIDE,
+    scrollRef: listRef,
+    listRef,
+    overscan: 6,
+    enabled: expanded && done.length > 0,
+  });
+  const visibleDone = done.slice(startIndex, endIndex);
+  const menuThread = menuThreadId ? (done.find((t) => t.id === menuThreadId) ?? null) : null;
+
+  const openThreadById = (threadId: Thread["id"]) => {
+    void navigate({ to: "/threads/$threadId", params: { threadId } });
+  };
+
+  const handleContextMenu = (event: MouseEvent) => {
+    setMenuThreadId(resolveThreadId(event.target));
+  };
+
+  const handleMenuOpenChange = (
+    nextOpen: boolean,
+    details: ContextMenu.Root.ChangeEventDetails,
+  ) => {
+    if (nextOpen && resolveThreadId(details.event.target) === null) {
+      details.cancel();
+    }
+  };
 
   return (
     <>
@@ -53,63 +89,62 @@ export function SettledSection({ projectId }: { readonly projectId: ProjectId | 
               className={`size-3 transition-transform duration-150 ease-out ${expanded ? "rotate-90" : ""}`}
             />
           </button>
-          <AnimatePresence initial={false}>
-            {expanded && (
-              <motion.ul
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: "auto", opacity: 1, transition: spring.smooth }}
-                exit={{ height: 0, opacity: 0, transition: { duration: 0.15, ease: easeOut } }}
-                className="scrollbar-none flex max-h-56 flex-col gap-px overflow-y-auto"
-              >
-                {done.map((thread) => {
-                  const openThread = () =>
-                    void navigate({ to: "/threads/$threadId", params: { threadId: thread.id } });
-                  return (
-                    <li key={thread.id}>
-                      <ContextMenu.Root>
-                        <ContextMenu.Trigger className="group/settled flex items-center gap-1 rounded-chip pr-1 pl-2 transition-colors duration-100 hover:bg-white/4">
-                          <button
-                            type="button"
-                            onClick={openThread}
-                            className="flex min-w-0 flex-1 items-center gap-2 rounded-chip py-1.5 text-left outline-none focus-visible:shadow-focus"
-                          >
-                            <Identicon name={thread.projectName} size="sm" />
-                            <span className="min-w-0 flex-1 truncate text-label text-fg-secondary">
-                              {thread.title}
-                            </span>
-                          </button>
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={`Unsettle ${thread.title}`}
-                            onClick={() => void settleThread(thread.id, false)}
-                            className="opacity-0 transition-opacity duration-150 ease-out group-hover/settled:opacity-100 focus-visible:opacity-100"
-                          >
-                            <Icon icon={Undo02Icon} />
-                          </Button>
-                        </ContextMenu.Trigger>
-                        <ContextMenuPopup label={`${thread.title} actions`}>
-                          <ContextMenuItem onClick={openThread}>
-                            <Icon icon={Message01Icon} className="text-fg-muted" />
-                            Open thread
-                          </ContextMenuItem>
-                          <ContextMenuItem onClick={() => void settleThread(thread.id, false)}>
-                            <Icon icon={Undo02Icon} className="text-fg-muted" />
-                            Unsettle thread
-                          </ContextMenuItem>
-                          <ContextMenuSeparator />
-                          <ContextMenuItem danger onClick={() => setDeleting(thread)}>
-                            <Icon icon={Delete02Icon} />
-                            Delete thread
-                          </ContextMenuItem>
-                        </ContextMenuPopup>
-                      </ContextMenu.Root>
+          {expanded && (
+            <ContextMenu.Root onOpenChange={handleMenuOpenChange}>
+              <ContextMenu.Trigger className="block" onContextMenu={handleContextMenu}>
+                <ul
+                  ref={listRef}
+                  style={{ paddingTop, paddingBottom }}
+                  className="scrollbar-none flex max-h-56 flex-col gap-px overflow-y-auto"
+                >
+                  {visibleDone.map((thread) => (
+                    <li
+                      key={thread.id}
+                      data-thread-id={thread.id}
+                      className="group/settled flex h-8 items-center gap-1 rounded-chip pr-1 pl-2 transition-colors duration-100 hover:bg-white/4"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => openThreadById(thread.id)}
+                        className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-chip text-left outline-none focus-visible:shadow-focus"
+                      >
+                        <Identicon name={thread.projectName} size="sm" />
+                        <span className="min-w-0 flex-1 truncate text-label text-fg-secondary">
+                          {thread.title}
+                        </span>
+                      </button>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={`Unsettle ${thread.title}`}
+                        onClick={() => void settleThread(thread.id, false)}
+                        className="opacity-0 transition-opacity duration-150 ease-out group-hover/settled:opacity-100 focus-visible:opacity-100"
+                      >
+                        <Icon icon={Undo02Icon} />
+                      </Button>
                     </li>
-                  );
-                })}
-              </motion.ul>
-            )}
-          </AnimatePresence>
+                  ))}
+                </ul>
+              </ContextMenu.Trigger>
+              {menuThread !== null && (
+                <ContextMenuPopup label={`${menuThread.title} actions`}>
+                  <ContextMenuItem onClick={() => openThreadById(menuThread.id)}>
+                    <Icon icon={Message01Icon} className="text-fg-muted" />
+                    Open thread
+                  </ContextMenuItem>
+                  <ContextMenuItem onClick={() => void settleThread(menuThread.id, false)}>
+                    <Icon icon={Undo02Icon} className="text-fg-muted" />
+                    Unsettle thread
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem danger onClick={() => setDeleting(menuThread)}>
+                    <Icon icon={Delete02Icon} />
+                    Delete thread
+                  </ContextMenuItem>
+                </ContextMenuPopup>
+              )}
+            </ContextMenu.Root>
+          )}
         </div>
       )}
       <ConfirmDialog

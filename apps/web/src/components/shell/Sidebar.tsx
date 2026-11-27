@@ -9,7 +9,7 @@ import type { ConnectionState } from "@scuttle/client-runtime";
 import type { ProjectId } from "@scuttle/shared/ids";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { motion, type MotionValue } from "motion/react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { SectionId } from "@/components/settings/sections.ts";
 import { SettingsSidebarNav } from "@/components/settings/SettingsNav.tsx";
 import { Button, buttonClass } from "@/components/ui/Button.tsx";
@@ -56,6 +56,7 @@ export function Sidebar({
   const [notice, setNotice] = useState<SettledNotice | null>(null);
   const [createAgentOpen, setCreateAgentOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const navRef = useRef<HTMLElement | null>(null);
 
   const leaveSettings = () => {
     void navigate({ to: backTo });
@@ -116,6 +117,7 @@ export function Sidebar({
         ) : (
           <div className="relative mt-5 flex min-h-0 flex-1 flex-col">
             <nav
+              ref={navRef}
               aria-label="Workspace"
               className="scrollbar-none flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto pt-2 pb-6"
             >
@@ -129,6 +131,7 @@ export function Sidebar({
                 onFilterChange={setProjectFilter}
                 onNewThread={onNewThread}
                 onSettled={setNotice}
+                scrollRef={navRef}
               />
             </nav>
             <div

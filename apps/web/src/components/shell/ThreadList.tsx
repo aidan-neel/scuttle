@@ -9,20 +9,21 @@ import {
 import type { Thread } from "@scuttle/contracts";
 import type { ProjectId } from "@scuttle/shared/ids";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { AnimatePresence, LayoutGroup, motion } from "motion/react";
-import { useState } from "react";
+import { type MouseEvent, type RefObject, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { ContextMenuItem, ContextMenuPopup, ContextMenuSeparator } from "@/components/ui/Menu.tsx";
 import { compareIsoAsc, compareIsoDesc } from "@/lib/collections.ts";
-import { easeOut, spring } from "@/lib/motion";
 import { useWorkspaceActions, useWorkspaceSelector } from "@/lib/workspace.tsx";
 import { SectionHeader, type SectionMenuEntry } from "./SectionHeader.tsx";
 import { SettledSection } from "./SettledButton.tsx";
 import type { SettledNotice } from "./SettleToast.tsx";
 import { ThreadRow } from "./ThreadRow.tsx";
+import { useListWindow } from "./useListWindow.ts";
 
 type ThreadSort = "recent" | "oldest";
+
+const ROW_STRIDE = 57;
 
 const SORT_OPTIONS = [
   { value: "recent", label: "Recent" },
@@ -36,11 +37,17 @@ const sortThreads = (threads: ReadonlyArray<Thread>, sort: ThreadSort) =>
       : compareIsoDesc(a.updatedAt, b.updatedAt),
   );
 
+const resolveThreadId = (target: EventTarget | null) =>
+  target instanceof Element
+    ? (target.closest("[data-thread-id]")?.getAttribute("data-thread-id") ?? null)
+    : null;
+
 interface ThreadListProps {
   readonly filterProjectId: ProjectId | null;
   readonly onFilterChange: (projectId: ProjectId | null) => void;
   readonly onNewThread: () => void;
   readonly onSettled: (notice: SettledNotice) => void;
+  readonly scrollRef: RefObject<HTMLElement | null>;
 }
 
 export function ThreadList({
@@ -48,6 +55,7 @@ export function ThreadList({
   onFilterChange,
   onNewThread,
   onSettled,
+  scrollRef,
 }: ThreadListProps) {
   const threads = useWorkspaceSelector((s) => s.threads);
   const agentThreadIds = useWorkspaceSelector((s) => s.agentThreadIds);
@@ -57,6 +65,9 @@ export function ThreadList({
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const [sort, setSort] = useState<ThreadSort>("recent");
   const [deleting, setDeleting] = useState<Thread | null>(null);
+  const [menuThreadId, setMenuThreadId] = useState<string | null>(null);
+  const listRef = useRef<HTMLUListElement | null>(null);
+
   const open = sortThreads(
     threads.filter(
       (thread) =>
@@ -67,6 +78,40 @@ export function ThreadList({
     sort,
   );
   const idle = open.filter((thread) => thread.status.kind === "idle");
+  const { startIndex, endIndex, paddingTop, paddingBottom } = useListWindow({
+    count: open.length,
+    rowStride: ROW_STRIDE,
+    scrollRef,
+    listRef,
+    overscan: 8,
+  });
+  const visibleThreads = open.slice(startIndex, endIndex);
+  const menuThread = menuThreadId ? (open.find((t) => t.id === menuThreadId) ?? null) : null;
+
+  const openThreadById = (threadId: Thread["id"]) => {
+    void navigate({
+      to: "/threads/$threadId",
+      params: { threadId },
+    });
+  };
+
+  const settleThreadRow = (thread: Thread) => {
+    void settleThread(thread.id, true);
+    onSettled({ id: thread.id, title: thread.title });
+  };
+
+  const handleContextMenu = (event: MouseEvent) => {
+    setMenuThreadId(resolveThreadId(event.target));
+  };
+
+  const handleMenuOpenChange = (
+    nextOpen: boolean,
+    details: ContextMenu.Root.ChangeEventDetails,
+  ) => {
+    if (nextOpen && resolveThreadId(details.event.target) === null) {
+      details.cancel();
+    }
+  };
 
   const menu: ReadonlyArray<SectionMenuEntry> = [
     { kind: "action", label: "New thread", onSelect: onNewThread },
@@ -102,6 +147,10 @@ export function ThreadList({
     if (pathname === `/threads/${deleting.id}`) void navigate({ to: "/" });
   };
 
+  const menuRunning =
+    menuThread !== null &&
+    (menuThread.status.kind === "running" || menuThread.status.kind === "needs-input");
+
   return (
     <section aria-labelledby="threads-heading">
       <SectionHeader
@@ -111,95 +160,65 @@ export function ThreadList({
         onAdd={onNewThread}
         menu={menu}
       />
-      <LayoutGroup id="threads">
-        <motion.ul
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ ...spring.smooth, delay: 0.12 }}
-          className="mt-0.5 flex flex-col gap-px"
-        >
-          <AnimatePresence mode="popLayout" initial={false}>
-            {open.map((thread) => {
-              const selected = pathname === `/threads/${thread.id}`;
-              const running =
-                thread.status.kind === "running" || thread.status.kind === "needs-input";
-              const openThread = () => {
-                void navigate({
-                  to: "/threads/$threadId",
-                  params: { threadId: thread.id },
-                });
-              };
-              const settle = () => {
-                void settleThread(thread.id, true);
-                onSettled({ id: thread.id, title: thread.title });
-              };
-              return (
-                <motion.li
-                  key={thread.id}
-                  layout="position"
-                  initial={{ opacity: 0, y: -8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{
-                    opacity: 0,
-                    y: 10,
-                    scale: 0.97,
-                    transition: { duration: 0.18, ease: easeOut },
-                  }}
-                  transition={spring.smooth}
-                >
-                  <ContextMenu.Root>
-                    <ContextMenu.Trigger className="block">
-                      <ThreadRow
-                        thread={thread}
-                        selected={selected}
-                        onSelect={openThread}
-                        onSettle={settle}
-                      />
-                    </ContextMenu.Trigger>
-                    <ContextMenuPopup label={`${thread.title} actions`}>
-                      <ContextMenuItem onClick={openThread}>
-                        <Icon icon={Message01Icon} className="text-fg-muted" />
-                        Open thread
-                      </ContextMenuItem>
-                      <ContextMenuItem
-                        onClick={() => {
-                          void navigator.clipboard?.writeText(thread.title);
-                        }}
-                      >
-                        <Icon icon={Copy01Icon} className="text-fg-muted" />
-                        Copy title
-                      </ContextMenuItem>
-                      {running ? (
-                        <ContextMenuItem onClick={() => void interruptTurn(thread.id)}>
-                          <Icon icon={StopIcon} className="text-fg-muted" />
-                          Stop turn
-                        </ContextMenuItem>
-                      ) : (
-                        <ContextMenuItem onClick={settle}>
-                          <Icon icon={Tick02Icon} className="text-fg-muted" />
-                          Settle thread
-                        </ContextMenuItem>
-                      )}
-                      <ContextMenuSeparator />
-                      <ContextMenuItem danger onClick={() => setDeleting(thread)}>
-                        <Icon icon={Delete02Icon} />
-                        Delete thread
-                      </ContextMenuItem>
-                    </ContextMenuPopup>
-                  </ContextMenu.Root>
-                </motion.li>
-              );
-            })}
-          </AnimatePresence>
-          {open.length === 0 && (
-            <li className="px-2 py-2 text-label text-fg-muted">
-              {filterProjectId === null
-                ? "No active threads. Start one from the composer."
-                : "No active threads in this project."}
-            </li>
-          )}
-        </motion.ul>
-      </LayoutGroup>
+      <ContextMenu.Root onOpenChange={handleMenuOpenChange}>
+        <ContextMenu.Trigger className="block" onContextMenu={handleContextMenu}>
+          <ul
+            ref={listRef}
+            style={{ paddingTop, paddingBottom }}
+            className="mt-0.5 flex flex-col gap-px"
+          >
+            {visibleThreads.map((thread) => (
+              <li key={thread.id} data-thread-id={thread.id} className="h-[56px]">
+                <ThreadRow
+                  thread={thread}
+                  selected={pathname === `/threads/${thread.id}`}
+                  onSelect={openThreadById}
+                  onSettle={settleThreadRow}
+                />
+              </li>
+            ))}
+            {open.length === 0 && (
+              <li className="px-2 py-2 text-label text-fg-muted">
+                {filterProjectId === null
+                  ? "No active threads. Start one from the composer."
+                  : "No active threads in this project."}
+              </li>
+            )}
+          </ul>
+        </ContextMenu.Trigger>
+        {menuThread !== null && (
+          <ContextMenuPopup label={`${menuThread.title} actions`}>
+            <ContextMenuItem onClick={() => openThreadById(menuThread.id)}>
+              <Icon icon={Message01Icon} className="text-fg-muted" />
+              Open thread
+            </ContextMenuItem>
+            <ContextMenuItem
+              onClick={() => {
+                void navigator.clipboard?.writeText(menuThread.title);
+              }}
+            >
+              <Icon icon={Copy01Icon} className="text-fg-muted" />
+              Copy title
+            </ContextMenuItem>
+            {menuRunning ? (
+              <ContextMenuItem onClick={() => void interruptTurn(menuThread.id)}>
+                <Icon icon={StopIcon} className="text-fg-muted" />
+                Stop turn
+              </ContextMenuItem>
+            ) : (
+              <ContextMenuItem onClick={() => settleThreadRow(menuThread)}>
+                <Icon icon={Tick02Icon} className="text-fg-muted" />
+                Settle thread
+              </ContextMenuItem>
+            )}
+            <ContextMenuSeparator />
+            <ContextMenuItem danger onClick={() => setDeleting(menuThread)}>
+              <Icon icon={Delete02Icon} />
+              Delete thread
+            </ContextMenuItem>
+          </ContextMenuPopup>
+        )}
+      </ContextMenu.Root>
       <SettledSection projectId={filterProjectId} />
       <ConfirmDialog
         open={deleting !== null}
