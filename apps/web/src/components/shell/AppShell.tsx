@@ -2,6 +2,7 @@ import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { animate, motion, MotionConfig, useMotionValue } from "motion/react";
 import { type ReactNode, useEffect, useState } from "react";
 import { DEFAULT_SECTION, parseSectionId } from "@/components/settings/sections.ts";
+import { ScuttleLogo } from "@/components/ui/ScuttleLogo.tsx";
 import { spring } from "@/lib/motion";
 import {
   clampSidebarWidth,
@@ -99,7 +100,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 to="/"
                 className="mb-2 flex h-9 items-center self-start rounded-control px-2 outline-none focus-visible:shadow-focus md:hidden"
               >
-                <span className="text-[15px] font-semibold tracking-tight">Scuttle</span>
+                <ScuttleLogo className="text-fg" />
               </Link>
             )}
             <div className="relative isolate flex min-h-0 flex-1 flex-col overflow-hidden rounded-canvas bg-canvas shadow-canvas">

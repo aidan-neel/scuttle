@@ -1,10 +1,13 @@
 <div align="center">
 
-# Scuttle
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/hero-dark.svg" />
+  <img src="docs/brand/hero-light.svg" alt="Scuttle" width="640" />
+</picture>
 
-Fast, local-first workspace for coding agents across web and desktop.
+**Fast, local-first workspace for coding agents across web and desktop.**
 
-[Quick Start](#quick-start) · [Stack](#stack) · [Checks](#checks)
+[Quick Start](#quick-start) · [Stack](#stack) · [Checks](#checks) · [Brand](#brand)
 
 <br />
 
@@ -42,3 +45,11 @@ bun run dev:desktop
 ```bash
 bun run check
 ```
+
+## Brand
+
+<img src="design/logo/mark.svg" alt="" width="56" align="left" />
+
+The mark is a river crab mid-scuttle: a round shell with speed lines cut through its trailing edge. Masters live in [`design/logo`](design/logo) — `mark.svg`, `app-icon.svg`, `favicon.svg` (tuned for 16–32px) and `lockup.svg`. In the app it renders from `ScuttleLogo.tsx` and follows `--color-primary`.
+
+<br clear="left" />

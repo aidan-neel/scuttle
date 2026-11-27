@@ -14,6 +14,7 @@ import type { SectionId } from "@/components/settings/sections.ts";
 import { SettingsSidebarNav } from "@/components/settings/SettingsNav.tsx";
 import { Button, buttonClass } from "@/components/ui/Button.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
+import { ScuttleLogo } from "@/components/ui/ScuttleLogo.tsx";
 import { easeOut } from "@/lib/motion";
 import { useWorkspaceActions, useWorkspaceSelector } from "@/lib/workspace.tsx";
 import { AgentList } from "./AgentList.tsx";
@@ -91,7 +92,7 @@ export function Sidebar({
               to="/"
               className="flex flex-1 items-center rounded-control outline-none focus-visible:shadow-focus"
             >
-              <span className="text-[15px] font-semibold tracking-tight text-fg">Scuttle</span>
+              <ScuttleLogo className="text-fg" />
             </Link>
             <Button
               variant="ghost"

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <defs>
+    <mask id="mm"><rect x="-20" y="-20" width="168" height="168" fill="#fff"/>
+      <g stroke="#000" stroke-width="9" stroke-linecap="round"><path d="M-10 56H44"/><path d="M-10 76H34"/></g>
+    </mask>
+    <mask id="ms"><circle cx="62" cy="64" r="44" fill="#fff"/><circle cx="57" cy="56" r="44" fill="#000"/></mask>
+    <linearGradient id="mg" x1="0" y1="20" x2="0" y2="108" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#3570f1"/><stop offset="1" stop-color="#2f6bf0"/>
+    </linearGradient>
+  </defs>
+  <g mask="url(#mm)">
+    <circle cx="62" cy="64" r="44" fill="url(#mg)"/>
+    <rect x="0" y="0" width="128" height="128" fill="#1f4fcf" opacity="0.45" mask="url(#ms)"/>
+    <path d="M32.56 47A34 34 0 0 1 46.04 33.98" stroke="#ffffff" stroke-width="6.5" stroke-linecap="round" opacity="0.4"/>
+    <circle cx="54.93" cy="30.74" r="3.3" fill="#ffffff" opacity="0.4"/>
+  </g>
+  <ellipse cx="79" cy="58" rx="6.5" ry="7.8" fill="#09090a"/><ellipse cx="95" cy="58" rx="6.5" ry="7.8" fill="#09090a"/>
+  <circle cx="81" cy="54.8" r="2.4" fill="#ffffff"/><circle cx="97" cy="54.8" r="2.4" fill="#ffffff"/></svg>
