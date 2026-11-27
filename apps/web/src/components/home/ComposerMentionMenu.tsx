@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Identicon } from "@/components/ui/Identicon.tsx";
 import { isAgentThread } from "@/lib/agentState.ts";
 import { formatRelativeAge } from "@/lib/format.ts";
-import { useWorkspace } from "@/lib/workspace.tsx";
+import { useWorkspaceActions, useWorkspaceSelector } from "@/lib/workspace.tsx";
 import type { PaletteContent, PaletteItem } from "./ComposerPalette.tsx";
 import { formatMention } from "./composerTriggers.ts";
 
@@ -48,7 +48,9 @@ export function useMentionContent({
   drill,
   insert,
 }: MentionContentOptions): PaletteContent {
-  const { agents, threads, listDirectory } = useWorkspace();
+  const agents = useWorkspaceSelector((s) => s.agents);
+  const threads = useWorkspaceSelector((s) => s.threads);
+  const { listDirectory } = useWorkspaceActions();
   const filesDir = enabled && view.kind === "files" ? view.dir : null;
   const [listing, setListing] = useState<FolderListing | null>(null);
 

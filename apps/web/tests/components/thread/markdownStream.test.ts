@@ -131,6 +131,34 @@ describe("markdownStream", () => {
     );
   });
 
+  test("falls back to full lexing when reference link definitions are nested in blockquotes or lists", () => {
+    const blockquoteCache = createMarkdownStreamCache();
+    const beforeQuote = "See [quoted link][qref].\n\nMiddle paragraph.\n\nAnother paragraph.\n\n";
+    lexStreamingMarkdown(beforeQuote, blockquoteCache);
+    expect(blockquoteCache.tokens.length).toBeGreaterThan(0);
+
+    const withQuoteDef = `${beforeQuote}> [qref]: https://example.com/quoted`;
+    const quoteResult = lexStreamingMarkdown(withQuoteDef, blockquoteCache);
+    expect(blockquoteCache.fullFallback).toBe(true);
+    expect(quoteResult.settled).toEqual([]);
+    expect(normalizeTokens(quoteResult.tail)).toEqual(
+      normalizeTokens(marked.lexer(settledStreamingText(withQuoteDef))),
+    );
+
+    const listCache = createMarkdownStreamCache();
+    const beforeList = "See [list link][lref].\n\nMiddle paragraph.\n\nAnother paragraph.\n\n";
+    lexStreamingMarkdown(beforeList, listCache);
+    expect(listCache.tokens.length).toBeGreaterThan(0);
+
+    const withListDef = `${beforeList}- item\n\n  [lref]: https://example.com/list`;
+    const listResult = lexStreamingMarkdown(withListDef, listCache);
+    expect(listCache.fullFallback).toBe(true);
+    expect(listResult.settled).toEqual([]);
+    expect(normalizeTokens(listResult.tail)).toEqual(
+      normalizeTokens(marked.lexer(settledStreamingText(withListDef))),
+    );
+  });
+
   test("resets cache cleanly when text is replaced with non-matching content", () => {
     const cache = createMarkdownStreamCache();
     lexStreamingMarkdown("# First\n\nBody one.\n\nBody two.\n\nTail", cache);

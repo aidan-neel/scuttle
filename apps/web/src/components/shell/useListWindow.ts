@@ -87,6 +87,13 @@ export function useListWindow({
     scrollEl.addEventListener("scroll", onSchedule, { passive: true });
     const observer = new ResizeObserver(onSchedule);
     observer.observe(scrollEl);
+    if (listEl !== scrollEl) {
+      observer.observe(listEl);
+    }
+    const firstChild = scrollEl.firstElementChild;
+    if (firstChild !== null && firstChild !== scrollEl && firstChild !== listEl) {
+      observer.observe(firstChild);
+    }
     return () => {
       if (frameId !== null) cancelAnimationFrame(frameId);
       scrollEl.removeEventListener("scroll", onSchedule);

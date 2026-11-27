@@ -9,7 +9,7 @@ import {
 import type { Thread } from "@scuttle/contracts";
 import type { ProjectId } from "@scuttle/shared/ids";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { type MouseEvent, type RefObject, useRef, useState } from "react";
+import { type MouseEvent, type RefObject, type TouchEvent, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { ContextMenuItem, ContextMenuPopup, ContextMenuSeparator } from "@/components/ui/Menu.tsx";
@@ -104,13 +104,24 @@ export function ThreadList({
     setMenuThreadId(resolveThreadId(event.target));
   };
 
+  const handleTouchStart = (event: TouchEvent) => {
+    setMenuThreadId(resolveThreadId(event.target));
+  };
+
   const handleMenuOpenChange = (
     nextOpen: boolean,
     details: ContextMenu.Root.ChangeEventDetails,
   ) => {
-    if (nextOpen && resolveThreadId(details.event.target) === null) {
-      details.cancel();
+    if (!nextOpen) {
+      setMenuThreadId(null);
+      return;
     }
+    const targetId = resolveThreadId(details.event.target);
+    if (targetId === null) {
+      details.cancel();
+      return;
+    }
+    setMenuThreadId(targetId);
   };
 
   const menu: ReadonlyArray<SectionMenuEntry> = [
@@ -161,7 +172,11 @@ export function ThreadList({
         menu={menu}
       />
       <ContextMenu.Root onOpenChange={handleMenuOpenChange}>
-        <ContextMenu.Trigger className="block" onContextMenu={handleContextMenu}>
+        <ContextMenu.Trigger
+          className="block"
+          onContextMenu={handleContextMenu}
+          onTouchStart={handleTouchStart}
+        >
           <ul
             ref={listRef}
             style={{ paddingTop, paddingBottom }}

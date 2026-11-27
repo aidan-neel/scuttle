@@ -138,6 +138,48 @@ describe("turnStore performance and query invariants", () => {
     }
   });
 
+  it("handles timer SQLite errors without crashing and flushes remaining turns in flushAll", async () => {
+    const db = seedDb();
+    const buffer = new LiveTurnBuffer(db, 15);
+    try {
+      const failingTurn = makeTurn("turn-fail", "Fail transiently");
+      const okTurn = makeTurn("turn-ok", "Succeed");
+      insertTurnRow(db, 1, failingTurn);
+      insertTurnRow(db, 2, okTurn);
+
+      db.run(`
+        CREATE TRIGGER fail_turn_update
+        BEFORE UPDATE ON turns
+        WHEN NEW.id = 'turn-fail'
+        BEGIN
+          SELECT RAISE(ABORT, 'simulated sqlite busy');
+        END;
+      `);
+
+      buffer.update(failingTurn.id, "buffered text", "buffered thought");
+      await Bun.sleep(45);
+
+      const beforeRecovery = readTurnById(db, failingTurn.id, MODEL_SELECTION)!;
+      expect(beforeRecovery.assistantMessage).toBe("");
+      expect(buffer.overlayTurn(beforeRecovery).assistantMessage).toBe("buffered text");
+
+      buffer.update(okTurn.id, "ok text", "ok thought");
+      buffer.flushAll();
+
+      expect(readTurnById(db, okTurn.id, MODEL_SELECTION)?.assistantMessage).toBe("ok text");
+      expect(readTurnById(db, failingTurn.id, MODEL_SELECTION)?.assistantMessage).toBe("");
+
+      db.run("DROP TRIGGER fail_turn_update;");
+      buffer.flush(failingTurn.id);
+      expect(readTurnById(db, failingTurn.id, MODEL_SELECTION)?.assistantMessage).toBe(
+        "buffered text",
+      );
+    } finally {
+      buffer.dispose();
+      db.close();
+    }
+  });
+
   it("reads single turns, turn children, approvals, and recent title turns matching readTurnsForThread", () => {
     const db = seedDb();
     try {
@@ -317,6 +359,24 @@ describe("turnStore performance and query invariants", () => {
       const vary = remoteLargeRes.headers.get("vary") ?? "";
       expect(vary).toContain("Accept-Encoding");
       expect(vary).toContain("Origin");
+
+      const rejectedGzipRes = await fetch(`${server.url}/api/threads/thread-large`, {
+        headers: {
+          Host: "scuttle.lan:4310",
+          "Accept-Encoding": "gzip;q=0, deflate",
+        },
+      });
+      expect(rejectedGzipRes.status).toBe(200);
+      expect(rejectedGzipRes.headers.get("content-encoding")).toBeNull();
+
+      const rejectedGzipDecimalRes = await fetch(`${server.url}/api/threads/thread-large`, {
+        headers: {
+          Host: "scuttle.lan:4310",
+          "Accept-Encoding": "br, gzip; q=0.0",
+        },
+      });
+      expect(rejectedGzipDecimalRes.status).toBe(200);
+      expect(rejectedGzipDecimalRes.headers.get("content-encoding")).toBeNull();
     } finally {
       await server.stop();
       NodeFS.rmSync(tmpDir, { recursive: true, force: true });

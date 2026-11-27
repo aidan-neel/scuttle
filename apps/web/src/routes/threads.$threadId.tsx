@@ -5,7 +5,6 @@ import type {
   ModelSelection,
   ThreadDetail,
   ThreadRuntime,
-  ThreadTurn,
 } from "@scuttle/contracts";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { motion } from "motion/react";
@@ -39,8 +38,15 @@ function ThreadPage() {
   const { threadId } = Route.useParams();
   const navigate = useNavigate();
   const detail = useThreadDetail(threadId);
-  const { loadThreadDetail } = useWorkspaceActions();
+  const { loadThreadDetail, setActiveThread } = useWorkspaceActions();
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setActiveThread(threadId);
+    return () => {
+      setActiveThread(null);
+    };
+  }, [threadId, setActiveThread]);
 
   useEffect(() => {
     let active = true;
@@ -76,8 +82,6 @@ function ThreadPage() {
 
   return <ThreadView detail={detail} />;
 }
-
-const EMPTY_TURNS: ReadonlyArray<ThreadTurn> = [];
 
 function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
   const providers = useWorkspaceSelector((s) => s.providers);
@@ -127,10 +131,15 @@ function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
     });
   };
 
-  const { isAtBottom, scrollToBottom } = useStickToBottom(scrollRef, contentRef, turns, thread.id);
+  const { isAtBottom, scrollToBottom, unpin } = useStickToBottom(
+    scrollRef,
+    contentRef,
+    turns,
+    thread.id,
+  );
   const isRunning = thread.status.kind === "running" || thread.status.kind === "needs-input";
   const contextUsage = estimateContextUsage({
-    turns: thread.lastUsage ? EMPTY_TURNS : turns,
+    turns,
     model: thread.modelSelection.model,
     ...(thread.lastUsage ? { lastUsage: thread.lastUsage } : {}),
     ...(thread.sessionEpoch !== undefined ? { sessionEpoch: thread.sessionEpoch } : {}),
@@ -221,6 +230,7 @@ function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
           scrollRef={scrollRef}
           mountedStart={visibleStart}
           onEnsureTurnVisible={handleEnsureTurnVisible}
+          onBeforeJump={unpin}
         />
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 pt-8 pb-10">
           <div className="mx-auto w-full max-w-composer">

@@ -9,6 +9,7 @@ interface ScrollRulerProps {
   readonly scrollRef: RefObject<HTMLDivElement | null>;
   readonly mountedStart?: number;
   readonly onEnsureTurnVisible?: (turnIndex: number) => void;
+  readonly onBeforeJump?: () => void;
 }
 
 export function sampleRailTurnIndices(total: number, maxTicks = 36): ReadonlyArray<number> {
@@ -39,9 +40,11 @@ export function ScrollRuler({
   scrollRef,
   mountedStart = 0,
   onEnsureTurnVisible,
+  onBeforeJump,
 }: ScrollRulerProps) {
   const [activeId, setActiveId] = useState<string | null>(turns[0]?.id ?? null);
   const [hovered, setHovered] = useState(false);
+  const [pendingJumpId, setPendingJumpId] = useState<string | null>(null);
 
   const firstId = turns[0]?.id ?? "";
   const lastId = turns[turns.length - 1]?.id ?? "";
@@ -97,23 +100,32 @@ export function ScrollRuler({
     return () => observer.disconnect();
   }, [scrollRef, turnIdsKey]);
 
+  useEffect(() => {
+    if (pendingJumpId === null) return;
+    const container = scrollRef.current;
+    if (!container) return;
+    const selector = `[data-turn-id="${CSS.escape(pendingJumpId)}"]`;
+    const target = container.querySelector<HTMLElement>(selector);
+    if (!target) return;
+    setActiveId(pendingJumpId);
+    setPendingJumpId(null);
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [mountedStart, pendingJumpId, scrollRef]);
+
   const jumpTo = (turnId: string, turnIndex: number) => {
     const container = scrollRef.current;
     if (!container) return;
+    onBeforeJump?.();
     onEnsureTurnVisible?.(turnIndex);
     const selector = `[data-turn-id="${CSS.escape(turnId)}"]`;
     const immediate = container.querySelector<HTMLElement>(selector);
     if (immediate) {
+      setPendingJumpId(null);
       setActiveId(turnId);
       immediate.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
-    requestAnimationFrame(() => {
-      const delayed = scrollRef.current?.querySelector<HTMLElement>(selector);
-      if (!delayed) return;
-      setActiveId(turnId);
-      delayed.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
+    setPendingJumpId(turnId);
   };
 
   if (turns.length === 0) return null;

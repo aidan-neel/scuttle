@@ -28,6 +28,19 @@ const resetCache = (cache: MarkdownStreamCache): void => {
   cache.fullFallback = false;
 };
 
+const containsDefToken = (tokens: ReadonlyArray<Token>): boolean => {
+  for (const token of tokens) {
+    if (token.type === "def") return true;
+    if ("tokens" in token && Array.isArray(token.tokens) && containsDefToken(token.tokens)) {
+      return true;
+    }
+    if ("items" in token && Array.isArray(token.items) && containsDefToken(token.items)) {
+      return true;
+    }
+  }
+  return false;
+};
+
 export function lexStreamingMarkdown(
   text: string,
   cache: MarkdownStreamCache,
@@ -42,7 +55,7 @@ export function lexStreamingMarkdown(
 
   const tailTokens = marked.lexer(settledInput.slice(cache.prefixLength));
 
-  if (tailTokens.some((token) => token.type === "def")) {
+  if (Object.keys(tailTokens.links).length > 0 || containsDefToken(tailTokens)) {
     const fullTokens = cache.prefixLength === 0 ? tailTokens : marked.lexer(settledInput);
     resetCache(cache);
     cache.fullFallback = true;

@@ -54,37 +54,37 @@ export interface ThreadRow {
   readonly updated_at: string;
 }
 
-const RUNTIMES: Readonly<Record<string, ThreadRuntime>> = {
+const RUNTIMES = {
   local: "local",
   worktree: "worktree",
-};
+} as const satisfies Record<ThreadRuntime, ThreadRuntime>;
 
-const PROVIDER_KINDS: Readonly<Record<string, ProviderKind>> = {
+const PROVIDER_KINDS = {
   claude: "claude",
   codex: "codex",
   antigravity: "antigravity",
   opencode: "opencode",
   copilot: "copilot",
-};
+} as const satisfies Record<ProviderKind, ProviderKind>;
 
-const EFFORT_LEVELS: Readonly<Record<string, EffortLevel>> = {
+const EFFORT_LEVELS = {
   low: "low",
   medium: "medium",
   high: "high",
   xhigh: "xhigh",
   max: "max",
-};
+} as const satisfies Record<EffortLevel, EffortLevel>;
 
-const RUNTIME_MODES: Readonly<Record<string, RuntimeMode>> = {
+const RUNTIME_MODES = {
   auto: "auto",
   "approval-required": "approval-required",
   "full-access": "full-access",
-};
+} as const satisfies Record<RuntimeMode, RuntimeMode>;
 
-const INTERACTION_MODES: Readonly<Record<string, InteractionMode>> = {
+const INTERACTION_MODES = {
   default: "default",
   plan: "plan",
-};
+} as const satisfies Record<InteractionMode, InteractionMode>;
 
 const decodeThreadStatus = Schema.decodeUnknownOption(ThreadStatus);
 

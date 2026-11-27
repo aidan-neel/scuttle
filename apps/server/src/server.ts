@@ -13,8 +13,10 @@ import * as EventBus from "./services/EventBus.ts";
 import * as GitForgeService from "./services/GitForgeService.ts";
 import * as GitService from "./services/GitService.ts";
 import * as HealthService from "./services/HealthService.ts";
+import * as ModelTierService from "./services/ModelTierService.ts";
 import * as ProjectService from "./services/ProjectService.ts";
 import * as ProviderService from "./services/ProviderService.ts";
+import * as SkillService from "./services/SkillService.ts";
 import * as ThreadService from "./services/ThreadService.ts";
 
 export interface ScuttleServerHandle {
@@ -39,6 +41,11 @@ export const makeAppLayer = (
   const healthLayer = HealthService.layer.pipe(
     Layer.provide(sqliteLayer),
     Layer.provide(configLayer),
+  );
+  const skillLayer = SkillService.layer.pipe(Layer.provide(configLayer));
+  const modelTierLayer = ModelTierService.layer.pipe(
+    Layer.provide(sqliteLayer),
+    Layer.provide(eventBusLayer),
   );
   const providerLayer = ProviderService.layer.pipe(
     Layer.provide(sqliteLayer),
@@ -84,6 +91,8 @@ export const makeAppLayer = (
     eventBusLayer,
     gitLayer,
     healthLayer,
+    skillLayer,
+    modelTierLayer,
     providerLayer,
     projectLayer,
     threadLayer,
@@ -163,6 +172,23 @@ const isLoopbackHost = (hostname: string): boolean =>
   hostname === "::1" ||
   hostname === "[::1]";
 
+const acceptsGzip = (header: string | null): boolean => {
+  if (!header) return false;
+  for (const rawPart of header.split(",")) {
+    const [encodingPart, ...params] = rawPart.trim().toLowerCase().split(";");
+    if (encodingPart?.trim() !== "gzip") continue;
+    for (const param of params) {
+      const match = /^q\s*=\s*(.+)$/.exec(param.trim());
+      if (match !== null) {
+        const q = Number(match[1]);
+        return Number.isFinite(q) && q > 0;
+      }
+    }
+    return true;
+  }
+  return false;
+};
+
 const maybeCompressJsonResponse = async (
   request: Request,
   url: URL,
@@ -179,8 +205,7 @@ const maybeCompressJsonResponse = async (
   if (!contentType || !contentType.toLowerCase().includes("application/json")) {
     return response;
   }
-  const acceptEncoding = request.headers.get("accept-encoding");
-  if (!acceptEncoding || !/\bgzip\b/i.test(acceptEncoding)) {
+  if (!acceptsGzip(request.headers.get("accept-encoding"))) {
     return response;
   }
   const raw = new Uint8Array(await response.arrayBuffer());

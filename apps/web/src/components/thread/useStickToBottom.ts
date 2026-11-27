@@ -7,6 +7,7 @@ const AT_BOTTOM_PX = 32;
 export interface StickToBottom {
   readonly isAtBottom: boolean;
   readonly scrollToBottom: () => void;
+  readonly unpin: () => void;
 }
 
 const distanceFromBottom = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.clientHeight;
@@ -19,6 +20,7 @@ export function useStickToBottom(
 ): StickToBottom {
   const [isAtBottom, setIsAtBottom] = useState(true);
   const pinnedRef = useRef(true);
+  const resizeRafRef = useRef<number | null>(null);
   const hasTurns = turns.length > 0;
 
   useLayoutEffect(() => {
@@ -35,11 +37,10 @@ export function useStickToBottom(
     const target = contentRef?.current ?? el.firstElementChild;
     if (!target) return;
 
-    let rafId: number | null = null;
     const observer = new ResizeObserver(() => {
-      if (!pinnedRef.current || rafId !== null) return;
-      rafId = requestAnimationFrame(() => {
-        rafId = null;
+      if (!pinnedRef.current || resizeRafRef.current !== null) return;
+      resizeRafRef.current = requestAnimationFrame(() => {
+        resizeRafRef.current = null;
         if (!pinnedRef.current) return;
         el.scrollTop = el.scrollHeight;
         setIsAtBottom(true);
@@ -48,7 +49,10 @@ export function useStickToBottom(
 
     observer.observe(target);
     return () => {
-      if (rafId !== null) cancelAnimationFrame(rafId);
+      if (resizeRafRef.current !== null) {
+        cancelAnimationFrame(resizeRafRef.current);
+        resizeRafRef.current = null;
+      }
       observer.disconnect();
     };
   }, [contentRef, hasTurns, resetKey, scrollRef]);
@@ -66,6 +70,7 @@ export function useStickToBottom(
     };
 
     const onScroll = () => {
+      pinnedRef.current = distanceFromBottom(el) <= STICK_THRESHOLD_PX;
       if (rafId !== null) return;
       rafId = requestAnimationFrame(() => {
         rafId = null;
@@ -81,6 +86,14 @@ export function useStickToBottom(
     };
   }, [hasTurns, resetKey, scrollRef]);
 
+  const unpin = () => {
+    pinnedRef.current = false;
+    if (resizeRafRef.current !== null) {
+      cancelAnimationFrame(resizeRafRef.current);
+      resizeRafRef.current = null;
+    }
+  };
+
   const scrollToBottom = () => {
     const el = scrollRef.current;
     if (!el) return;
@@ -89,5 +102,5 @@ export function useStickToBottom(
     el.scrollTo({ top: el.scrollHeight, behavior: reduceMotion ? "auto" : "smooth" });
   };
 
-  return { isAtBottom, scrollToBottom };
+  return { isAtBottom, scrollToBottom, unpin };
 }

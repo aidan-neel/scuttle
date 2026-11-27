@@ -5,7 +5,6 @@ import type {
   ModelSelection,
   ThreadDetail,
   ThreadRuntime,
-  ThreadTurn,
 } from "@scuttle/contracts";
 import { AnimatePresence, motion } from "motion/react";
 import { useRef, useState } from "react";
@@ -33,8 +32,6 @@ interface AgentConversationProps {
   readonly detail: ThreadDetail;
   readonly onViewAgent: () => void;
 }
-
-const EMPTY_TURNS: ReadonlyArray<ThreadTurn> = [];
 
 export function AgentConversation({ agent, detail, onViewAgent }: AgentConversationProps) {
   const providers = useWorkspaceSelector((s) => s.providers);
@@ -94,9 +91,14 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
 
   const isRunning = thread.status.kind === "running" || thread.status.kind === "needs-input";
   const composerId = `composer-agent-${agent.id}`;
-  const { isAtBottom, scrollToBottom } = useStickToBottom(scrollRef, contentRef, turns, thread.id);
+  const { isAtBottom, scrollToBottom, unpin } = useStickToBottom(
+    scrollRef,
+    contentRef,
+    turns,
+    thread.id,
+  );
   const contextUsage = estimateContextUsage({
-    turns: thread.lastUsage ? EMPTY_TURNS : turns,
+    turns,
     model: thread.modelSelection.model,
     ...(thread.lastUsage ? { lastUsage: thread.lastUsage } : {}),
     ...(thread.sessionEpoch !== undefined ? { sessionEpoch: thread.sessionEpoch } : {}),
@@ -172,6 +174,7 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
             scrollRef={scrollRef}
             mountedStart={visibleStart}
             onEnsureTurnVisible={handleEnsureTurnVisible}
+            onBeforeJump={unpin}
           />
         )}
         <div

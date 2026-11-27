@@ -8,7 +8,7 @@ import {
 import type { Thread } from "@scuttle/contracts";
 import type { ProjectId } from "@scuttle/shared/ids";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { type MouseEvent, useRef, useState } from "react";
+import { type MouseEvent, type TouchEvent, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button.tsx";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
@@ -34,6 +34,7 @@ export function SettledSection({ projectId }: { readonly projectId: ProjectId | 
   const [expanded, setExpanded] = useState(false);
   const [deleting, setDeleting] = useState<Thread | null>(null);
   const [menuThreadId, setMenuThreadId] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
 
   const done = threads.filter(
@@ -45,7 +46,7 @@ export function SettledSection({ projectId }: { readonly projectId: ProjectId | 
   const { startIndex, endIndex, paddingTop, paddingBottom } = useListWindow({
     count: done.length,
     rowStride: SETTLED_ROW_STRIDE,
-    scrollRef: listRef,
+    scrollRef,
     listRef,
     overscan: 6,
     enabled: expanded && done.length > 0,
@@ -61,13 +62,24 @@ export function SettledSection({ projectId }: { readonly projectId: ProjectId | 
     setMenuThreadId(resolveThreadId(event.target));
   };
 
+  const handleTouchStart = (event: TouchEvent) => {
+    setMenuThreadId(resolveThreadId(event.target));
+  };
+
   const handleMenuOpenChange = (
     nextOpen: boolean,
     details: ContextMenu.Root.ChangeEventDetails,
   ) => {
-    if (nextOpen && resolveThreadId(details.event.target) === null) {
-      details.cancel();
+    if (!nextOpen) {
+      setMenuThreadId(null);
+      return;
     }
+    const targetId = resolveThreadId(details.event.target);
+    if (targetId === null) {
+      details.cancel();
+      return;
+    }
+    setMenuThreadId(targetId);
   };
 
   return (
@@ -91,40 +103,46 @@ export function SettledSection({ projectId }: { readonly projectId: ProjectId | 
           </button>
           {expanded && (
             <ContextMenu.Root onOpenChange={handleMenuOpenChange}>
-              <ContextMenu.Trigger className="block" onContextMenu={handleContextMenu}>
-                <ul
-                  ref={listRef}
-                  style={{ paddingTop, paddingBottom }}
-                  className="scrollbar-none flex max-h-56 flex-col gap-px overflow-y-auto"
-                >
-                  {visibleDone.map((thread) => (
-                    <li
-                      key={thread.id}
-                      data-thread-id={thread.id}
-                      className="group/settled flex h-8 items-center gap-1 rounded-chip pr-1 pl-2 transition-colors duration-100 hover:bg-white/4"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => openThreadById(thread.id)}
-                        className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-chip text-left outline-none focus-visible:shadow-focus"
+              <ContextMenu.Trigger
+                className="block"
+                onContextMenu={handleContextMenu}
+                onTouchStart={handleTouchStart}
+              >
+                <div ref={scrollRef} className="scrollbar-none max-h-56 overflow-y-auto">
+                  <ul
+                    ref={listRef}
+                    style={{ paddingTop, paddingBottom }}
+                    className="flex flex-col gap-px"
+                  >
+                    {visibleDone.map((thread) => (
+                      <li
+                        key={thread.id}
+                        data-thread-id={thread.id}
+                        className="group/settled flex h-8 shrink-0 items-center gap-1 rounded-chip pr-1 pl-2 transition-colors duration-100 hover:bg-white/4"
                       >
-                        <Identicon name={thread.projectName} size="sm" />
-                        <span className="min-w-0 flex-1 truncate text-label text-fg-secondary">
-                          {thread.title}
-                        </span>
-                      </button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label={`Unsettle ${thread.title}`}
-                        onClick={() => void settleThread(thread.id, false)}
-                        className="opacity-0 transition-opacity duration-150 ease-out group-hover/settled:opacity-100 focus-visible:opacity-100"
-                      >
-                        <Icon icon={Undo02Icon} />
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
+                        <button
+                          type="button"
+                          onClick={() => openThreadById(thread.id)}
+                          className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-chip text-left outline-none focus-visible:shadow-focus"
+                        >
+                          <Identicon name={thread.projectName} size="sm" />
+                          <span className="min-w-0 flex-1 truncate text-label text-fg-secondary">
+                            {thread.title}
+                          </span>
+                        </button>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={`Unsettle ${thread.title}`}
+                          onClick={() => void settleThread(thread.id, false)}
+                          className="opacity-0 transition-opacity duration-150 ease-out group-hover/settled:opacity-100 focus-visible:opacity-100"
+                        >
+                          <Icon icon={Undo02Icon} />
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               </ContextMenu.Trigger>
               {menuThread !== null && (
                 <ContextMenuPopup label={`${menuThread.title} actions`}>

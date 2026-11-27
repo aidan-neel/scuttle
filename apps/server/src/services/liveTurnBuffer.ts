@@ -40,7 +40,11 @@ export class LiveTurnBuffer {
       entry.timer = setTimeout(() => {
         entry.timer = null;
         if (!this.disposed) {
-          this.flush(turnId);
+          try {
+            this.flush(turnId);
+          } catch {
+            // Entry stays dirty for the next flush if SQLite throws transiently.
+          }
         }
       }, this.flushDelayMs);
     }
@@ -60,7 +64,11 @@ export class LiveTurnBuffer {
 
   flushAll(): void {
     for (const turnId of this.entries.keys()) {
-      this.flush(turnId);
+      try {
+        this.flush(turnId);
+      } catch {
+        // Continue flushing remaining turns if one write fails.
+      }
     }
   }
 

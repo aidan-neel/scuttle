@@ -64,32 +64,32 @@ export interface ApprovalRow {
   readonly created_at: string;
 }
 
-const TURN_ORIGINS: Readonly<Record<string, TurnOrigin>> = {
+const TURN_ORIGINS = {
   user: "user",
   system: "system",
-};
+} as const satisfies Record<TurnOrigin, TurnOrigin>;
 
-const TURN_STATUSES: Readonly<Record<string, TurnStatus>> = {
+const TURN_STATUSES = {
   running: "running",
   completed: "completed",
   failed: "failed",
   interrupted: "interrupted",
-};
+} as const satisfies Record<TurnStatus, TurnStatus>;
 
-const ACTIVITY_KINDS: Readonly<Record<string, ActivityKind>> = {
+const ACTIVITY_KINDS = {
   thinking: "thinking",
   command: "command",
   file: "file",
   search: "search",
   tool: "tool",
   error: "error",
-};
+} as const satisfies Record<ActivityKind, ActivityKind>;
 
-const ACTIVITY_STATUSES: Readonly<Record<string, ActivityStatus>> = {
+const ACTIVITY_STATUSES = {
   running: "running",
   completed: "completed",
   failed: "failed",
-};
+} as const satisfies Record<ActivityStatus, ActivityStatus>;
 
 export const lookupEnum = <T>(
   table: Readonly<Record<string, T>>,

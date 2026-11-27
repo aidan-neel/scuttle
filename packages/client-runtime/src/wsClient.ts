@@ -18,6 +18,7 @@ export interface WsSupervisorOptions {
 }
 
 export interface WsSupervisorHandle {
+  readonly flush: () => void;
   readonly close: () => void;
 }
 
@@ -39,8 +40,12 @@ export const decodeServerPushEvent = (parsed: unknown): ServerPushEvent | null =
 };
 
 type ScheduledFlush =
-  | { readonly kind: "raf"; readonly id: number }
-  | { readonly kind: "microtask" };
+  | {
+      readonly kind: "raf";
+      readonly id: number;
+      readonly safetyTimer: ReturnType<typeof setTimeout>;
+    }
+  | { readonly kind: "timeout"; readonly timer: ReturnType<typeof setTimeout> };
 
 export const createWsSupervisor = (options: WsSupervisorOptions): WsSupervisorHandle => {
   let disposed = false;
@@ -54,14 +59,19 @@ export const createWsSupervisor = (options: WsSupervisorOptions): WsSupervisorHa
 
   const cancelScheduledFlush = () => {
     if (scheduledFlush === null) return;
-    if (scheduledFlush.kind === "raf" && typeof cancelAnimationFrame === "function") {
-      cancelAnimationFrame(scheduledFlush.id);
+    if (scheduledFlush.kind === "raf") {
+      if (typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(scheduledFlush.id);
+      }
+      clearTimeout(scheduledFlush.safetyTimer);
+    } else {
+      clearTimeout(scheduledFlush.timer);
     }
     scheduledFlush = null;
   };
 
   const flush = () => {
-    scheduledFlush = null;
+    cancelScheduledFlush();
     if (disposed || pendingEvents.length === 0) {
       pendingEvents = [];
       return;
@@ -74,12 +84,14 @@ export const createWsSupervisor = (options: WsSupervisorOptions): WsSupervisorHa
   const enqueueEvent = (event: ServerPushEvent) => {
     pendingEvents.push(event);
     if (scheduledFlush !== null) return;
-    if (typeof requestAnimationFrame === "function") {
+    const isHidden = typeof document !== "undefined" && document.hidden;
+    if (!isHidden && typeof requestAnimationFrame === "function") {
       const id = requestAnimationFrame(() => flush());
-      scheduledFlush = { kind: "raf", id };
+      const safetyTimer = setTimeout(() => flush(), 100);
+      scheduledFlush = { kind: "raf", id, safetyTimer };
     } else {
-      scheduledFlush = { kind: "microtask" };
-      queueMicrotask(() => flush());
+      const timer = setTimeout(() => flush(), 50);
+      scheduledFlush = { kind: "timeout", timer };
     }
   };
 
@@ -155,6 +167,7 @@ export const createWsSupervisor = (options: WsSupervisorOptions): WsSupervisorHa
   connect();
 
   return {
+    flush,
     close: () => {
       disposed = true;
       cancelScheduledFlush();

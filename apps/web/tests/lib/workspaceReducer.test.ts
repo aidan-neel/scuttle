@@ -276,6 +276,34 @@ describe("workspaceReducer", () => {
     expect(state.threadDetails["t-13"]).toBeDefined();
   });
 
+  test("threadDetails LRU never evicts activeThreadId", () => {
+    let state = reduceWorkspaceState(createInitialWorkspaceState(), {
+      kind: "setActiveThread",
+      threadId: "t-1",
+    });
+    for (let i = 1; i <= 15; i++) {
+      state = reduceWorkspaceState(state, {
+        kind: "threadDetailLoaded",
+        detail: makeDetail(`t-${i}`),
+      });
+    }
+
+    expect(Object.keys(state.threadDetails)).toHaveLength(12);
+    expect(state.threadDetails["t-1"]).toBeDefined();
+    expect(state.threadDetails["t-2"]).toBeUndefined();
+    expect(state.threadDetails["t-3"]).toBeUndefined();
+    expect(state.threadDetails["t-4"]).toBeUndefined();
+    expect(state.threadDetails["t-15"]).toBeDefined();
+
+    state = reduceWorkspaceState(state, { kind: "setActiveThread", threadId: null });
+    state = reduceWorkspaceState(state, {
+      kind: "threadDetailLoaded",
+      detail: makeDetail("t-16"),
+    });
+    expect(state.threadDetails["t-1"]).toBeUndefined();
+    expect(state.threadDetails["t-16"]).toBeDefined();
+  });
+
   test("store notifies listeners only when state reference changes", () => {
     const store = createWorkspaceStore(createInitialWorkspaceState());
     let notifications = 0;

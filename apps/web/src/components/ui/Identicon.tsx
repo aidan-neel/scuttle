@@ -3,11 +3,20 @@ import { useSyncExternalStore } from "react";
 import { cn } from "@/lib/utils";
 
 const MAX_CONSECUTIVE_FAILURES = 3;
+const CIRCUIT_BREAKER_COOLDOWN_MS = 60_000;
 const failedUrls = new Set<string>();
 const listeners = new Set<() => void>();
 let consecutiveFailures = 0;
-let dicebearDisabled = false;
+let disabledUntil = 0;
+let cooldownTimer: ReturnType<typeof setTimeout> | null = null;
 let failureVersion = 0;
+
+function notifyListeners(): void {
+  failureVersion += 1;
+  for (const listener of listeners) {
+    listener();
+  }
+}
 
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
@@ -26,18 +35,31 @@ function getServerFailureVersion(): number {
 
 function recordLoadSuccess(): void {
   consecutiveFailures = 0;
+  disabledUntil = 0;
+  if (cooldownTimer !== null) {
+    clearTimeout(cooldownTimer);
+    cooldownTimer = null;
+  }
 }
 
 function recordLoadFailure(url: string): void {
+  if (failedUrls.has(url)) return;
   failedUrls.add(url);
   consecutiveFailures += 1;
   if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-    dicebearDisabled = true;
+    disabledUntil = Date.now() + CIRCUIT_BREAKER_COOLDOWN_MS;
+    if (cooldownTimer !== null) {
+      clearTimeout(cooldownTimer);
+    }
+    cooldownTimer = setTimeout(() => {
+      cooldownTimer = null;
+      disabledUntil = 0;
+      consecutiveFailures = 0;
+      failedUrls.clear();
+      notifyListeners();
+    }, CIRCUIT_BREAKER_COOLDOWN_MS);
   }
-  failureVersion += 1;
-  for (const listener of listeners) {
-    listener();
-  }
+  notifyListeners();
 }
 
 const SIZES = {
@@ -91,7 +113,7 @@ export function Identicon({ name, size, className }: IdenticonProps) {
   const url = dicebearIdenticonUrl(name);
   useSyncExternalStore(subscribe, getFailureVersion, getServerFailureVersion);
 
-  if (dicebearDisabled || failedUrls.has(url)) {
+  if (disabledUntil > 0 || failedUrls.has(url)) {
     return (
       <FallbackIdenticon
         name={name}

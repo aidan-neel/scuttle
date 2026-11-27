@@ -39,7 +39,7 @@ export function ThreadTurnList({
   onRespondApproval,
 }: ThreadTurnListProps) {
   const sentinelRef = useRef<HTMLDivElement | null>(null);
-  const pendingScrollHeightRef = useRef<number | null>(null);
+  const pendingAnchorRef = useRef<{ readonly height: number; readonly top: number } | null>(null);
   const prevThreadIdRef = useRef(threadId);
   const prevVisibleStartRef = useRef(visibleStart);
   const onLoadEarlierRef = useRef(onLoadEarlier);
@@ -52,15 +52,15 @@ export function ThreadTurnList({
     const el = scrollRef.current;
     const sameThread = prevThreadIdRef.current === threadId;
     const expandedUpward = sameThread && visibleStart < prevVisibleStartRef.current;
-    const prevHeight = pendingScrollHeightRef.current;
-    pendingScrollHeightRef.current = null;
+    const pending = pendingAnchorRef.current;
+    pendingAnchorRef.current = null;
     prevThreadIdRef.current = threadId;
     prevVisibleStartRef.current = visibleStart;
 
-    if (el && expandedUpward && prevHeight !== null && el.scrollTop > 0) {
-      const delta = el.scrollHeight - prevHeight;
+    if (el && expandedUpward && pending !== null) {
+      const delta = el.scrollHeight - pending.height;
       if (delta > 0) {
-        el.scrollTop += delta;
+        el.scrollTop = pending.top + delta;
       }
     }
   }, [scrollRef, threadId, visibleStart]);
@@ -75,7 +75,7 @@ export function ThreadTurnList({
       (entries) => {
         for (const entry of entries) {
           if (entry.isIntersecting) {
-            pendingScrollHeightRef.current = root.scrollHeight;
+            pendingAnchorRef.current = { height: root.scrollHeight, top: root.scrollTop };
             onLoadEarlierRef.current();
             break;
           }
@@ -91,7 +91,7 @@ export function ThreadTurnList({
   const handleLoadEarlierClick = () => {
     const el = scrollRef.current;
     if (el) {
-      pendingScrollHeightRef.current = el.scrollHeight;
+      pendingAnchorRef.current = { height: el.scrollHeight, top: el.scrollTop };
     }
     onLoadEarlier();
   };

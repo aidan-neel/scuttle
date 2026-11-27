@@ -422,7 +422,6 @@ export const launchTurnExecution = (
         activities,
         approvals,
       };
-      liveTurnBuffer.flush(turn.id);
       updateTurnOutcomeRow(db, thread.id, turnEpoch, finalTurn);
       liveTurnBuffer.delete(turn.id);
       if (!result.interrupted) {
@@ -470,7 +469,6 @@ export const launchTurnExecution = (
         activities,
         approvals,
       };
-      liveTurnBuffer.flush(turn.id);
       releaseRun();
       updateTurnOutcomeRow(db, thread.id, turnEpoch, failedTurn);
       liveTurnBuffer.delete(turn.id);

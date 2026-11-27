@@ -55,6 +55,7 @@ describe("estimateContextUsage", () => {
     expect(usage.usedTokens).toBe(50_000);
     expect(usage.windowTokens).toBe(1_000_000);
     expect(usage.compactAtTokens).toBe(800_000);
+    expect(usage.segments.find((s) => s.key === "tools")?.tokens).toBeGreaterThan(0);
     expect(usage.segments.reduce((sum, s) => sum + s.tokens, 0)).toBe(50_000);
   });
 
@@ -77,36 +78,51 @@ describe("estimateContextUsage", () => {
     expect(usage.usedTokens).toBe(1_300);
   });
 
-  test("short-circuits without scanning turns when lastUsage is present", () => {
-    const poisonedTurn = {
-      get userMessage(): string {
-        throw new Error("should not scan userMessage when lastUsage is present");
-      },
-      get assistantMessage(): string {
-        throw new Error("should not scan assistantMessage when lastUsage is present");
-      },
-      get thinkingText(): string {
-        throw new Error("should not scan thinkingText when lastUsage is present");
-      },
-      get activities(): ReadonlyArray<{ readonly label: string }> {
-        throw new Error("should not scan activities when lastUsage is present");
-      },
-      get approvals(): ReadonlyArray<{ readonly title: string }> {
-        throw new Error("should not scan approvals when lastUsage is present");
-      },
+  test("caches proportional tools split in O(1) across streaming deltas on a running turn", () => {
+    const lastUsage = { inputTokens: 1_500, outputTokens: 500 };
+    const completedTurn = {
+      ...turn("a".repeat(400), "b".repeat(400), "c".repeat(396)),
+      status: "completed",
     };
-    const usage = estimateContextUsage({
-      turns: [poisonedTurn],
+    const runningTurn = {
+      ...turn("next", "streaming", ""),
+      status: "running",
+    };
+    const initial = estimateContextUsage({
+      turns: [completedTurn, runningTurn],
       systemChars: 4_000,
       model: "claude-sonnet-4-5",
-      lastUsage: { inputTokens: 1_500, outputTokens: 500 },
+      lastUsage,
     });
-    expect(usage.usedTokens).toBe(2_000);
-    expect(usage.segments.map((s) => [s.key, s.tokens])).toEqual([
-      ["system", 1_000],
-      ["tools", 0],
-      ["conversation", 1_000],
-    ]);
+    expect(initial.usedTokens).toBe(2_000);
+    expect(initial.segments.find((s) => s.key === "tools")?.tokens).toBe(333);
+    expect(initial.segments.find((s) => s.key === "conversation")?.tokens).toBe(667);
+
+    const poisonedStreamingTurn = {
+      status: "running",
+      get userMessage(): string {
+        throw new Error("should not scan streaming userMessage on cached lastUsage");
+      },
+      get assistantMessage(): string {
+        throw new Error("should not scan streaming assistantMessage on cached lastUsage");
+      },
+      get thinkingText(): string {
+        throw new Error("should not scan streaming thinkingText on cached lastUsage");
+      },
+      get activities(): ReadonlyArray<{ readonly label: string }> {
+        throw new Error("should not scan streaming activities on cached lastUsage");
+      },
+      get approvals(): ReadonlyArray<{ readonly title: string }> {
+        throw new Error("should not scan streaming approvals on cached lastUsage");
+      },
+    };
+    const duringStream = estimateContextUsage({
+      turns: [completedTurn, poisonedStreamingTurn],
+      systemChars: 4_000,
+      model: "claude-sonnet-4-5",
+      lastUsage,
+    });
+    expect(duringStream).toBe(initial);
   });
 });
 

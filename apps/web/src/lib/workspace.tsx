@@ -2,6 +2,7 @@ import {
   createScuttleApiClient,
   createWsSupervisor,
   type ScuttleApiClient,
+  type WsSupervisorHandle,
 } from "@scuttle/client-runtime";
 import type {
   CompactThreadInput,
@@ -10,11 +11,15 @@ import type {
   DirectoryListing,
   GitBranchInfo,
   ModelSelection,
+  ModelTierConfig,
+  ModelTierScope,
   Project,
   ProviderConfigPatch,
   ProviderSnapshot,
   RespondApprovalInput,
+  ScopedModelTierConfigs,
   SendTurnInput,
+  ServerPushEvent,
   Thread,
   ThreadDetail,
   ThreadTurn,
@@ -38,6 +43,7 @@ export type { WorkspaceState } from "./workspaceReducer.ts";
 
 export interface WorkspaceActions extends AgentActions {
   readonly selectProject: (projectId: ProjectId | null) => void;
+  readonly setActiveThread: (threadId: string | null) => void;
   readonly setDefaultModelSelection: (selection: ModelSelection) => void;
   readonly refreshWorkspace: () => Promise<void>;
   readonly loadBranches: (projectId: ProjectId) => Promise<ReadonlyArray<GitBranchInfo>>;
@@ -65,6 +71,10 @@ export interface WorkspaceActions extends AgentActions {
     providerId: string,
     patch: ProviderConfigPatch,
   ) => Promise<ProviderSnapshot>;
+  readonly updateModelTiers: (
+    scope: ModelTierScope,
+    config: ModelTierConfig,
+  ) => Promise<ScopedModelTierConfigs>;
 }
 
 export interface Workspace extends WorkspaceState, WorkspaceActions {}
@@ -76,14 +86,16 @@ interface WorkspaceController {
   readonly store: WorkspaceStore;
   readonly actions: WorkspaceActions;
   readonly setBaseUrl: (baseUrl: string | undefined) => void;
-  readonly refreshWorkspace: () => Promise<void>;
+  readonly setSupervisor: (supervisor: WsSupervisorHandle | null) => void;
+  readonly fetchWorkspace: () => Promise<boolean>;
 }
 
 const createWorkspaceController = (): WorkspaceController => {
   let api: ScuttleApiClient = createScuttleApiClient();
+  let wsSupervisor: WsSupervisorHandle | null = null;
   const store = createWorkspaceStore(createInitialWorkspaceState());
 
-  const refreshWorkspace = async () => {
+  const fetchWorkspace = async (): Promise<boolean> => {
     try {
       const snapshot = await api.getWorkspace();
       store.dispatch({
@@ -92,26 +104,36 @@ const createWorkspaceController = (): WorkspaceController => {
         threads: snapshot.threads,
         providers: snapshot.providers,
         agents: snapshot.agents,
+        skills: snapshot.skills,
+        modelTiers: snapshot.modelTiers,
       });
+      return true;
     } catch (error) {
       store.dispatch({
         kind: "error",
         message: error instanceof Error ? error.message : "Failed to load workspace.",
       });
+      return false;
     }
   };
 
   const agentActions = createAgentActions(() => api, {
     onEvent: (event) => store.dispatch({ kind: "push", event }),
-    onDetail: (detail) => store.dispatch({ kind: "agentDetailLoaded", detail }),
+    onDetail: (detail) => {
+      wsSupervisor?.flush();
+      store.dispatch({ kind: "agentDetailLoaded", detail });
+    },
   });
 
   const actions: WorkspaceActions = {
     ...agentActions,
     selectProject: (projectId) => store.dispatch({ kind: "selectProject", projectId }),
+    setActiveThread: (threadId) => store.dispatch({ kind: "setActiveThread", threadId }),
     setDefaultModelSelection: (selection) =>
       store.dispatch({ kind: "setModelSelection", selection }),
-    refreshWorkspace,
+    refreshWorkspace: async () => {
+      await fetchWorkspace();
+    },
     loadBranches: async (projectId) => {
       const branches = await api.listBranches(projectId);
       store.dispatch({ kind: "branchesLoaded", projectId, branches });
@@ -133,11 +155,13 @@ const createWorkspaceController = (): WorkspaceController => {
     listDirectory: (dirPath) => api.listDirectory(dirPath),
     loadThreadDetail: async (threadId) => {
       const detail = await api.getThreadDetail(threadId);
+      wsSupervisor?.flush();
       store.dispatch({ kind: "threadDetailLoaded", detail });
       return detail;
     },
     createThread: async (input) => {
       const detail = await api.createThread(input);
+      wsSupervisor?.flush();
       store.dispatch({ kind: "threadDetailLoaded", detail });
       return detail;
     },
@@ -179,6 +203,11 @@ const createWorkspaceController = (): WorkspaceController => {
       store.dispatch({ kind: "push", event: { kind: "provider.updated", provider } });
       return provider;
     },
+    updateModelTiers: async (scope, config) => {
+      const modelTiers = await api.updateModelTiers(scope, config);
+      store.dispatch({ kind: "push", event: { kind: "modelTiers.updated", modelTiers } });
+      return modelTiers;
+    },
   };
 
   return {
@@ -187,43 +216,97 @@ const createWorkspaceController = (): WorkspaceController => {
     setBaseUrl: (baseUrl) => {
       api = createScuttleApiClient(baseUrl);
     },
-    refreshWorkspace,
+    setSupervisor: (supervisor) => {
+      wsSupervisor = supervisor;
+    },
+    fetchWorkspace,
   };
 };
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const [{ store, actions, setBaseUrl, refreshWorkspace }] = useState(createWorkspaceController);
+  const [{ store, actions, setBaseUrl, setSupervisor, fetchWorkspace }] =
+    useState(createWorkspaceController);
 
   useEffect(() => {
     let active = true;
-    let supervisor: ReturnType<typeof createWsSupervisor> | null = null;
+    let supervisor: WsSupervisorHandle | null = null;
+    let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+    let fetchInFlight = false;
+    let hasLoadedOnce = false;
+    let pendingRefresh = false;
+    let bufferedEvents: Array<ServerPushEvent> = [];
+
+    const clearFallbackTimer = () => {
+      if (fallbackTimer !== null) {
+        clearTimeout(fallbackTimer);
+        fallbackTimer = null;
+      }
+    };
+
+    const loadInitialOrRefresh = async () => {
+      if (!active) return;
+      if (fetchInFlight) {
+        pendingRefresh = true;
+        return;
+      }
+      fetchInFlight = true;
+      try {
+        const ok = await fetchWorkspace();
+        if (!active) return;
+        if (ok) {
+          hasLoadedOnce = true;
+          if (bufferedEvents.length > 0) {
+            const drained = bufferedEvents;
+            bufferedEvents = [];
+            store.dispatch({ kind: "pushBatch", events: drained });
+          }
+        }
+      } finally {
+        fetchInFlight = false;
+        if (active && pendingRefresh) {
+          pendingRefresh = false;
+          void loadInitialOrRefresh();
+        }
+      }
+    };
 
     const bootstrap = async () => {
       const bridge = getDesktopBridge();
       const baseUrl = bridge === null ? undefined : (await bridge.getDesktopInfo()).serverUrl;
       if (!active) return;
       setBaseUrl(baseUrl);
-      await refreshWorkspace();
-      if (!active) return;
       supervisor = createWsSupervisor({
         ...(baseUrl !== undefined ? { baseUrl } : {}),
         onEvents: (events) => {
+          if (!hasLoadedOnce) {
+            bufferedEvents.push(...events);
+            return;
+          }
           store.dispatch({ kind: "pushBatch", events });
         },
         onOpen: ({ isReconnect }) => {
-          if (isReconnect) {
-            void refreshWorkspace();
+          clearFallbackTimer();
+          if (isReconnect || (!hasLoadedOnce && !fetchInFlight)) {
+            void loadInitialOrRefresh();
           }
         },
       });
+      setSupervisor(supervisor);
+      fallbackTimer = setTimeout(() => {
+        fallbackTimer = null;
+        if (!active || hasLoadedOnce || fetchInFlight) return;
+        void loadInitialOrRefresh();
+      }, 250);
     };
 
     void bootstrap();
     return () => {
       active = false;
+      clearFallbackTimer();
+      setSupervisor(null);
       supervisor?.close();
     };
-  }, [store, setBaseUrl, refreshWorkspace]);
+  }, [store, setBaseUrl, setSupervisor, fetchWorkspace]);
 
   return (
     <WorkspaceStoreContext value={store}>

@@ -17,6 +17,7 @@ export interface ComposerContextUsage {
 
 interface ContextTurn {
   readonly sessionEpoch?: number;
+  readonly status?: string;
   readonly userMessage: string;
   readonly assistantMessage: string;
   readonly thinkingText: string;
@@ -77,6 +78,18 @@ function conversationChars(turn: ContextTurn): number {
   return turn.userMessage.length + turn.assistantMessage.length + turn.thinkingText.length;
 }
 
+interface LastUsageCacheEntry {
+  readonly model: string;
+  readonly systemChars: number;
+  readonly sessionEpoch: number | undefined;
+  readonly activeSummary: string | undefined;
+  readonly completedCount: number;
+  readonly lastCompletedTurn: ContextTurn | undefined;
+  readonly result: ComposerContextUsage;
+}
+
+const lastUsageCache = new WeakMap<TurnUsage, LastUsageCacheEntry>();
+
 export function estimateContextUsage({
   turns,
   systemChars = DEFAULT_SYSTEM_CHARS,
@@ -92,23 +105,71 @@ export function estimateContextUsage({
   const estSystem = toTokens(systemChars);
 
   if (lastUsage) {
+    const lastTurn = turns[turns.length - 1];
+    const hasRunningTail = lastTurn?.status === "running";
+    const completedCount = hasRunningTail ? turns.length - 1 : turns.length;
+    const lastCompletedTurn = hasRunningTail ? turns[turns.length - 2] : lastTurn;
+    const cached = lastUsageCache.get(lastUsage);
+    if (
+      cached !== undefined &&
+      cached.model === model &&
+      cached.systemChars === systemChars &&
+      cached.sessionEpoch === sessionEpoch &&
+      cached.activeSummary === activeSummary &&
+      cached.completedCount === completedCount &&
+      cached.lastCompletedTurn === lastCompletedTurn
+    ) {
+      return cached.result;
+    }
+
     const usedTokens =
       lastUsage.inputTokens +
       (lastUsage.cacheReadTokens ?? 0) +
       (lastUsage.cacheCreationTokens ?? 0) +
       lastUsage.outputTokens;
     const systemTokens = usedTokens === 0 ? 0 : Math.min(usedTokens, estSystem);
-    const conversationTokens = Math.max(0, usedTokens - systemTokens);
-    return {
+    const remaining = Math.max(0, usedTokens - systemTokens);
+    let toolsTokens = 0;
+
+    if (remaining > 0 && turns.length > 0) {
+      const scanTurns =
+        hasRunningTail && completedCount > 0 ? turns.slice(0, completedCount) : turns;
+      const activeTurns =
+        sessionEpoch === undefined
+          ? scanTurns
+          : scanTurns.filter((turn) => (turn.sessionEpoch ?? 0) === sessionEpoch);
+      const summaryChars = activeSummary?.trim().length ?? 0;
+      const estTools = toTokens(activeTurns.reduce((sum, turn) => sum + toolChars(turn), 0));
+      const estConversation = toTokens(
+        summaryChars + activeTurns.reduce((sum, turn) => sum + conversationChars(turn), 0),
+      );
+      const totalEstimated = estTools + estConversation;
+      if (totalEstimated > 0) {
+        toolsTokens = Math.min(remaining, Math.round((remaining * estTools) / totalEstimated));
+      }
+    }
+
+    const conversationTokens = remaining - toolsTokens;
+    const result: ComposerContextUsage = {
       usedTokens,
       windowTokens,
       compactAtTokens: Math.round(windowTokens * COMPACT_BUDGET_RATIO),
       segments: [
         { key: "system", label: "System prompt", tokens: systemTokens },
-        { key: "tools", label: "Tools & activities", tokens: 0 },
+        { key: "tools", label: "Tools & activities", tokens: toolsTokens },
         { key: "conversation", label: "Conversation", tokens: conversationTokens },
       ],
     };
+    lastUsageCache.set(lastUsage, {
+      model,
+      systemChars,
+      sessionEpoch,
+      activeSummary,
+      completedCount,
+      lastCompletedTurn,
+      result,
+    });
+    return result;
   }
 
   const activeTurns =

@@ -1,14 +1,17 @@
-import type {
-  Agent,
-  AgentDetail,
-  GitBranchInfo,
-  ModelSelection,
-  Project,
-  ProviderSnapshot,
-  ServerPushEvent,
-  Thread,
-  ThreadDetail,
-  ThreadTurn,
+import {
+  EMPTY_SCOPED_MODEL_TIERS,
+  type Agent,
+  type AgentDetail,
+  type GitBranchInfo,
+  type ModelSelection,
+  type Project,
+  type ProviderSnapshot,
+  type ScopedModelTierConfigs,
+  type ScuttleSkill,
+  type ServerPushEvent,
+  type Thread,
+  type ThreadDetail,
+  type ThreadTurn,
 } from "@scuttle/contracts";
 import type { ProjectId } from "@scuttle/shared/ids";
 import { type AgentSlice, agentDetailLoaded, applyAgentEvent } from "./agentState.ts";
@@ -27,9 +30,12 @@ export interface WorkspaceState extends AgentSlice {
   readonly projects: ReadonlyArray<Project>;
   readonly threads: ReadonlyArray<Thread>;
   readonly providers: ReadonlyArray<ProviderSnapshot>;
+  readonly skills: ReadonlyArray<ScuttleSkill>;
+  readonly modelTiers: ScopedModelTierConfigs;
   readonly threadDetails: Readonly<Record<string, ThreadDetail>>;
   readonly branchesByProject: Readonly<Record<string, ReadonlyArray<GitBranchInfo>>>;
   readonly selectedProjectId: ProjectId | null;
+  readonly activeThreadId: string | null;
   readonly defaultModelSelection: ModelSelection;
   readonly error: string | null;
   readonly agentThreadIds: ReadonlySet<string>;
@@ -42,9 +48,12 @@ export type Action =
       readonly threads: ReadonlyArray<Thread>;
       readonly providers: ReadonlyArray<ProviderSnapshot>;
       readonly agents: ReadonlyArray<Agent>;
+      readonly skills?: ReadonlyArray<ScuttleSkill> | undefined;
+      readonly modelTiers?: ScopedModelTierConfigs | undefined;
     }
   | { readonly kind: "error"; readonly message: string | null }
   | { readonly kind: "selectProject"; readonly projectId: ProjectId | null }
+  | { readonly kind: "setActiveThread"; readonly threadId: string | null }
   | { readonly kind: "setModelSelection"; readonly selection: ModelSelection }
   | {
       readonly kind: "branchesLoaded";
@@ -61,11 +70,14 @@ export const createInitialWorkspaceState = (): WorkspaceState => ({
   projects: [],
   threads: [],
   providers: [],
+  skills: [],
+  modelTiers: EMPTY_SCOPED_MODEL_TIERS,
   threadDetails: {},
   agents: [],
   agentWork: {},
   branchesByProject: {},
   selectedProjectId: null,
+  activeThreadId: null,
   defaultModelSelection: readStoredSelection() ?? FALLBACK_SELECTION,
   error: null,
   agentThreadIds: new Set<string>(),
@@ -78,6 +90,7 @@ const touchThreadDetail = (
   threadDetails: Readonly<Record<string, ThreadDetail>>,
   threadId: string,
   detail: ThreadDetail,
+  activeThreadId: string | null,
 ): Readonly<Record<string, ThreadDetail>> => {
   const keys = Object.keys(threadDetails);
   const existing = Object.hasOwn(threadDetails, threadId);
@@ -85,7 +98,7 @@ const touchThreadDetail = (
   const next: Record<string, ThreadDetail> = {};
   for (const key of keys) {
     if (key === threadId) continue;
-    if (skipCount > 0) {
+    if (skipCount > 0 && key !== activeThreadId) {
       skipCount -= 1;
       continue;
     }
@@ -161,7 +174,12 @@ const flushPendingDeltas = (
       };
     });
     if (changed) {
-      nextThreadDetails = touchThreadDetail(nextThreadDetails, threadId, { ...detail, turns });
+      nextThreadDetails = touchThreadDetail(
+        nextThreadDetails,
+        threadId,
+        { ...detail, turns },
+        state.activeThreadId,
+      );
     }
   }
   pendingByThread.clear();
@@ -190,10 +208,15 @@ const applyCoreEvent = (state: WorkspaceState, event: ServerPushEvent): Workspac
       const threads = upsertThreadSorted(state.threads, event.thread);
       const existingDetail = state.threadDetails[event.thread.id];
       const threadDetails = existingDetail
-        ? touchThreadDetail(state.threadDetails, event.thread.id, {
-            ...existingDetail,
-            thread: event.thread,
-          })
+        ? touchThreadDetail(
+            state.threadDetails,
+            event.thread.id,
+            {
+              ...existingDetail,
+              thread: event.thread,
+            },
+            state.activeThreadId,
+          )
         : state.threadDetails;
       return { ...state, threads, threadDetails };
     }
@@ -208,10 +231,15 @@ const applyCoreEvent = (state: WorkspaceState, event: ServerPushEvent): Workspac
       const turns = upsertById(detail.turns, event.turn, false);
       return {
         ...state,
-        threadDetails: touchThreadDetail(state.threadDetails, event.turn.threadId, {
-          ...detail,
-          turns,
-        }),
+        threadDetails: touchThreadDetail(
+          state.threadDetails,
+          event.turn.threadId,
+          {
+            ...detail,
+            turns,
+          },
+          state.activeThreadId,
+        ),
       };
     }
     case "turn.delta": {
@@ -228,10 +256,15 @@ const applyCoreEvent = (state: WorkspaceState, event: ServerPushEvent): Workspac
       if (!changed) return state;
       return {
         ...state,
-        threadDetails: touchThreadDetail(state.threadDetails, event.threadId, {
-          ...detail,
-          turns,
-        }),
+        threadDetails: touchThreadDetail(
+          state.threadDetails,
+          event.threadId,
+          {
+            ...detail,
+            turns,
+          },
+          state.activeThreadId,
+        ),
       };
     }
     case "turn.activity": {
@@ -246,10 +279,15 @@ const applyCoreEvent = (state: WorkspaceState, event: ServerPushEvent): Workspac
       if (!changed) return state;
       return {
         ...state,
-        threadDetails: touchThreadDetail(state.threadDetails, event.activity.threadId, {
-          ...detail,
-          turns,
-        }),
+        threadDetails: touchThreadDetail(
+          state.threadDetails,
+          event.activity.threadId,
+          {
+            ...detail,
+            turns,
+          },
+          state.activeThreadId,
+        ),
       };
     }
     case "approval.updated": {
@@ -264,10 +302,15 @@ const applyCoreEvent = (state: WorkspaceState, event: ServerPushEvent): Workspac
       if (!changed) return state;
       return {
         ...state,
-        threadDetails: touchThreadDetail(state.threadDetails, event.approval.threadId, {
-          ...detail,
-          turns,
-        }),
+        threadDetails: touchThreadDetail(
+          state.threadDetails,
+          event.approval.threadId,
+          {
+            ...detail,
+            turns,
+          },
+          state.activeThreadId,
+        ),
       };
     }
     case "provider.updated": {
@@ -275,6 +318,8 @@ const applyCoreEvent = (state: WorkspaceState, event: ServerPushEvent): Workspac
       const defaultModelSelection = pickBestSelection(providers, state.defaultModelSelection);
       return { ...state, providers, defaultModelSelection };
     }
+    case "modelTiers.updated":
+      return { ...state, modelTiers: event.modelTiers };
     default:
       return state;
   }
@@ -349,6 +394,8 @@ export const reduceWorkspaceState = (state: WorkspaceState, action: Action): Wor
         threads: action.threads,
         providers: action.providers,
         agents: action.agents,
+        skills: action.skills ?? state.skills,
+        modelTiers: action.modelTiers ?? state.modelTiers,
         agentThreadIds: computeAgentThreadIds(action.agents),
         selectedProjectId,
         defaultModelSelection,
@@ -359,6 +406,10 @@ export const reduceWorkspaceState = (state: WorkspaceState, action: Action): Wor
       return { ...state, loading: false, error: action.message };
     case "selectProject":
       return { ...state, selectedProjectId: action.projectId };
+    case "setActiveThread":
+      return state.activeThreadId === action.threadId
+        ? state
+        : { ...state, activeThreadId: action.threadId };
     case "setModelSelection":
       writeStoredSelection(action.selection);
       return { ...state, defaultModelSelection: action.selection };
@@ -375,6 +426,7 @@ export const reduceWorkspaceState = (state: WorkspaceState, action: Action): Wor
           state.threadDetails,
           action.detail.thread.id,
           action.detail,
+          state.activeThreadId,
         ),
       };
     case "agentDetailLoaded": {
@@ -385,7 +437,12 @@ export const reduceWorkspaceState = (state: WorkspaceState, action: Action): Wor
         ...agentSlice,
         agentThreadIds: computeAgentThreadIds(agentSlice.agents),
         threads: upsertById(state.threads, primary.thread, true),
-        threadDetails: touchThreadDetail(state.threadDetails, primary.thread.id, primary),
+        threadDetails: touchThreadDetail(
+          state.threadDetails,
+          primary.thread.id,
+          primary,
+          state.activeThreadId,
+        ),
       };
     }
     case "push":

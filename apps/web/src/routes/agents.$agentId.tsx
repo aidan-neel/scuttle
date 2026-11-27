@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/Button.tsx";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog.tsx";
 import { DotSpinner } from "@/components/ui/DotSpinner.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
-import { useWorkspace } from "@/lib/workspace.tsx";
+import { useThreadDetail, useWorkspaceActions, useWorkspaceSelector } from "@/lib/workspace.tsx";
 
 export const Route = createFileRoute("/agents/$agentId")({
   component: AgentPage,
@@ -28,8 +28,11 @@ function AgentPage() {
 
 function AgentView({ agentId }: { readonly agentId: string }) {
   const navigate = useNavigate();
-  const { agents, agentWork, threadDetails, loadAgentDetail, updateAgent, deleteAgent } =
-    useWorkspace();
+  const agent = useWorkspaceSelector((s) => s.agents.find((candidate) => candidate.id === agentId));
+  const work = useWorkspaceSelector((s) => s.agentWork[agentId]);
+  const primaryThreadId = agent?.primaryThreadId ?? null;
+  const detail = useThreadDetail(primaryThreadId ?? "");
+  const { loadAgentDetail, updateAgent, deleteAgent, setActiveThread } = useWorkspaceActions();
   const [load, setLoad] = useState<LoadState>({ kind: "loading" });
   const [profileOpen, setProfileOpen] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -52,9 +55,13 @@ function AgentView({ agentId }: { readonly agentId: string }) {
     };
   }, [agentId]);
 
-  const agent = agents.find((candidate) => candidate.id === agentId);
-  const work = agentWork[agentId];
-  const detail = agent === undefined ? undefined : threadDetails[agent.primaryThreadId];
+  useEffect(() => {
+    setActiveThread(primaryThreadId);
+    return () => {
+      setActiveThread(null);
+    };
+  }, [primaryThreadId, setActiveThread]);
+
   const needsAttention = agent?.needsAttention === true;
 
   useEffect(() => {

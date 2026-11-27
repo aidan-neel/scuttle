@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import type { ServerPushEvent } from "@scuttle/contracts";
 import { ThreadId, TurnId } from "@scuttle/shared/ids";
 import * as Effect from "effect/Effect";
 import { parseServerRpcMessage, resolveWebSocketUrl } from "../src/connection.ts";
-import { decodeServerPushEvent } from "../src/wsClient.ts";
+import { createWsSupervisor, decodeServerPushEvent } from "../src/wsClient.ts";
 
 describe("client-runtime connection helpers", () => {
   test("derives ws URL from explicit http base URL", () => {
@@ -59,5 +60,65 @@ describe("client-runtime connection helpers", () => {
         serverTime: "2026-11-25T10:00:00.000Z",
       }),
     ).toBeNull();
+  });
+
+  test("wsSupervisor flush() synchronously delivers queued push events", async () => {
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request, bunServer) {
+        if (bunServer.upgrade(request)) return undefined;
+        return new Response("upgrade failed", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          ws.send(
+            JSON.stringify({
+              kind: "turn.delta",
+              threadId: "thread-1",
+              turnId: "turn-1",
+              channel: "assistant",
+              delta: "hello",
+            }),
+          );
+        },
+        message() {},
+      },
+    });
+
+    const batches: Array<ReadonlyArray<ServerPushEvent>> = [];
+    let resolveReceived!: () => void;
+    const received = new Promise<void>((resolve) => {
+      resolveReceived = resolve;
+    });
+
+    const supervisor = createWsSupervisor({
+      baseUrl: `http://127.0.0.1:${server.port}`,
+      onEvent: () => {
+        resolveReceived();
+      },
+      onEvents: (events) => {
+        batches.push(events);
+      },
+    });
+
+    try {
+      await received;
+      expect(batches).toHaveLength(0);
+      supervisor.flush();
+      expect(batches).toHaveLength(1);
+      expect(batches[0]).toEqual([
+        {
+          kind: "turn.delta",
+          threadId: ThreadId.make("thread-1"),
+          turnId: TurnId.make("turn-1"),
+          channel: "assistant",
+          delta: "hello",
+        },
+      ]);
+    } finally {
+      supervisor.close();
+      await server.stop(true);
+    }
   });
 });
