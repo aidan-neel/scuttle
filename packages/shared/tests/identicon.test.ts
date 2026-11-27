@@ -35,5 +35,11 @@ describe("identicon", () => {
     expect(dicebearIdenticonUrl("My Agent")).toBe(
       "https://api.dicebear.com/10.x/identicon/svg?seed=My%20Agent&scale=0.72",
     );
+    expect(dicebearIdenticonUrl("My Agent", "shapes")).toBe(
+      "https://api.dicebear.com/10.x/shapes/svg?seed=My%20Agent",
+    );
+    expect(dicebearIdenticonUrl("Captain", "bottts-neutral")).toBe(
+      "https://api.dicebear.com/10.x/bottts-neutral/svg?seed=Captain",
+    );
   });
 });

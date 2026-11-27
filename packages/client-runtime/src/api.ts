@@ -1,10 +1,12 @@
 import {
+  AcpRegistryAgentSummary,
   Agent,
   AgentCheckIn,
   AgentDelegation,
   AgentDelegationQuestion,
   AgentDetail,
   AgentIssue,
+  AgentIssueActivity,
   AgentMemory,
   type AskDelegationParentInput,
   type AssignAgentIssueInput,
@@ -12,45 +14,58 @@ import {
   type CompactThreadInput,
   CompactThreadResult,
   type CreateAgentInput,
+  type CreateIssueCommentInput,
   type CreateIssueInput,
   type CreateMemoryInput,
-  type CreatePullRequestInput,
+  type CreateProjectInput,
+  type CreateProviderInstanceInput,
+  type CreateThreadInput,
   type DelegateAgentTaskInput,
-  DeviceFlowPoll,
-  DeviceFlowStart,
-  type ForgeKind,
-  ForgeStatus,
-  type ForgeTokenInput,
-  GitActionResult,
-  type GitCheckoutInput,
-  type GitCommitInput,
-  GitStatus,
-  PullRequest,
-  PullRequestList,
+  DirectoryListing,
+  type EditQueuedTurnInput,
+  GitBranchInfo,
+  type InstallAcpAgentInput,
+  type ModelPerfQueryInput,
+  ModelPerfRun,
+  ModelPerformanceSummary,
+  type ModelTierConfig,
+  type ModelTierScope,
+  Project,
+  type ProviderConfigPatch,
+  ProviderSnapshot,
+  QueuedTurn,
+  type RateModelRunInput,
+  type RespondApprovalInput,
+  type RewindThreadInput,
+  RewindThreadResult,
+  ScopedModelTierConfigs,
+  ScuttleSkill,
+  ScuttleSkillDetail,
+  type SendTurnInput,
+  SendTurnResult,
+  type SettleThreadInput,
   type SetupAgentStartInput,
+  Thread,
+  ThreadDetail,
+  ThreadTurn,
+  ThreadVisualization,
   type TriggerCheckInInput,
   type UpdateAgentInput,
   type UpdateIssueInput,
   type UpdateMemoryInput,
-  type CreateProjectInput,
-  type CreateThreadInput,
-  DirectoryListing,
-  GitBranchInfo,
-  Project,
-  type ProviderConfigPatch,
-  ProviderSnapshot,
-  type RespondApprovalInput,
-  type SendTurnInput,
-  type SettleThreadInput,
-  Thread,
-  ThreadDetail,
-  ThreadTurn,
   type UpdateThreadInput,
+  UploadedAttachment,
+  type UsageProviderFilter,
+  type UsageRange,
+  UsageReport,
   WorkspaceSnapshot,
 } from "@scuttle/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { resolveBaseHttpUrl, ServerFetchError } from "./connection.ts";
+import { postJson, requestJson, requestVoid } from "./httpHelpers.ts";
+
+export { createScuttleGitApi, type GitTargetRef, type ScuttleGitApi } from "./gitApi.ts";
+export { describeApiError } from "./httpHelpers.ts";
 
 const decodeWorkspace = Schema.decodeUnknownEffect(WorkspaceSnapshot);
 const decodeAgents = Schema.decodeUnknownEffect(Schema.Array(Agent));
@@ -60,6 +75,8 @@ const decodeAgentMemories = Schema.decodeUnknownEffect(Schema.Array(AgentMemory)
 const decodeAgentMemory = Schema.decodeUnknownEffect(AgentMemory);
 const decodeAgentIssues = Schema.decodeUnknownEffect(Schema.Array(AgentIssue));
 const decodeAgentIssue = Schema.decodeUnknownEffect(AgentIssue);
+const decodeAgentIssueActivities = Schema.decodeUnknownEffect(Schema.Array(AgentIssueActivity));
+const decodeAgentIssueActivity = Schema.decodeUnknownEffect(AgentIssueActivity);
 const decodeAgentDelegation = Schema.decodeUnknownEffect(AgentDelegation);
 const decodeAgentDelegationQuestion = Schema.decodeUnknownEffect(AgentDelegationQuestion);
 const decodeAgentDelegationQuestions = Schema.decodeUnknownEffect(
@@ -72,176 +89,94 @@ const decodeBranches = Schema.decodeUnknownEffect(Schema.Array(GitBranchInfo));
 const decodeDirectory = Schema.decodeUnknownEffect(DirectoryListing);
 const decodeProviders = Schema.decodeUnknownEffect(Schema.Array(ProviderSnapshot));
 const decodeProvider = Schema.decodeUnknownEffect(ProviderSnapshot);
+const decodeAcpRegistryAgents = Schema.decodeUnknownEffect(Schema.Array(AcpRegistryAgentSummary));
 const decodeThread = Schema.decodeUnknownEffect(Thread);
 const decodeThreadDetail = Schema.decodeUnknownEffect(ThreadDetail);
 const decodeCompactThreadResult = Schema.decodeUnknownEffect(CompactThreadResult);
 const decodeTurn = Schema.decodeUnknownEffect(ThreadTurn);
-const decodeForges = Schema.decodeUnknownEffect(Schema.Array(ForgeStatus));
-const decodeForge = Schema.decodeUnknownEffect(ForgeStatus);
-const decodeDeviceStart = Schema.decodeUnknownEffect(DeviceFlowStart);
-const decodeDevicePoll = Schema.decodeUnknownEffect(DeviceFlowPoll);
-const decodeGitStatus = Schema.decodeUnknownEffect(GitStatus);
-const decodeGitAction = Schema.decodeUnknownEffect(GitActionResult);
-const decodePullRequests = Schema.decodeUnknownEffect(PullRequestList);
-const decodePullRequest = Schema.decodeUnknownEffect(PullRequest);
+const decodeUploadedAttachment = Schema.decodeUnknownEffect(UploadedAttachment);
+const decodeSkills = Schema.decodeUnknownEffect(Schema.Array(ScuttleSkill));
+const decodeSkillDetail = Schema.decodeUnknownEffect(ScuttleSkillDetail);
+const decodeModelTiers = Schema.decodeUnknownEffect(ScopedModelTierConfigs);
+const decodeUsageReport = Schema.decodeUnknownEffect(UsageReport);
+const decodeSendTurnResponse = Schema.decodeUnknownEffect(
+  Schema.Union([SendTurnResult, ThreadTurn]),
+);
+const decodeRewindResult = Schema.decodeUnknownEffect(RewindThreadResult);
+const decodeQueuedTurn = Schema.decodeUnknownEffect(QueuedTurn);
+const decodeQueuedTurns = Schema.decodeUnknownEffect(Schema.Array(QueuedTurn));
+const decodeSendTurnResult = Schema.decodeUnknownEffect(SendTurnResult);
+const decodeVisualizations = Schema.decodeUnknownEffect(Schema.Array(ThreadVisualization));
+const decodePerformanceSummary = Schema.decodeUnknownEffect(ModelPerformanceSummary);
+const decodePerfRun = Schema.decodeUnknownEffect(ModelPerfRun);
 
-export const describeApiError = (error: unknown, fallback: string): string => {
-  if (error instanceof ServerFetchError && error.cause instanceof Error) {
-    return error.cause.message;
-  }
-  return error instanceof Error && error.message.length > 0 ? error.message : fallback;
-};
+const toSendTurnResult = (response: SendTurnResult | ThreadTurn): SendTurnResult =>
+  "kind" in response ? response : { kind: "started", turn: response };
 
-const extractErrorMessage = (payload: unknown, fallback: string): string => {
-  if (typeof payload === "object" && payload !== null && "error" in payload) {
-    const err = payload.error;
-    if (typeof err === "string" && err.length > 0) return err;
-  }
-  return fallback;
-};
-
-const buildHeaders = (init: RequestInit | undefined): Headers => {
-  const headers = new Headers(init?.headers);
-  if (init?.body !== undefined && !headers.has("Content-Type")) {
-    headers.set("Content-Type", "application/json");
-  }
-  return headers;
-};
-
-const requestJson = <A>(
-  baseUrl: string | undefined,
-  path: string,
-  init: RequestInit | undefined,
-  decode: (input: unknown) => Effect.Effect<A, unknown>,
-) =>
-  Effect.gen(function* () {
-    const endpoint = `${resolveBaseHttpUrl(baseUrl)}${path}`;
-    const response = yield* Effect.tryPromise({
-      try: () =>
-        fetch(endpoint, {
-          ...init,
-          headers: buildHeaders(init),
-        }),
-      catch: (cause) => new ServerFetchError({ endpoint, cause }),
-    });
-    const payload: unknown = yield* Effect.tryPromise({
-      try: () => response.json(),
-      catch: () => null,
-    }).pipe(Effect.catch(() => Effect.succeed(null)));
-
-    if (!response.ok) {
-      const msg = extractErrorMessage(payload, `HTTP ${response.status}`);
-      return yield* new ServerFetchError({
-        endpoint,
-        status: response.status,
-        cause: new Error(msg),
-      });
-    }
-    return yield* decode(payload).pipe(
-      Effect.mapError((cause) => new ServerFetchError({ endpoint, cause })),
-    );
-  });
-
-const requestVoid = (baseUrl: string | undefined, path: string, init: RequestInit | undefined) =>
-  Effect.gen(function* () {
-    const endpoint = `${resolveBaseHttpUrl(baseUrl)}${path}`;
-    const response = yield* Effect.tryPromise({
-      try: () =>
-        fetch(endpoint, {
-          ...init,
-          headers: buildHeaders(init),
-        }),
-      catch: (cause) => new ServerFetchError({ endpoint, cause }),
-    });
-    if (!response.ok) {
-      const payload: unknown = yield* Effect.tryPromise({
-        try: () => response.json(),
-        catch: () => null,
-      }).pipe(Effect.catch(() => Effect.succeed(null)));
-      const msg = extractErrorMessage(payload, `HTTP ${response.status}`);
-      return yield* new ServerFetchError({
-        endpoint,
-        status: response.status,
-        cause: new Error(msg),
-      });
-    }
-  });
-
-export interface GitTargetRef {
-  readonly projectId: string;
-  readonly threadId?: string;
-}
-
-const gitPath = (target: GitTargetRef, action: string): string => {
-  const query =
-    target.threadId !== undefined ? `?threadId=${encodeURIComponent(target.threadId)}` : "";
-  return `/api/projects/${encodeURIComponent(target.projectId)}/git/${action}${query}`;
-};
-
-const postJson = (body?: unknown): RequestInit =>
-  body === undefined ? { method: "POST" } : { method: "POST", body: JSON.stringify(body) };
-
-export interface ScuttleGitApi {
-  readonly listForges: (refresh?: boolean) => Promise<ReadonlyArray<ForgeStatus>>;
-  readonly connectForgeToken: (input: ForgeTokenInput) => Promise<ForgeStatus>;
-  readonly disconnectForge: (forge: ForgeKind) => Promise<ForgeStatus>;
-  readonly startGithubDeviceFlow: () => Promise<DeviceFlowStart>;
-  readonly pollGithubDeviceFlow: (flowId: string) => Promise<DeviceFlowPoll>;
-  readonly getGitStatus: (target: GitTargetRef) => Promise<GitStatus>;
-  readonly commitGit: (target: GitTargetRef, input: GitCommitInput) => Promise<GitActionResult>;
-  readonly pushGit: (target: GitTargetRef) => Promise<GitActionResult>;
-  readonly pullGit: (target: GitTargetRef) => Promise<GitActionResult>;
-  readonly checkoutGit: (target: GitTargetRef, input: GitCheckoutInput) => Promise<GitActionResult>;
-  readonly listPullRequests: (target: GitTargetRef) => Promise<PullRequestList>;
-  readonly createPullRequest: (
-    target: GitTargetRef,
-    input: CreatePullRequestInput,
-  ) => Promise<PullRequest>;
-}
-
-export const createScuttleGitApi = (baseUrl?: string): ScuttleGitApi => {
-  const call = <A>(
-    path: string,
-    init: RequestInit | undefined,
-    decode: (input: unknown) => Effect.Effect<A, unknown>,
-  ) => Effect.runPromise(requestJson(baseUrl, path, init, decode));
-  return {
-    listForges: (refresh) =>
-      call(`/api/git/forges${refresh === true ? "?refresh=1" : ""}`, undefined, decodeForges),
-    connectForgeToken: (input) => call("/api/git/forges/token", postJson(input), decodeForge),
-    disconnectForge: (forge) =>
-      call(`/api/git/forges/${encodeURIComponent(forge)}`, { method: "DELETE" }, decodeForge),
-    startGithubDeviceFlow: () =>
-      call("/api/git/forges/github/device/start", postJson(), decodeDeviceStart),
-    pollGithubDeviceFlow: (flowId) =>
-      call("/api/git/forges/github/device/poll", postJson({ flowId }), decodeDevicePoll),
-    getGitStatus: (target) => call(gitPath(target, "status"), undefined, decodeGitStatus),
-    commitGit: (target, input) => call(gitPath(target, "commit"), postJson(input), decodeGitAction),
-    pushGit: (target) => call(gitPath(target, "push"), postJson(), decodeGitAction),
-    pullGit: (target) => call(gitPath(target, "pull"), postJson(), decodeGitAction),
-    checkoutGit: (target, input) =>
-      call(gitPath(target, "checkout"), postJson(input), decodeGitAction),
-    listPullRequests: (target) =>
-      call(gitPath(target, "pull-requests"), undefined, decodePullRequests),
-    createPullRequest: (target, input) =>
-      call(gitPath(target, "pull-requests"), postJson(input), decodePullRequest),
-  };
+const performanceQueryString = (query: ModelPerfQueryInput | undefined): string => {
+  const qs = new URLSearchParams();
+  if (query?.model) qs.set("model", query.model);
+  if (query?.providerId) qs.set("providerId", query.providerId);
+  if (query?.category) qs.set("category", query.category);
+  if (query?.days !== undefined) qs.set("days", String(query.days));
+  if (query?.limit !== undefined) qs.set("limit", String(query.limit));
+  return qs.size > 0 ? `?${qs.toString()}` : "";
 };
 
 export interface ScuttleApiClient {
   readonly getWorkspace: () => Promise<WorkspaceSnapshot>;
+  readonly getUsage: (params?: {
+    readonly range?: UsageRange;
+    readonly provider?: UsageProviderFilter;
+    readonly refresh?: boolean;
+  }) => Promise<UsageReport>;
+  readonly listSkills: () => Promise<ReadonlyArray<ScuttleSkill>>;
+  readonly getSkillDetail: (id: string, file?: string) => Promise<ScuttleSkillDetail>;
+  readonly getModelTiers: () => Promise<ScopedModelTierConfigs>;
+  readonly updateModelTiers: (
+    scope: ModelTierScope,
+    config: ModelTierConfig,
+  ) => Promise<ScopedModelTierConfigs>;
   readonly createProject: (input: CreateProjectInput) => Promise<Project>;
   readonly deleteProject: (projectId: string) => Promise<void>;
   readonly listBranches: (projectId: string) => Promise<ReadonlyArray<GitBranchInfo>>;
-  readonly listDirectory: (dirPath?: string) => Promise<DirectoryListing>;
+  readonly listDirectory: (
+    dirPath?: string,
+    options?: { readonly includeFiles?: boolean },
+  ) => Promise<DirectoryListing>;
   readonly refreshProviders: () => Promise<ReadonlyArray<ProviderSnapshot>>;
+  readonly createProviderInstance: (
+    input: CreateProviderInstanceInput,
+  ) => Promise<ProviderSnapshot>;
   readonly updateProvider: (
     providerId: string,
     patch: ProviderConfigPatch,
   ) => Promise<ProviderSnapshot>;
+  readonly deleteProviderInstance: (providerId: string) => Promise<void>;
+  readonly listAcpRegistry: (options?: {
+    readonly refresh?: boolean;
+  }) => Promise<ReadonlyArray<AcpRegistryAgentSummary>>;
+  readonly installAcpAgent: (input: InstallAcpAgentInput) => Promise<ProviderSnapshot>;
   readonly getThreadDetail: (threadId: string) => Promise<ThreadDetail>;
   readonly createThread: (input: CreateThreadInput) => Promise<ThreadDetail>;
-  readonly sendTurn: (threadId: string, input: SendTurnInput) => Promise<ThreadTurn>;
+  readonly sendTurn: (threadId: string, input: SendTurnInput) => Promise<SendTurnResult>;
+  readonly rewindThread: (
+    threadId: string,
+    input: RewindThreadInput,
+  ) => Promise<RewindThreadResult>;
+  readonly listQueuedTurns: (threadId: string) => Promise<ReadonlyArray<QueuedTurn>>;
+  readonly editQueuedTurn: (
+    threadId: string,
+    queuedId: string,
+    input: EditQueuedTurnInput,
+  ) => Promise<QueuedTurn>;
+  readonly cancelQueuedTurn: (threadId: string, queuedId: string) => Promise<void>;
+  readonly promoteQueuedTurn: (threadId: string, queuedId: string) => Promise<SendTurnResult>;
+  readonly listVisualizations: (threadId: string) => Promise<ReadonlyArray<ThreadVisualization>>;
+  readonly getPerformanceSummary: (query?: ModelPerfQueryInput) => Promise<ModelPerformanceSummary>;
+  readonly rateModelRun: (input: RateModelRunInput) => Promise<ModelPerfRun>;
+  readonly deletePerformanceRun: (runId: string) => Promise<void>;
+  readonly uploadAttachment: (file: File) => Promise<UploadedAttachment>;
   readonly interruptTurn: (threadId: string) => Promise<void>;
   readonly settleThread: (threadId: string, input: SettleThreadInput) => Promise<Thread>;
   readonly compactThread: (
@@ -273,6 +208,7 @@ export interface ScuttleApiClient {
     input: UpdateMemoryInput,
   ) => Promise<AgentMemory>;
   readonly deleteAgentMemory: (agentId: string, memoryId: string) => Promise<void>;
+  readonly listAllIssues: () => Promise<ReadonlyArray<AgentIssue>>;
   readonly listAgentIssues: (agentId: string) => Promise<ReadonlyArray<AgentIssue>>;
   readonly createAgentIssue: (agentId: string, input: CreateIssueInput) => Promise<AgentIssue>;
   readonly updateAgentIssue: (
@@ -281,6 +217,15 @@ export interface ScuttleApiClient {
     input: UpdateIssueInput,
   ) => Promise<AgentIssue>;
   readonly deleteAgentIssue: (agentId: string, issueId: string) => Promise<void>;
+  readonly listIssueActivities: (
+    agentId: string,
+    issueId: string,
+  ) => Promise<ReadonlyArray<AgentIssueActivity>>;
+  readonly createIssueComment: (
+    agentId: string,
+    issueId: string,
+    input: CreateIssueCommentInput,
+  ) => Promise<AgentIssueActivity>;
   readonly syncAgentIssues: (agentId: string) => Promise<ReadonlyArray<AgentIssue>>;
   readonly assignAgentIssue: (
     agentId: string,
@@ -320,30 +265,93 @@ export const createScuttleApiClient = (baseUrl?: string): ScuttleApiClient => {
     Effect.runPromise(requestVoid(baseUrl, path, init));
   const agentPath = (agentId: string, suffix = "") =>
     `/api/agents/${encodeURIComponent(agentId)}${suffix}`;
+  const threadPath = (threadId: string, suffix = "") =>
+    `/api/threads/${encodeURIComponent(threadId)}${suffix}`;
+  const queuePath = (threadId: string, queuedId: string, suffix = "") =>
+    threadPath(threadId, `/queue/${encodeURIComponent(queuedId)}${suffix}`);
 
   return {
     getWorkspace: () => json("/api/workspace", undefined, decodeWorkspace),
+    getUsage: (params) => {
+      const qs = new URLSearchParams();
+      if (params?.range) qs.set("range", params.range);
+      if (params?.provider) qs.set("provider", params.provider);
+      if (params?.refresh) qs.set("refresh", "1");
+      const query = qs.size > 0 ? `?${qs.toString()}` : "";
+      return json(`/api/usage${query}`, undefined, decodeUsageReport);
+    },
+    listSkills: () => json("/api/skills", undefined, decodeSkills),
+    getSkillDetail: (id, file) => {
+      const query = file ? `?file=${encodeURIComponent(file)}` : "";
+      return json(`/api/skills/${encodeURIComponent(id)}${query}`, undefined, decodeSkillDetail);
+    },
+    getModelTiers: () => json("/api/model-tiers", undefined, decodeModelTiers),
+    updateModelTiers: (scope, config) =>
+      json(
+        "/api/model-tiers",
+        { method: "PUT", body: JSON.stringify({ scope, config }) },
+        decodeModelTiers,
+      ),
     createProject: (input) => json("/api/projects", postJson(input), decodeProject),
     deleteProject: (projectId) =>
       empty(`/api/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" }),
     listBranches: (projectId) =>
       json(`/api/projects/${encodeURIComponent(projectId)}/branches`, undefined, decodeBranches),
-    listDirectory: (dirPath) => {
-      const query = dirPath ? `?path=${encodeURIComponent(dirPath)}` : "";
+    listDirectory: (dirPath, options) => {
+      const params = new URLSearchParams();
+      if (dirPath) params.set("path", dirPath);
+      if (options?.includeFiles) params.set("includeFiles", "1");
+      const query = params.size > 0 ? `?${params.toString()}` : "";
       return json(`/api/fs/list${query}`, undefined, decodeDirectory);
     },
     refreshProviders: () => json("/api/providers/refresh", postJson(), decodeProviders),
+    createProviderInstance: (input) => json("/api/providers", postJson(input), decodeProvider),
     updateProvider: (providerId, patch) =>
       json(
         `/api/providers/${encodeURIComponent(providerId)}`,
         { method: "PATCH", body: JSON.stringify(patch) },
         decodeProvider,
       ),
+    deleteProviderInstance: (providerId) =>
+      empty(`/api/providers/${encodeURIComponent(providerId)}`, { method: "DELETE" }),
+    listAcpRegistry: (options) => {
+      const qs = options?.refresh ? "?refresh=1" : "";
+      return json(`/api/acp-registry${qs}`, undefined, decodeAcpRegistryAgents);
+    },
+    installAcpAgent: (input) => json("/api/acp-registry/install", postJson(input), decodeProvider),
     getThreadDetail: (threadId) =>
       json(`/api/threads/${encodeURIComponent(threadId)}`, undefined, decodeThreadDetail),
     createThread: (input) => json("/api/threads", postJson(input), decodeThreadDetail),
     sendTurn: (threadId, input) =>
-      json(`/api/threads/${encodeURIComponent(threadId)}/turns`, postJson(input), decodeTurn),
+      json(threadPath(threadId, "/turns"), postJson(input), decodeSendTurnResponse).then(
+        toSendTurnResult,
+      ),
+    rewindThread: (threadId, input) =>
+      json(threadPath(threadId, "/rewind"), postJson(input), decodeRewindResult),
+    listQueuedTurns: (threadId) =>
+      json(threadPath(threadId, "/queue"), undefined, decodeQueuedTurns),
+    editQueuedTurn: (threadId, queuedId, input) =>
+      json(
+        queuePath(threadId, queuedId),
+        { method: "PATCH", body: JSON.stringify(input) },
+        decodeQueuedTurn,
+      ),
+    cancelQueuedTurn: (threadId, queuedId) =>
+      empty(queuePath(threadId, queuedId), { method: "DELETE" }),
+    promoteQueuedTurn: (threadId, queuedId) =>
+      json(queuePath(threadId, queuedId, "/promote"), postJson(), decodeSendTurnResult),
+    listVisualizations: (threadId) =>
+      json(threadPath(threadId, "/visualizations"), undefined, decodeVisualizations),
+    getPerformanceSummary: (query) =>
+      json(`/api/performance${performanceQueryString(query)}`, undefined, decodePerformanceSummary),
+    rateModelRun: (input) => json("/api/performance/rate", postJson(input), decodePerfRun),
+    deletePerformanceRun: (runId) =>
+      empty(`/api/performance/runs/${encodeURIComponent(runId)}`, { method: "DELETE" }),
+    uploadAttachment: (file) => {
+      const form = new FormData();
+      form.append("file", file, file.name);
+      return json("/api/attachments", { method: "POST", body: form }, decodeUploadedAttachment);
+    },
     interruptTurn: (threadId) =>
       empty(`/api/threads/${encodeURIComponent(threadId)}/interrupt`, postJson()),
     settleThread: (threadId, input) =>
@@ -393,6 +401,7 @@ export const createScuttleApiClient = (baseUrl?: string): ScuttleApiClient => {
       empty(agentPath(agentId, `/memories/${encodeURIComponent(memoryId)}`), {
         method: "DELETE",
       }),
+    listAllIssues: () => json("/api/issues", undefined, decodeAgentIssues),
     listAgentIssues: (agentId) => json(agentPath(agentId, "/issues"), undefined, decodeAgentIssues),
     createAgentIssue: (agentId, input) =>
       json(agentPath(agentId, "/issues"), postJson(input), decodeAgentIssue),
@@ -404,6 +413,18 @@ export const createScuttleApiClient = (baseUrl?: string): ScuttleApiClient => {
       ),
     deleteAgentIssue: (agentId, issueId) =>
       empty(agentPath(agentId, `/issues/${encodeURIComponent(issueId)}`), { method: "DELETE" }),
+    listIssueActivities: (agentId, issueId) =>
+      json(
+        agentPath(agentId, `/issues/${encodeURIComponent(issueId)}/activities`),
+        undefined,
+        decodeAgentIssueActivities,
+      ),
+    createIssueComment: (agentId, issueId, input) =>
+      json(
+        agentPath(agentId, `/issues/${encodeURIComponent(issueId)}/comments`),
+        postJson(input),
+        decodeAgentIssueActivity,
+      ),
     syncAgentIssues: (agentId) =>
       json(agentPath(agentId, "/issues/sync"), postJson(), decodeAgentIssues),
     assignAgentIssue: (agentId, issueId, input) =>

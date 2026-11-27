@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+  computeAnchoredTurnMinHeight,
   computeNextPinned,
+  isAnchorableTurn,
+  SCROLL_VERTICAL_PADDING_PX,
   STICK_THRESHOLD_PX,
   UNPIN_SUPPRESS_MS,
 } from "../../../src/components/thread/useStickToBottom.ts";
@@ -99,5 +102,20 @@ describe("computeNextPinned", () => {
         suppressPinUntilMs: 0,
       }),
     ).toBe(true);
+  });
+});
+
+describe("computeAnchoredTurnMinHeight", () => {
+  test("reserves viewport height minus scroll container padding and clamps at zero", () => {
+    expect(computeAnchoredTurnMinHeight(800)).toBe(800 - SCROLL_VERTICAL_PADDING_PX);
+    expect(computeAnchoredTurnMinHeight(640.8, 60)).toBe(580);
+    expect(computeAnchoredTurnMinHeight(40, 60)).toBe(0);
+  });
+
+  test("skips system turns so agent onboarding keeps the hero visible", () => {
+    expect(isAnchorableTurn(undefined)).toBe(false);
+    expect(isAnchorableTurn({ origin: "system" })).toBe(false);
+    expect(isAnchorableTurn({ origin: "user" })).toBe(true);
+    expect(isAnchorableTurn({})).toBe(true);
   });
 });

@@ -1,8 +1,16 @@
-import { ArrowLeft01Icon, ArrowRight01Icon } from "@hugeicons/core-free-icons";
+import { ArrowLeft01Icon, ArrowRight01Icon, Folder01Icon } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
 import type { ReactNode } from "react";
+import { Skeleton } from "skullet/react";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { cn } from "@/lib/utils";
+
+const SAMPLE_PALETTE_ITEMS: ReadonlyArray<PaletteItem> = [
+  { id: "sample-1", label: "apps", icon: Folder01Icon, drill: true, onSelect: () => {} },
+  { id: "sample-2", label: "packages", icon: Folder01Icon, drill: true, onSelect: () => {} },
+  { id: "sample-3", label: "scripts", icon: Folder01Icon, drill: true, onSelect: () => {} },
+  { id: "sample-4", label: "vendor", icon: Folder01Icon, drill: true, onSelect: () => {} },
+];
 
 export interface PaletteItem {
   readonly id: string;
@@ -26,6 +34,7 @@ export interface PaletteContent {
   readonly title?: string;
   readonly onBack?: () => void;
   readonly sections: ReadonlyArray<PaletteSection>;
+  readonly loading?: boolean;
   readonly emptyText: string;
 }
 
@@ -55,7 +64,7 @@ export function ComposerPalette({
   return (
     <div
       onMouseDown={(event) => event.preventDefault()}
-      className="absolute bottom-full left-0 z-40 mb-2 flex max-h-[min(26rem,60vh)] w-[min(24rem,100%)] flex-col rounded-card bg-menu shadow-menu transition-[opacity,translate] duration-150 ease-out-quint starting:translate-y-1 starting:opacity-0"
+      className="absolute bottom-full left-0 z-40 mb-2 flex max-h-[min(20rem,38vh)] w-[min(24rem,100%)] flex-col rounded-card bg-menu shadow-menu transition-[opacity,translate] duration-150 ease-out-quint starting:translate-y-1 starting:opacity-0"
     >
       {content.title !== undefined && (
         <div className="flex h-8 shrink-0 items-center gap-1 border-b border-edge px-1.5">
@@ -81,29 +90,47 @@ export function ComposerPalette({
         aria-label={content.label}
         className="min-h-0 flex-1 scroll-py-1 overflow-y-auto overscroll-contain p-1"
       >
-        {!hasItems && <div className="px-2 py-2 text-label text-fg-muted">{content.emptyText}</div>}
-        {content.sections.map((section, sectionIndex) =>
-          section.items.length === 0 ? null : (
-            <div key={section.label ?? sectionIndex} role="group" aria-label={section.label}>
-              {section.label !== undefined && (
-                <div className="px-2 pt-1.5 pb-1 text-meta font-medium text-fg-muted">
-                  {section.label}
+        {content.loading ? (
+          <Skeleton loading id="composer-palette" label={`Loading ${content.label.toLowerCase()}`}>
+            {SAMPLE_PALETTE_ITEMS.map((item) => (
+              <PaletteRow
+                key={item.id}
+                id={item.id}
+                item={item}
+                active={false}
+                onHover={() => {}}
+              />
+            ))}
+          </Skeleton>
+        ) : (
+          <>
+            {!hasItems && (
+              <div className="px-2 py-2 text-label text-fg-muted">{content.emptyText}</div>
+            )}
+            {content.sections.map((section, sectionIndex) =>
+              section.items.length === 0 ? null : (
+                <div key={section.label ?? sectionIndex} role="group" aria-label={section.label}>
+                  {section.label !== undefined && (
+                    <div className="px-2 pt-1.5 pb-1 text-meta font-medium text-fg-muted">
+                      {section.label}
+                    </div>
+                  )}
+                  {section.items.map((item, offset) => {
+                    const itemIndex = (offsets[sectionIndex] ?? 0) + offset;
+                    return (
+                      <PaletteRow
+                        key={item.id}
+                        id={paletteOptionId(listboxId, itemIndex)}
+                        item={item}
+                        active={itemIndex === activeIndex}
+                        onHover={() => onActiveIndexChange(itemIndex)}
+                      />
+                    );
+                  })}
                 </div>
-              )}
-              {section.items.map((item, offset) => {
-                const itemIndex = (offsets[sectionIndex] ?? 0) + offset;
-                return (
-                  <PaletteRow
-                    key={item.id}
-                    id={paletteOptionId(listboxId, itemIndex)}
-                    item={item}
-                    active={itemIndex === activeIndex}
-                    onHover={() => onActiveIndexChange(itemIndex)}
-                  />
-                );
-              })}
-            </div>
-          ),
+              ),
+            )}
+          </>
         )}
       </div>
     </div>
@@ -143,7 +170,7 @@ function PaletteRow({ id, item, active, onHover }: PaletteRowProps) {
         )}
       </span>
       {item.badge !== undefined && (
-        <span className="shrink-0 rounded-[4px] px-1 text-meta leading-4 text-fg-muted shadow-[inset_0_0_0_1px_var(--color-edge)]">
+        <span className="shrink-0 rounded-[0.25rem] px-1 text-meta leading-4 text-fg-muted shadow-[inset_0_0_0_1px_var(--color-edge)]">
           {item.badge}
         </span>
       )}

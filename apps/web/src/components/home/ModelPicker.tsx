@@ -1,21 +1,22 @@
 import { Popover } from "@base-ui/react/popover";
 import {
-  ArrowDown01Icon,
   ArrowRight01Icon,
+  PlugSocketIcon,
   Search01Icon,
   Tick02Icon,
 } from "@hugeicons/core-free-icons";
 import type {
   EffortLevel,
   ModelSelection,
+  ProviderKind,
   ProviderSnapshot,
   ProviderStatusKind,
 } from "@scuttle/contracts";
 import { AnimatePresence, motion } from "motion/react";
-import { type ReactNode, type WheelEvent, useLayoutEffect, useRef, useState } from "react";
+import { type ReactNode, useId, useLayoutEffect, useRef, useState } from "react";
 import { BrandLogo } from "@/components/ui/BrandLogo.tsx";
-import { buttonClass } from "@/components/ui/Button.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
+import { PillChevron, pillTriggerClass } from "@/components/ui/Picker.tsx";
 import { useDisabledModels } from "@/lib/disabledModels.ts";
 import { EFFORT_LABELS } from "@/lib/format.ts";
 import { modelFavoriteKey, useFavoriteModels } from "@/lib/modelFavorites.ts";
@@ -28,15 +29,21 @@ import {
   type UpstreamGroup,
 } from "@/lib/modelGrouping.ts";
 import { spring } from "@/lib/motion.ts";
+import { remToPx } from "@/lib/uiScale.ts";
+import { cn } from "@/lib/utils";
 import { ModelDetailCard } from "./ModelDetailCard.tsx";
 
 interface ModelPickerProps {
   readonly providers: ReadonlyArray<ProviderSnapshot>;
-  readonly selection: ModelSelection;
+  readonly selection: ModelSelection | null;
   readonly onChange: (next: ModelSelection) => void;
+  readonly align?: "start" | "end";
+  readonly side?: "top" | "bottom";
+  readonly placeholder?: string;
+  readonly variant?: "ghost" | "field";
 }
 
-const MAX_LIST_HEIGHT_PX = 320;
+const MAX_LIST_HEIGHT_REM = 20;
 
 const STATUS_LABEL: Record<ProviderStatusKind, string> = {
   ready: "Ready",
@@ -46,29 +53,41 @@ const STATUS_LABEL: Record<ProviderStatusKind, string> = {
   disabled: "Disabled",
 };
 
-const scrollChipsWithWheel = (event: WheelEvent<HTMLDivElement>) => {
-  if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
-    event.currentTarget.scrollLeft += event.deltaY;
-  }
-};
+function ProviderMark({
+  kind,
+  className,
+}: {
+  readonly kind: ProviderKind;
+  readonly className?: string;
+}) {
+  return kind === "acp-registry" ? (
+    <Icon icon={PlugSocketIcon} className={cn("shrink-0 text-fg-secondary", className)} />
+  ) : (
+    <BrandLogo brand={kind} {...(className !== undefined ? { className } : {})} />
+  );
+}
 
 function MorphingModelList({ children }: { readonly children: ReactNode }) {
   const innerRef = useRef<HTMLDivElement | null>(null);
-  const [state, setState] = useState<{
-    readonly height: number;
-    readonly animate: boolean;
-  } | null>(null);
+  const [state, setState] = useState<{ readonly height: number; readonly animate: boolean } | null>(
+    null,
+  );
 
   useLayoutEffect(() => {
     const el = innerRef.current;
     if (!el) return;
     const measure = () => {
-      const next = Math.min(MAX_LIST_HEIGHT_PX, Math.ceil(el.getBoundingClientRect().height));
-      setState((prev) => {
-        if (prev === null) return { height: next, animate: false };
-        if (prev.height === next) return prev;
-        return { height: next, animate: true };
-      });
+      const next = Math.min(
+        Math.round(remToPx(MAX_LIST_HEIGHT_REM)),
+        Math.ceil(el.getBoundingClientRect().height),
+      );
+      setState((prev) =>
+        prev === null
+          ? { height: next, animate: false }
+          : prev.height === next
+            ? prev
+            : { height: next, animate: true },
+      );
     };
     measure();
     if (typeof ResizeObserver === "undefined") return;
@@ -80,7 +99,7 @@ function MorphingModelList({ children }: { readonly children: ReactNode }) {
   return (
     <motion.div
       initial={false}
-      animate={{ height: state ? state.height : MAX_LIST_HEIGHT_PX }}
+      animate={{ height: state ? state.height : Math.round(remToPx(MAX_LIST_HEIGHT_REM)) }}
       transition={state?.animate ? spring.snappy : { duration: 0 }}
       className="max-h-80 overflow-x-hidden overflow-y-auto"
     >
@@ -100,9 +119,14 @@ function FilterChips({
   readonly active: string;
   readonly onSelect: (key: string) => void;
 }) {
+  const pillId = useId();
   return (
     <div
-      onWheel={scrollChipsWithWheel}
+      onWheel={(event) => {
+        if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
+          event.currentTarget.scrollLeft += event.deltaY;
+        }
+      }}
       className="flex items-center gap-0.5 overflow-x-auto px-1.5 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
     >
       {items.map((item) => {
@@ -113,17 +137,25 @@ function FilterChips({
             type="button"
             aria-pressed={selected}
             onClick={() => onSelect(item.key)}
-            className={`flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-chip px-2 text-meta whitespace-nowrap outline-none transition-colors duration-100 focus-visible:shadow-focus ${
-              selected
-                ? "bg-white/[0.09] text-fg shadow-[inset_0_0_0_1px_rgb(255_255_255/6%)]"
-                : "text-fg-muted hover:bg-(--wash) hover:text-fg-secondary"
+            className={`relative flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-chip px-2 text-meta whitespace-nowrap outline-none transition-colors duration-100 active:scale-[0.98] focus-visible:shadow-focus ${
+              selected ? "text-fg" : "text-fg-muted hover:bg-(--wash) hover:text-fg-secondary"
             }`}
           >
-            {item.brand && <BrandLogo brand={item.brand} className="size-3 shrink-0" />}
-            <span>{item.label}</span>
-            {item.count !== undefined && (
-              <span className="font-mono text-[11px] text-fg-faint">{item.count}</span>
+            {selected && (
+              <motion.span
+                layoutId={`${pillId}-chip`}
+                transition={spring.snappy}
+                aria-hidden
+                className="absolute inset-0 rounded-chip bg-fg/[0.09] shadow-[inset_0_0_0_1px_var(--color-edge)]"
+              />
             )}
+            <span className="relative z-10 inline-flex items-center gap-1">
+              {item.brand && <ProviderMark kind={item.brand} className="size-3 shrink-0" />}
+              <span>{item.label}</span>
+              {item.count !== undefined && (
+                <span className="font-mono text-[0.6875rem] text-fg-faint">{item.count}</span>
+              )}
+            </span>
           </button>
         );
       })}
@@ -131,7 +163,15 @@ function FilterChips({
   );
 }
 
-export function ModelPicker({ providers, selection, onChange }: ModelPickerProps) {
+export function ModelPicker({
+  providers,
+  selection,
+  onChange,
+  align = "end",
+  side = "top",
+  placeholder = "Session default",
+  variant = "ghost",
+}: ModelPickerProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [harnessFilter, setHarnessFilter] = useState<string>(ALL);
@@ -144,20 +184,32 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
   const enabledProviders = providers.filter(
     (p) => p.enabled && p.status === "ready" && p.models.length > 0,
   );
+  const multiAccountKinds = new Set<ProviderKind>(
+    providers
+      .filter((p, idx) => providers.findIndex((o) => o.kind === p.kind) !== idx)
+      .map((p) => p.kind),
+  );
   const allEntries = buildModelEntries(enabledProviders).filter((entry) => !isDisabled(entry.key));
-
-  const currentKey = modelFavoriteKey(selection.providerId, selection.model);
-  const currentEntry =
-    allEntries.find((entry) => entry.key === currentKey) ?? allEntries[0] ?? null;
+  const currentKey = selection ? modelFavoriteKey(selection.providerId, selection.model) : "";
+  const currentEntry = selection ? (allEntries.find((e) => e.key === currentKey) ?? null) : null;
+  const currentProvider = selection
+    ? (providers.find((p) => p.id === selection.providerId) ?? null)
+    : null;
+  const showTriggerAccount =
+    selection !== null &&
+    currentProvider !== null &&
+    (multiAccountKinds.has(selection.providerKind) || selection.providerKind === "acp-registry");
   const activeEfforts = currentEntry?.model.efforts ?? [];
   const activeEffort =
-    selection.effort && activeEfforts.includes(selection.effort)
+    selection?.effort && activeEfforts.includes(selection.effort)
       ? selection.effort
       : (currentEntry?.model.defaultEffort ?? activeEfforts[0]);
 
   const detailEntry =
     (inspectedKey ? allEntries.find((entry) => entry.key === inspectedKey) : undefined) ??
-    currentEntry;
+    currentEntry ??
+    allEntries[0] ??
+    null;
 
   const normalizedQuery = query.trim().toLowerCase();
 
@@ -171,12 +223,15 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
       normalizedQuery,
     });
 
-  const resetGroupToggles = () => setToggledGroups(new Set());
+  const resetFilterState = () => {
+    setInspectedKey(null);
+    setToggledGroups(new Set());
+  };
 
   const groupOpenByDefault = (group: UpstreamGroup) =>
     normalizedQuery.length > 0 ||
     activeUpstream !== ALL ||
-    group.entries.some((entry) => entry.key === currentKey);
+    group.entries.some((e) => e.key === currentKey);
 
   const isGroupOpen = (group: UpstreamGroup) =>
     groupOpenByDefault(group) !== toggledGroups.has(group.key);
@@ -191,7 +246,7 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
   const selectEntry = (entry: ModelEntry, effortOverride?: EffortLevel, closeAfter = false) => {
     const nextEffort =
       effortOverride ??
-      (selection.effort && entry.model.efforts.includes(selection.effort)
+      (selection?.effort && entry.model.efforts.includes(selection.effort)
         ? selection.effort
         : (entry.model.defaultEffort ?? entry.model.efforts[0]));
     onChange({
@@ -201,9 +256,7 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
       ...(nextEffort ? { effort: nextEffort } : {}),
     });
     setInspectedKey(entry.key);
-    if (closeAfter) {
-      setOpen(false);
-    }
+    if (closeAfter) setOpen(false);
   };
 
   const detailEffort =
@@ -211,9 +264,10 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
       ? activeEffort
       : (detailEntry?.model.defaultEffort ?? detailEntry?.model.efforts[0]);
 
-  const renderRow = (entry: ModelEntry, showUpstream: boolean) => {
+  const renderRow = (entry: ModelEntry, showUpstream: boolean, showAccount = false) => {
     const selected = entry.key === currentKey;
     const inspected = detailEntry?.key === entry.key;
+    const displayAccount = showAccount && multiAccountKinds.has(entry.provider.kind);
     return (
       <button
         key={entry.key}
@@ -222,13 +276,16 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
         onFocus={() => setInspectedKey(entry.key)}
         onClick={() => selectEntry(entry, undefined, entry.model.efforts.length === 0)}
         className={`flex h-7 w-full cursor-pointer items-center gap-2 rounded-chip px-2 text-left text-label outline-none transition-colors duration-100 ${
-          inspected
-            ? "bg-white/[0.08] text-fg"
-            : "text-fg-secondary hover:bg-(--wash) hover:text-fg"
+          inspected ? "bg-fg/[0.08] text-fg" : "text-fg-secondary hover:bg-(--wash) hover:text-fg"
         }`}
       >
-        <BrandLogo brand={entry.provider.kind} className="size-3.5 shrink-0" />
+        <ProviderMark kind={entry.provider.kind} className="size-3.5 shrink-0" />
         <span className="min-w-0 flex-1 truncate">{entry.displayName}</span>
+        {displayAccount && (
+          <span className="max-w-24 shrink-0 truncate rounded-chip bg-fg/[0.06] px-1.5 py-0.5 text-[0.6875rem] text-fg-muted">
+            {entry.provider.name}
+          </span>
+        )}
         {showUpstream && entry.upstream && (
           <span className="shrink-0 text-meta text-fg-faint">{entry.upstream.label}</span>
         )}
@@ -252,7 +309,7 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
             className={`size-3 shrink-0 transition-transform duration-150 ease-out ${groupOpen ? "rotate-90" : ""}`}
           />
           <span className="min-w-0 flex-1 truncate">{group.upstream.label}</span>
-          <span className="shrink-0 font-mono text-[11px] text-fg-faint">
+          <span className="shrink-0 font-mono text-[0.6875rem] text-fg-faint">
             {group.entries.length}
           </span>
         </button>
@@ -280,41 +337,61 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
         setOpen(next);
         if (!next) {
           setQuery("");
-          setInspectedKey(null);
-          resetGroupToggles();
+          resetFilterState();
         }
       }}
     >
       <Popover.Trigger
-        className={buttonClass(
-          "quiet",
-          "md",
-          "group/picker max-w-full gap-1.5 data-popup-open:bg-(--wash)",
-        )}
+        className={pillTriggerClass(cn("max-w-full", variant === "ghost" && "gap-1.5"), variant)}
       >
-        <BrandLogo brand={selection.providerKind} className="size-3.5 shrink-0" />
-        <span className="whitespace-nowrap font-medium text-fg">
-          {currentEntry?.displayName ?? selection.model}
-        </span>
-        {activeEffort && (
-          <span className="whitespace-nowrap text-fg-muted">{EFFORT_LABELS[activeEffort]}</span>
+        {selection ? (
+          <>
+            <ProviderMark
+              kind={selection.providerKind}
+              className={cn("shrink-0", variant === "field" ? "size-3.5" : "size-3")}
+            />
+            <span
+              className={cn(
+                "truncate whitespace-nowrap",
+                variant === "ghost" &&
+                  "font-medium text-fg-secondary transition-colors duration-(--dur-hover) group-hover/pill:text-fg group-data-popup-open/pill:text-fg",
+              )}
+            >
+              {currentEntry?.displayName ?? selection.model}
+            </span>
+            {showTriggerAccount && currentProvider && (
+              <span className="max-w-28 shrink-0 truncate text-meta text-fg-muted">
+                · {currentProvider.name}
+              </span>
+            )}
+            {activeEffort && (
+              <span className="shrink-0 whitespace-nowrap text-fg-muted">
+                {EFFORT_LABELS[activeEffort]}
+              </span>
+            )}
+          </>
+        ) : (
+          <span className="truncate whitespace-nowrap text-fg-muted transition-colors duration-(--dur-hover) group-hover/pill:text-fg">
+            {placeholder}
+          </span>
         )}
-        <Icon
-          icon={ArrowDown01Icon}
-          className="size-3 shrink-0 text-fg-muted transition-transform duration-150 ease-out group-data-popup-open/picker:rotate-180"
-        />
+        <PillChevron />
       </Popover.Trigger>
 
       <Popover.Portal>
-        <Popover.Positioner side="top" align="start" sideOffset={8} className="z-50 outline-none">
+        <Popover.Positioner side={side} align={align} sideOffset={8} className="z-50 outline-none">
           <Popover.Popup className="outline-none">
             <motion.div
-              initial={{ opacity: 0, y: 6, scale: 0.98 }}
+              initial={{ opacity: 0, y: side === "bottom" ? -6 : 6, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               transition={spring.snappy}
-              className="flex items-end gap-2"
+              className={cn(
+                "flex gap-2",
+                side === "bottom" ? "items-start" : "items-end",
+                align === "end" && "flex-row-reverse",
+              )}
             >
-              <div className="w-[308px] overflow-hidden rounded-card bg-menu shadow-menu">
+              <div className="w-[19.25rem] overflow-hidden rounded-card bg-menu shadow-menu">
                 <div className="flex items-center gap-1.5 border-b border-edge px-2.5 py-2">
                   <Icon icon={Search01Icon} className="size-3.5 shrink-0 text-fg-muted" />
                   <input
@@ -322,14 +399,12 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
                     value={query}
                     onChange={(event) => {
                       setQuery(event.target.value);
-                      setInspectedKey(null);
-                      resetGroupToggles();
+                      resetFilterState();
                     }}
                     placeholder="Search models"
                     className="min-w-0 flex-1 bg-transparent text-label text-fg outline-none placeholder:text-fg-muted"
                   />
                 </div>
-
                 {enabledProviders.length > 1 && (
                   <div className="border-b border-edge">
                     <FilterChips
@@ -338,13 +413,11 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
                       onSelect={(key) => {
                         setHarnessFilter(key);
                         setUpstreamFilter(ALL);
-                        setInspectedKey(null);
-                        resetGroupToggles();
+                        resetFilterState();
                       }}
                     />
                   </div>
                 )}
-
                 <AnimatePresence initial={false}>
                   {focusedUpstreams.length > 1 && (
                     <motion.div
@@ -359,34 +432,33 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
                         active={activeUpstream}
                         onSelect={(key) => {
                           setUpstreamFilter(key);
-                          setInspectedKey(null);
-                          resetGroupToggles();
+                          resetFilterState();
                         }}
                       />
                     </motion.div>
                   )}
                 </AnimatePresence>
-
                 <MorphingModelList>
                   {favoriteEntries.length > 0 && (
                     <div className="mb-1.5">
                       <div className="px-2 pt-1 pb-1 text-meta font-medium text-fg-muted">
                         Favorites
                       </div>
-                      {favoriteEntries.map((entry) => renderRow(entry, true))}
+                      {favoriteEntries.map((entry) => renderRow(entry, true, true))}
                     </div>
                   )}
-
                   {sections.map((section, idx) => (
                     <div
                       key={section.provider.id}
                       className={idx > 0 ? "mt-1.5 border-t border-edge pt-1.5" : ""}
                     >
-                      {(!focusedProvider || section.provider.status !== "ready") && (
+                      {(!focusedProvider ||
+                        section.provider.status !== "ready" ||
+                        multiAccountKinds.has(section.provider.kind)) && (
                         <div className="flex items-center justify-between gap-2 px-2 py-1 text-meta font-medium text-fg-muted">
                           <span className="truncate">{section.provider.name}</span>
                           {section.provider.status !== "ready" && (
-                            <span className="text-[11px] font-normal text-warning">
+                            <span className="text-[0.6875rem] font-normal text-warning">
                               {STATUS_LABEL[section.provider.status]}
                             </span>
                           )}
@@ -402,7 +474,6 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
                       )}
                     </div>
                   ))}
-
                   {sections.length === 0 && favoriteEntries.length === 0 && (
                     <div className="px-2 py-5 text-center text-label text-fg-muted">
                       No matching models.
@@ -410,7 +481,6 @@ export function ModelPicker({ providers, selection, onChange }: ModelPickerProps
                   )}
                 </MorphingModelList>
               </div>
-
               {detailEntry && (
                 <ModelDetailCard
                   entry={detailEntry}

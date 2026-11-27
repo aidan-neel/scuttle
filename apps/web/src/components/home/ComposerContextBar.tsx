@@ -16,70 +16,47 @@ export const RUNTIMES = [
   { value: "worktree", label: "Worktree", icon: <Icon icon={GitBranchIcon} /> },
 ] as const satisfies ReadonlyArray<{ value: ThreadRuntime; label: string; icon: unknown }>;
 
-interface ComposerContextBarProps {
+export interface ComposerProjectControl {
   readonly projects: ReadonlyArray<Project>;
   readonly activeProject: Project | null;
   readonly onSelectProject: (project: Project) => void;
   readonly onAddProject: () => void;
-  readonly runtime: ThreadRuntime;
-  readonly onRuntimeChange: (runtime: ThreadRuntime) => void;
-  readonly branches: ReadonlyArray<GitBranchInfo>;
-  readonly branch: string;
-  readonly onBranchChange: (branch: string) => void;
 }
 
-export function ComposerContextBar({
-  projects,
-  activeProject,
-  onSelectProject,
-  onAddProject,
-  runtime,
-  onRuntimeChange,
-  branches,
-  branch,
-  onBranchChange,
-}: ComposerContextBarProps) {
+interface ProjectPickerProps {
+  readonly project: ComposerProjectControl;
+  readonly side?: "top" | "bottom";
+  readonly className?: string;
+}
+
+export function ProjectPicker({ project, side = "top", className }: ProjectPickerProps) {
+  const { projects, activeProject, onSelectProject, onAddProject } = project;
+  if (!activeProject) {
+    return (
+      <button type="button" onClick={onAddProject} className={pillTriggerClass(className, "ghost")}>
+        <Icon icon={Add01Icon} />
+        <PillLabel>Add project</PillLabel>
+      </button>
+    );
+  }
   return (
-    <div className="mb-1 flex h-6 items-center gap-0.5 px-1">
-      {activeProject ? (
-        <Picker
-          label="Project"
-          variant="ghost"
-          value={activeProject.id}
-          options={projects.map((project) => ({
-            value: project.id,
-            label: project.name,
-            icon: <Identicon name={project.name} size="sm" className="size-3" />,
-          }))}
-          onValueChange={(id) => {
-            const picked = projects.find((project) => project.id === id);
-            if (picked) onSelectProject(picked);
-          }}
-          action={{ label: "Add project…", icon: Add01Icon, onSelect: onAddProject }}
-          className="max-w-[56%] shrink"
-        />
-      ) : (
-        <button
-          type="button"
-          onClick={onAddProject}
-          className={pillTriggerClass(undefined, "ghost")}
-        >
-          <Icon icon={Add01Icon} />
-          <PillLabel>Add project</PillLabel>
-        </button>
-      )}
-      <Picker
-        label="Runtime"
-        variant="ghost"
-        value={runtime}
-        options={RUNTIMES}
-        onValueChange={onRuntimeChange}
-      />
-      <span className="min-w-2 flex-1" />
-      {activeProject && (
-        <BranchPicker branches={branches} value={branch} onValueChange={onBranchChange} />
-      )}
-    </div>
+    <Picker
+      label="Project"
+      variant="ghost"
+      side={side}
+      value={activeProject.id}
+      options={projects.map((item) => ({
+        value: item.id,
+        label: item.name,
+        icon: <Identicon name={item.name} size="sm" className="size-3" />,
+      }))}
+      onValueChange={(id) => {
+        const picked = projects.find((item) => item.id === id);
+        if (picked) onSelectProject(picked);
+      }}
+      action={{ label: "Add project…", icon: Add01Icon, onSelect: onAddProject }}
+      className={className ?? "max-w-40 shrink-0"}
+    />
   );
 }
 
@@ -150,11 +127,14 @@ export function BranchPicker({
                   value={name}
                   className="flex h-7 cursor-default items-center gap-2 rounded-chip px-2 text-fg-secondary outline-none select-none data-highlighted:bg-(--wash) data-highlighted:text-fg data-selected:text-fg"
                 >
-                  <span title={name} className="min-w-0 flex-1 truncate text-label leading-[18px]">
+                  <span
+                    title={name}
+                    className="min-w-0 flex-1 truncate text-label leading-[1.125rem]"
+                  >
                     {name}
                   </span>
                   {name === currentName && (
-                    <span className="shrink-0 rounded-[4px] px-1 text-meta leading-4 text-fg-muted shadow-[inset_0_0_0_1px_var(--color-edge)]">
+                    <span className="shrink-0 rounded-[0.25rem] px-1 text-meta leading-4 text-fg-muted shadow-[inset_0_0_0_1px_var(--color-edge)]">
                       current
                     </span>
                   )}

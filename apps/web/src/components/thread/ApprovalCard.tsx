@@ -3,6 +3,8 @@ import type { PendingApproval, RespondApprovalInput } from "@scuttle/contracts";
 import { useState } from "react";
 import { Button } from "@/components/ui/Button.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
+import { isQuestionApproval } from "./questionModel.ts";
+import { ResolvedQuestionCard } from "./ResolvedQuestionCard.tsx";
 
 interface ApprovalCardProps {
   readonly approval: PendingApproval;
@@ -10,20 +12,20 @@ interface ApprovalCardProps {
 }
 
 export function ApprovalCard({ approval, onRespond }: ApprovalCardProps) {
-  const [busy, setBusy] = useState(false);
-  const [customText, setCustomText] = useState("");
-
-  if (approval.status === "resolved") {
-    return null;
+  if (isQuestionApproval(approval)) {
+    return approval.status === "resolved" ? <ResolvedQuestionCard approval={approval} /> : null;
   }
+  if (approval.status === "resolved") return null;
+  return <PermissionCard approval={approval} onRespond={onRespond} />;
+}
 
-  const pick = (optionId: string, custom?: string) => {
+function PermissionCard({ approval, onRespond }: ApprovalCardProps) {
+  const [busy, setBusy] = useState(false);
+
+  const pick = (optionId: string) => {
     if (busy) return;
     setBusy(true);
-    void onRespond({
-      optionId,
-      ...(custom && custom.trim().length > 0 ? { customText: custom.trim() } : {}),
-    }).finally(() => {
+    void onRespond({ optionId }).finally(() => {
       setBusy(false);
     });
   };
@@ -38,7 +40,7 @@ export function ApprovalCard({ approval, onRespond }: ApprovalCardProps) {
             <p className="text-label text-fg-secondary">{approval.description}</p>
           )}
           {approval.command && (
-            <pre className="overflow-x-auto rounded-control bg-chrome px-3 py-2 font-mono text-[13px] text-fg-secondary">
+            <pre className="overflow-x-auto rounded-control bg-chrome px-3 py-2 font-mono text-[0.8125rem] text-fg-secondary">
               {approval.command}
             </pre>
           )}
@@ -61,33 +63,6 @@ export function ApprovalCard({ approval, onRespond }: ApprovalCardProps) {
               </Button>
             ))}
           </div>
-          {approval.kind === "question" && (
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                if (customText.trim().length > 0) {
-                  void pick(customText.trim(), customText.trim());
-                }
-              }}
-              className="flex items-center gap-2 pt-1"
-            >
-              <input
-                type="text"
-                value={customText}
-                onChange={(event) => setCustomText(event.target.value)}
-                placeholder="Or type a custom reply..."
-                className="h-8 flex-1 rounded-control bg-chrome px-3 text-label text-fg shadow-raised outline-none placeholder:text-fg-muted focus:shadow-focus"
-              />
-              <Button
-                type="submit"
-                variant="secondary"
-                size="md"
-                disabled={busy || customText.trim().length === 0}
-              >
-                Reply
-              </Button>
-            </form>
-          )}
         </div>
       </div>
     </div>

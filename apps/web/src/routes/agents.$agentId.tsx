@@ -1,15 +1,20 @@
+import { AlertCircleIcon, HelpCircleIcon } from "@hugeicons/core-free-icons";
 import { describeApiError } from "@scuttle/client-runtime";
 import { isAgentId } from "@scuttle/shared/ids";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { Skeleton } from "skullet/react";
 import { AgentHeaderMenu } from "@/components/agents/AgentActionsMenu.tsx";
 import { AgentConversation } from "@/components/agents/AgentConversation.tsx";
 import { AgentCostPopover } from "@/components/agents/AgentCostPopover.tsx";
 import { AgentProfileDialog } from "@/components/agents/AgentProfileDialog.tsx";
+import { WorkspaceHeaderActions } from "@/components/shell/WorkspaceHeaderContext.tsx";
 import { Button } from "@/components/ui/Button.tsx";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog.tsx";
 import { DotSpinner } from "@/components/ui/DotSpinner.tsx";
-import { Identicon } from "@/components/ui/Identicon.tsx";
+import { Icon } from "@/components/ui/Icon.tsx";
+import { ConversationPageSkeleton } from "@/components/ui/SkeletonSamples.tsx";
+import { formatAgentWorkingLabel, resolveAgentActivityStatus } from "@/lib/agentStatus.ts";
 import { useThreadDetail, useWorkspaceActions, useWorkspaceSelector } from "@/lib/workspace.tsx";
 
 export const Route = createFileRoute("/agents/$agentId")({
@@ -83,46 +88,78 @@ function AgentView({ agentId }: { readonly agentId: string }) {
     );
   }
 
-  if (agent === undefined || work === undefined || detail === undefined) {
-    return (
-      <section className="flex flex-1 items-center justify-center gap-2 text-label text-fg-muted">
-        <DotSpinner variant="loading" label="Loading agent" />
-        Loading agent…
-      </section>
-    );
-  }
+  const isLoading = agent === undefined || work === undefined || detail === undefined;
+  const activityStatus =
+    agent !== undefined && detail !== undefined
+      ? resolveAgentActivityStatus(agent, detail.thread, work?.delegations)
+      : null;
 
   return (
-    <section className="relative flex min-h-0 flex-1 flex-col">
-      <header className="flex h-11 shrink-0 items-center gap-2 border-b border-line px-4">
-        <Identicon name={agent.name} size="sm" />
-        <h1 className="min-w-0 flex-1 truncate text-body font-medium text-fg">{agent.name}</h1>
-        <AgentCostPopover
-          agent={agent}
-          primaryThread={detail.thread}
-          delegations={work.delegations}
-        />
-        <AgentHeaderMenu
-          agent={agent}
-          handlers={{
-            onOpenProfile: () => setProfileOpen(true),
-            onRequestRemove: () => setConfirmRemove(true),
-          }}
-        />
-      </header>
-      <AgentConversation agent={agent} detail={detail} onViewAgent={() => setProfileOpen(true)} />
-      <AgentProfileDialog agent={agent} open={profileOpen} onOpenChange={setProfileOpen} />
-      <ConfirmDialog
-        open={confirmRemove}
-        onOpenChange={setConfirmRemove}
-        title={`Remove ${agent.name}?`}
-        description="This removes the agent, its conversation, and its memory from Scuttle. The project and files on disk are not touched."
-        confirmLabel="Remove agent"
-        onConfirm={async () => {
-          await deleteAgent(agent.id);
-          void navigate({ to: "/" });
-        }}
-      />
-    </section>
+    <Skeleton loading={isLoading} id="agent-page" label="Loading agent" className="skullet-fill">
+      {isLoading ? (
+        <ConversationPageSkeleton showBreadcrumb={false} />
+      ) : (
+        <section className="relative flex min-h-0 flex-1 flex-col">
+          <WorkspaceHeaderActions>
+            {activityStatus?.kind === "working" && (
+              <span
+                role="status"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-input/10 px-2 py-0.5 text-meta font-medium text-input"
+              >
+                <DotSpinner variant="working" label="Working" className="size-3 text-input" />
+                {formatAgentWorkingLabel(activityStatus.activeDelegations)}
+              </span>
+            )}
+            {activityStatus?.kind === "needs-input" && (
+              <span
+                role="status"
+                className="inline-flex shrink-0 items-center gap-1 rounded-full bg-input/10 px-2 py-0.5 text-meta font-medium text-input"
+              >
+                <Icon icon={HelpCircleIcon} className="size-3" />
+                Input needed
+              </span>
+            )}
+            {activityStatus?.kind === "error" && (
+              <span
+                role="status"
+                className="inline-flex shrink-0 items-center gap-1 rounded-full bg-danger/10 px-2 py-0.5 text-meta font-medium text-danger"
+              >
+                <Icon icon={AlertCircleIcon} className="size-3" />
+                Error
+              </span>
+            )}
+            <AgentCostPopover
+              agent={agent}
+              primaryThread={detail.thread}
+              delegations={work.delegations}
+            />
+            <AgentHeaderMenu
+              agent={agent}
+              handlers={{
+                onOpenProfile: () => setProfileOpen(true),
+                onRequestRemove: () => setConfirmRemove(true),
+              }}
+            />
+          </WorkspaceHeaderActions>
+          <AgentConversation
+            agent={agent}
+            detail={detail}
+            onViewAgent={() => setProfileOpen(true)}
+          />
+          <AgentProfileDialog agent={agent} open={profileOpen} onOpenChange={setProfileOpen} />
+          <ConfirmDialog
+            open={confirmRemove}
+            onOpenChange={setConfirmRemove}
+            title={`Remove ${agent.name}?`}
+            description="This removes the agent, its conversation, and its memory from Scuttle. The project and files on disk are not touched."
+            confirmLabel="Remove agent"
+            onConfirm={async () => {
+              await deleteAgent(agent.id);
+              void navigate({ to: "/" });
+            }}
+          />
+        </section>
+      )}
+    </Skeleton>
   );
 }

@@ -1,8 +1,11 @@
 @import "tailwindcss";
+@import "skullet/styles.css";
 @import "@fontsource/inter/latin-400.css";
 @import "@fontsource/inter/latin-500.css";
 @import "@fontsource/inter/latin-600.css";
+@import "@fontsource/inter/latin-700.css";
 @import "@fontsource/geist-mono/latin-400.css";
+@import "./themes.css";
 
 @property --button-top {
   syntax: "<color>";
@@ -21,6 +24,7 @@
   --font-mono: "Geist Mono", ui-monospace, monospace;
 
   --color-chrome: #09090a;
+  --color-sidebar: #0f0f10;
   --color-canvas: #121213;
   --color-panel: #161617;
   --color-raised: #1a1a1b;
@@ -46,28 +50,32 @@
   --color-claude: #d97757;
   --color-avatar: #3a2a5c;
   --color-on-avatar: #d4c4f5;
+  --color-dialog: #171718;
+  --color-dialog-line: rgb(255 255 255 / 6%);
+  --color-switch-thumb: #ebebec;
 
-  --text-meta: 12px;
-  --text-meta--line-height: 17px;
-  --text-label: 13.5px;
-  --text-label--line-height: 18px;
-  --text-button: 14px;
-  --text-button--line-height: 18px;
-  --text-body: 14.5px;
-  --text-body--line-height: 22px;
-  --text-prompt: 15px;
-  --text-prompt--line-height: 23px;
-  --text-title: 16px;
-  --text-title--line-height: 22px;
+  --text-meta: 0.75rem;
+  --text-meta--line-height: 1.0625rem;
+  --text-label: 0.84375rem;
+  --text-label--line-height: 1.125rem;
+  --text-button: 0.875rem;
+  --text-button--line-height: 1.125rem;
+  --text-body: 0.90625rem;
+  --text-body--line-height: 1.375rem;
+  --text-prompt: 0.9375rem;
+  --text-prompt--line-height: 1.4375rem;
+  --text-title: 1rem;
+  --text-title--line-height: 1.375rem;
 
-  --radius-chip: 6px;
-  --radius-control: 7px;
-  --radius-row: 8px;
-  --radius-card: 10px;
-  --radius-canvas: 12px;
-  --radius-composer: 16px;
+  --radius-chip: 0.375rem;
+  --radius-control: 0.4375rem;
+  --radius-row: 0.5rem;
+  --radius-card: 0.625rem;
+  --radius-canvas: 0.75rem;
+  --radius-composer: 0.75rem;
+  --radius-dialog: 0.875rem;
 
-  --container-composer: 840px;
+  --container-composer: 45rem;
 
   --shadow-raised:
     inset 0 0 0 1px var(--color-edge), inset 0 1px 0 var(--color-edge-highlight),
@@ -80,8 +88,11 @@
   --shadow-composer-focus:
     inset 0 0 0 1px var(--color-edge-strong), 0 0 0 1px var(--color-edge-outline),
     0 4px 12px rgb(0 0 0 / 16%);
-  --shadow-canvas: inset 0 0 0 1px var(--color-edge-highlight), 0 0 0 1px rgb(0 0 0 / 50%);
+  --shadow-sidebar: inset -1px 0 0 rgb(0 0 0 / 55%), 1px 0 0 var(--color-edge);
   --shadow-focus: 0 0 0 2px rgb(235 235 236 / 42%);
+  --shadow-dialog:
+    inset 0 0 0 1px #ffffff14, inset 0 1px 0 #ffffff0d, 0 0 0 1px #00000099,
+    0 24px 56px -16px #000000b3, 0 6px 14px #0000004d;
 
   --shadow-menu:
     inset 0 0 0 1px var(--color-edge), inset 0 1px 0 var(--color-edge-highlight),
@@ -91,15 +102,14 @@
   --ease-hover: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-out-quint: cubic-bezier(0.23, 1, 0.32, 1);
 
-  --animate-dot: dot 880ms linear infinite;
+  --animate-spinner: spinner 800ms linear infinite;
 
-  @keyframes dot {
-    0% {
-      opacity: 1;
+  @keyframes spinner {
+    from {
+      transform: rotate(0deg);
     }
-    50%,
-    100% {
-      opacity: 0.25;
+    to {
+      transform: rotate(360deg);
     }
   }
 }
@@ -111,39 +121,66 @@
   }
 }
 
-@keyframes capy-shimmer {
+@keyframes work-shimmer {
   0% {
-    background-position: 100% 0;
+    mask-position: 100% 0;
+    -webkit-mask-position: 100% 0;
   }
   100% {
-    background-position: -100% 0;
+    mask-position: -100% 0;
+    -webkit-mask-position: -100% 0;
   }
 }
 
-@utility capy-shimmer {
-  color: transparent;
-  background-image: linear-gradient(
+@utility work-shimmer {
+  color: var(--color-fg);
+  mask-image: linear-gradient(
     100deg,
-    #78787c 0%,
-    #78787c 38%,
-    var(--color-fg) 50%,
-    #78787c 62%,
-    #78787c 100%
+    rgb(0 0 0 / 48%) 0%,
+    rgb(0 0 0 / 48%) 38%,
+    rgb(0 0 0 / 100%) 50%,
+    rgb(0 0 0 / 48%) 62%,
+    rgb(0 0 0 / 48%) 100%
   );
-  background-size: 260% 100%;
-  background-clip: text;
-  -webkit-background-clip: text;
-  animation: capy-shimmer 2s linear infinite;
+  -webkit-mask-image: linear-gradient(
+    100deg,
+    rgb(0 0 0 / 48%) 0%,
+    rgb(0 0 0 / 48%) 38%,
+    rgb(0 0 0 / 100%) 50%,
+    rgb(0 0 0 / 48%) 62%,
+    rgb(0 0 0 / 48%) 100%
+  );
+  mask-size: 260% 100%;
+  -webkit-mask-size: 260% 100%;
+  mask-repeat: repeat;
+  -webkit-mask-repeat: repeat;
+  animation: work-shimmer 2s linear infinite;
 }
 
 @utility scrim-backdrop {
-  background-color: rgb(0 0 0 / 60%);
+  background-color: var(--scrim-bg);
+}
+
+.skullet-fill,
+.skullet-fill > [skullet-pane],
+.skullet-fill > [skullet-pane] > [skullet-loading],
+.skullet-fill > [skullet-pane] > [skullet-loading] > [skullet-ghost] {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 0%;
+  flex-direction: column;
 }
 
 :root {
   color-scheme: dark;
+  --skullet-base: rgb(255 255 255 / 7%);
+  --skullet-highlight: rgb(255 255 255 / 15%);
   --dur-hover: 120ms;
   --dur-tap: 60ms;
+  --scrim-bg: rgb(0 0 0 / 60%);
+  --scrollbar-thumb: rgb(255 255 255 / 12%);
+  --scrollbar-thumb-hover: rgb(255 255 255 / 26%);
+  --scrollbar-thumb-active: rgb(255 255 255 / 38%);
   --wash: rgb(255 255 255 / 6%);
   --wash-strong: rgb(255 255 255 / 10%);
   --fill-raised-top: rgb(255 255 255 / 8.5%);
@@ -165,6 +202,16 @@
 }
 
 @layer base {
+  :root {
+    --desktop-controls-inset: 0px;
+    --desktop-controls-top-inset: 0px;
+    --desktop-mac-top-inset: 0px;
+  }
+
+  html {
+    font-size: 110%;
+  }
+
   html,
   body,
   #root {
@@ -199,24 +246,24 @@
   }
 
   *::-webkit-scrollbar-thumb {
-    background-color: rgb(255 255 255 / 12%);
+    background-color: var(--scrollbar-thumb);
     background-clip: content-box;
     border: 2px solid transparent;
     border-radius: 999px;
   }
 
   *::-webkit-scrollbar-thumb:hover {
-    background-color: rgb(255 255 255 / 26%);
+    background-color: var(--scrollbar-thumb-hover);
   }
 
   *::-webkit-scrollbar-thumb:active {
-    background-color: rgb(255 255 255 / 38%);
+    background-color: var(--scrollbar-thumb-active);
   }
 
   @supports not selector(::-webkit-scrollbar) {
     * {
       scrollbar-width: thin;
-      scrollbar-color: rgb(255 255 255 / 16%) transparent;
+      scrollbar-color: var(--scrollbar-thumb) transparent;
     }
   }
 }
@@ -235,15 +282,17 @@ html[data-resizing] * {
     animation-duration: 0.01ms !important;
   }
 
-  .capy-shimmer {
+  .work-shimmer {
     color: var(--color-fg-muted);
-    background-image: none;
+    mask-image: none;
+    -webkit-mask-image: none;
   }
 }
 
-html[data-render="software"] .capy-shimmer {
+html[data-render="software"] .work-shimmer {
   color: var(--color-fg-muted);
-  background-image: none;
+  mask-image: none;
+  -webkit-mask-image: none;
   animation: none;
 }
 
@@ -255,4 +304,21 @@ html[data-render="software"] [class*="backdrop-blur"] {
 
 html[data-render="software"] .scrim-backdrop {
   background-color: rgb(0 0 0 / 72%);
+}
+
+.desktop-drag {
+  -webkit-app-region: drag;
+  app-region: drag;
+  user-select: none;
+}
+
+.desktop-no-drag,
+.desktop-drag button,
+.desktop-drag a,
+.desktop-drag input,
+.desktop-drag select,
+.desktop-drag textarea,
+.desktop-drag [role="button"] {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }

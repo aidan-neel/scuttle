@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 export function SettingsHeader({ title }: { readonly title: string }) {
   return (
     <header className="pb-1">
-      <h1 className="text-[21px] leading-7 font-semibold tracking-tight text-fg">{title}</h1>
+      <h1 className="text-[1.3125rem] leading-7 font-semibold tracking-tight text-fg">{title}</h1>
     </header>
   );
 }
@@ -108,7 +108,7 @@ export function SearchField({
   return (
     <label
       className={cn(
-        "flex h-8.5 items-center gap-2 rounded-row bg-white/[0.05] px-2.5 shadow-[inset_0_0_0_1px_var(--color-edge)] transition-shadow duration-(--dur-hover) focus-within:shadow-[inset_0_0_0_1px_var(--color-edge-strong)]",
+        "flex h-8.5 items-center gap-2 rounded-row bg-fg/[0.05] px-2.5 shadow-[inset_0_0_0_1px_var(--color-edge)] transition-shadow duration-(--dur-hover) focus-within:shadow-[inset_0_0_0_1px_var(--color-edge-strong)]",
         className,
       )}
     >
@@ -171,7 +171,7 @@ export function providerSummary(provider: ProviderSnapshot): string {
 
 export function Kbd({ children }: { readonly children: ReactNode }) {
   return (
-    <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded-chip bg-white/6 px-1.5 font-mono text-meta text-fg-secondary shadow-[inset_0_0_0_1px_var(--color-edge)]">
+    <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded-chip bg-fg/6 px-1.5 font-mono text-meta text-fg-secondary shadow-[inset_0_0_0_1px_var(--color-edge)]">
       {children}
     </kbd>
   );

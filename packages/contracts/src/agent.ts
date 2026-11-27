@@ -1,17 +1,23 @@
+import { IDENTICON_STYLE_IDS } from "@scuttle/shared/identicon";
 import {
   AgentCheckInId,
   AgentDelegationId,
   AgentDelegationQuestionId,
   AgentId,
+  AgentIssueActivityId,
   AgentIssueId,
   AgentMemoryId,
   ProjectId,
+  ProviderId,
   ThreadId,
   TurnId,
 } from "@scuttle/shared/ids";
 import * as Schema from "effect/Schema";
-import { ModelSelection } from "./provider.ts";
+import { EffortLevel, ModelSelection } from "./provider.ts";
 import { ThreadDetail, ThreadRuntime, ThreadTurn } from "./thread.ts";
+
+export const IdenticonStyle = Schema.Literals(IDENTICON_STYLE_IDS);
+export type IdenticonStyle = typeof IdenticonStyle.Type;
 
 const NonEmpty = Schema.String.check(Schema.isMinLength(1));
 const BoundedQuestion = Schema.String.check(
@@ -21,22 +27,32 @@ const BoundedQuestion = Schema.String.check(
 );
 
 export const AgentModelRole = Schema.Literals([
+  "nano",
+  "small",
+  "medium",
+  "large",
+  "xlarge",
+  "max",
+  "design",
   "agent",
   "workhorse",
-  "design",
   "review",
   "fast",
-  "large",
 ]);
 export type AgentModelRole = typeof AgentModelRole.Type;
 
 export const AgentModelStack = Schema.Struct({
+  nano: Schema.optionalKey(ModelSelection),
+  small: Schema.optionalKey(ModelSelection),
+  medium: Schema.optionalKey(ModelSelection),
+  large: Schema.optionalKey(ModelSelection),
+  xlarge: Schema.optionalKey(ModelSelection),
+  max: Schema.optionalKey(ModelSelection),
+  design: Schema.optionalKey(ModelSelection),
   agent: Schema.optionalKey(ModelSelection),
   workhorse: Schema.optionalKey(ModelSelection),
-  design: Schema.optionalKey(ModelSelection),
   review: Schema.optionalKey(ModelSelection),
   fast: Schema.optionalKey(ModelSelection),
-  large: Schema.optionalKey(ModelSelection),
 });
 export type AgentModelStack = typeof AgentModelStack.Type;
 
@@ -46,6 +62,7 @@ export const Agent = Schema.Struct({
   projectName: Schema.String,
   projectPath: Schema.String,
   name: Schema.String,
+  identiconStyle: Schema.optionalKey(IdenticonStyle),
   purpose: Schema.String,
   primaryThreadId: ThreadId,
   runtime: ThreadRuntime,
@@ -57,6 +74,7 @@ export const Agent = Schema.Struct({
   lastSummary: Schema.optionalKey(Schema.String),
   pinned: Schema.Boolean,
   needsAttention: Schema.Boolean,
+  activeDelegationCount: Schema.optionalKey(Schema.Number),
   createdAt: Schema.String,
   updatedAt: Schema.String,
 });
@@ -93,13 +111,51 @@ export const AgentMemory = Schema.Struct({
 export type AgentMemory = typeof AgentMemory.Type;
 
 export const AgentIssueState = Schema.Literals([
-  "backlog",
-  "in_progress",
+  "needs_you",
   "in_review",
+  "in_progress",
+  "waiting",
+  "todo",
+  "backlog",
   "done",
   "canceled",
 ]);
 export type AgentIssueState = typeof AgentIssueState.Type;
+
+export const AgentIssuePriority = Schema.Literals(["urgent", "high", "normal", "low", "none"]);
+export type AgentIssuePriority = typeof AgentIssuePriority.Type;
+
+export const IssueActorKind = Schema.Literals(["user", "agent"]);
+export type IssueActorKind = typeof IssueActorKind.Type;
+
+export const AgentIssueAssignee = Schema.Union([
+  Schema.Struct({ kind: Schema.Literals(["unassigned"]) }),
+  Schema.Struct({ kind: Schema.Literals(["user"]) }),
+  Schema.Struct({ kind: Schema.Literals(["agent"]), agentId: AgentId }),
+]);
+export type AgentIssueAssignee = typeof AgentIssueAssignee.Type;
+
+export const AgentIssueActivityKind = Schema.Literals([
+  "comment",
+  "created",
+  "state_changed",
+  "assignee_changed",
+  "priority_changed",
+  "updated",
+]);
+export type AgentIssueActivityKind = typeof AgentIssueActivityKind.Type;
+
+export const AgentIssueActivity = Schema.Struct({
+  id: AgentIssueActivityId,
+  issueId: AgentIssueId,
+  agentId: AgentId,
+  actorKind: IssueActorKind,
+  actorAgentId: Schema.optionalKey(AgentId),
+  kind: AgentIssueActivityKind,
+  body: Schema.String,
+  createdAt: Schema.String,
+});
+export type AgentIssueActivity = typeof AgentIssueActivity.Type;
 
 export const AgentIssue = Schema.Struct({
   id: AgentIssueId,
@@ -108,7 +164,13 @@ export const AgentIssue = Schema.Struct({
   title: Schema.String,
   description: Schema.String,
   state: AgentIssueState,
+  priority: AgentIssuePriority,
+  assignee: AgentIssueAssignee,
+  createdBy: IssueActorKind,
   labels: Schema.Array(Schema.String),
+  dueDate: Schema.optionalKey(Schema.String),
+  relatedIssueId: Schema.optionalKey(AgentIssueId),
+  commentCount: Schema.optionalKey(Schema.Number),
   externalUrl: Schema.optionalKey(Schema.String),
   assignedThreadId: Schema.optionalKey(ThreadId),
   prNumber: Schema.optionalKey(Schema.Number),
@@ -132,7 +194,7 @@ export type AgentDelegationStatus = typeof AgentDelegationStatus.Type;
 
 export const AgentDelegation = Schema.Struct({
   id: AgentDelegationId,
-  agentId: AgentId,
+  agentId: Schema.optionalKey(AgentId),
   parentThreadId: ThreadId,
   childThreadId: ThreadId,
   role: AgentModelRole,
@@ -172,7 +234,7 @@ export type AgentDelegationQuestionStatus = typeof AgentDelegationQuestionStatus
 export const AgentDelegationQuestion = Schema.Struct({
   id: AgentDelegationQuestionId,
   delegationId: AgentDelegationId,
-  agentId: AgentId,
+  agentId: Schema.optionalKey(AgentId),
   childThreadId: ThreadId,
   parentThreadId: ThreadId,
   parentTurnId: Schema.optionalKey(TurnId),
@@ -222,6 +284,7 @@ export const CreateAgentInput = Schema.Struct({
   projectId: Schema.optionalKey(ProjectId),
   path: Schema.optionalKey(NonEmpty),
   name: NonEmpty,
+  identiconStyle: Schema.optionalKey(IdenticonStyle),
   purpose: Schema.optionalKey(Schema.String),
   runtime: Schema.optionalKey(ThreadRuntime),
   modelSelection: Schema.optionalKey(ModelSelection),
@@ -234,6 +297,7 @@ export type CreateAgentInput = typeof CreateAgentInput.Type;
 
 export const UpdateAgentInput = Schema.Struct({
   name: Schema.optionalKey(NonEmpty),
+  identiconStyle: Schema.optionalKey(IdenticonStyle),
   purpose: Schema.optionalKey(Schema.String),
   runtime: Schema.optionalKey(ThreadRuntime),
   modelSelection: Schema.optionalKey(ModelSelection),
@@ -267,10 +331,17 @@ export const CreateIssueInput = Schema.Struct({
   title: NonEmpty,
   description: Schema.optionalKey(Schema.String),
   state: Schema.optionalKey(AgentIssueState),
+  priority: Schema.optionalKey(AgentIssuePriority),
+  assignee: Schema.optionalKey(AgentIssueAssignee),
+  createdBy: Schema.optionalKey(IssueActorKind),
   labels: Schema.optionalKey(Schema.Array(Schema.String)),
+  dueDate: Schema.optionalKey(Schema.String),
+  relatedIssueId: Schema.optionalKey(AgentIssueId),
   externalUrl: Schema.optionalKey(Schema.String),
   prNumber: Schema.optionalKey(Schema.Number),
   prUrl: Schema.optionalKey(Schema.String),
+  actor: Schema.optionalKey(IssueActorKind),
+  notifyAgent: Schema.optionalKey(Schema.Boolean),
 });
 export type CreateIssueInput = typeof CreateIssueInput.Type;
 
@@ -278,13 +349,26 @@ export const UpdateIssueInput = Schema.Struct({
   title: Schema.optionalKey(NonEmpty),
   description: Schema.optionalKey(Schema.String),
   state: Schema.optionalKey(AgentIssueState),
+  priority: Schema.optionalKey(AgentIssuePriority),
+  assignee: Schema.optionalKey(AgentIssueAssignee),
   labels: Schema.optionalKey(Schema.Array(Schema.String)),
+  dueDate: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  relatedIssueId: Schema.optionalKey(Schema.NullOr(AgentIssueId)),
   externalUrl: Schema.optionalKey(Schema.NullOr(Schema.String)),
   assignedThreadId: Schema.optionalKey(Schema.NullOr(ThreadId)),
   prNumber: Schema.optionalKey(Schema.NullOr(Schema.Number)),
   prUrl: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  actor: Schema.optionalKey(IssueActorKind),
+  notifyAgent: Schema.optionalKey(Schema.Boolean),
 });
 export type UpdateIssueInput = typeof UpdateIssueInput.Type;
+
+export const CreateIssueCommentInput = Schema.Struct({
+  body: NonEmpty,
+  actor: Schema.optionalKey(IssueActorKind),
+  actorAgentId: Schema.optionalKey(AgentId),
+});
+export type CreateIssueCommentInput = typeof CreateIssueCommentInput.Type;
 
 export const DelegateAgentTaskInput = Schema.Struct({
   role: AgentModelRole,
@@ -299,6 +383,36 @@ export const DelegateAgentTaskInput = Schema.Struct({
   ),
 });
 export type DelegateAgentTaskInput = typeof DelegateAgentTaskInput.Type;
+
+export const CreateThreadDelegationInput = Schema.Struct({
+  title: NonEmpty,
+  brief: NonEmpty,
+  kind: Schema.optionalKey(AgentDelegationKind),
+  role: Schema.optionalKey(AgentModelRole),
+  runtime: Schema.optionalKey(ThreadRuntime),
+  providerId: Schema.optionalKey(ProviderId),
+  model: Schema.optionalKey(NonEmpty),
+  effort: Schema.optionalKey(EffortLevel),
+  modelSelection: Schema.optionalKey(ModelSelection),
+  branch: Schema.optionalKey(NonEmpty),
+  issueId: Schema.optionalKey(AgentIssueId),
+  maxBounces: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt(), Schema.isBetween({ minimum: 0, maximum: 10 })),
+  ),
+});
+export type CreateThreadDelegationInput = typeof CreateThreadDelegationInput.Type;
+
+export const DelegationLink = Schema.Struct({
+  delegationId: AgentDelegationId,
+  parentThreadId: ThreadId,
+  childThreadId: ThreadId,
+  status: AgentDelegationStatus,
+  title: Schema.String,
+  role: AgentModelRole,
+  providerId: ProviderId,
+  model: Schema.String,
+});
+export type DelegationLink = typeof DelegationLink.Type;
 
 export const AssignAgentIssueInput = Schema.Struct({
   mode: Schema.optionalKey(Schema.Literals(["pr", "agent"])),

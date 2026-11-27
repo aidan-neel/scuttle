@@ -34,7 +34,7 @@ export function ModelDetailCard({
   const showReasoning = entry.model.efforts.length > 0 && effort !== undefined;
 
   return (
-    <div className="hidden w-[244px] overflow-hidden rounded-card bg-menu p-3.5 shadow-menu sm:block">
+    <div className="hidden w-[15.25rem] overflow-hidden rounded-card bg-menu p-3.5 shadow-menu sm:block">
       <div className="flex flex-col gap-3.5">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
@@ -63,7 +63,9 @@ export function ModelDetailCard({
             )}
           </div>
           {entry.model.slug !== entry.displayName && (
-            <div className="truncate font-mono text-[11px] text-fg-faint">{entry.model.slug}</div>
+            <div className="truncate font-mono text-[0.6875rem] text-fg-faint">
+              {entry.model.slug}
+            </div>
           )}
         </div>
 

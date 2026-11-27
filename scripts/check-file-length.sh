@@ -9,7 +9,7 @@ failed=0
 
 files=$(git ls-files -- \
   '*.ts' '*.tsx' '*.js' '*.mjs' '*.css' '*.rs' '*.sh' \
-  ':!:*.d.ts' ':!:*.gen.*' ':!:**/generated/**' ':!:**/.hutch/**')
+  ':!:*.d.ts' ':!:*.gen.*' ':!:**/generated/**' ':!:**/.hutch/**' ':!:vendor/**')
 
 if [ -z "$files" ]; then
   files=$(find apps packages crates scripts -type f \
@@ -18,6 +18,7 @@ if [ -z "$files" ]; then
 fi
 
 for file in $files; do
+  [ -f "$file" ] || continue
   if [ -f "$ignore" ] && grep -qxF "$file" "$ignore"; then continue; fi
   lines=$(wc -l <"$file")
   if [ "$lines" -gt "$max" ]; then

@@ -1,6 +1,7 @@
 import {
   AiBrain01Icon,
   ArrowShrinkIcon,
+  CommandIcon,
   CpuIcon,
   Idea01Icon,
   PencilEdit02Icon,
@@ -10,13 +11,16 @@ import type {
   InteractionMode,
   ModelSelection,
   ProviderSnapshot,
+  ScuttleSkill,
 } from "@scuttle/contracts";
 import { BrandLogo } from "@/components/ui/BrandLogo.tsx";
 import { useDisabledModels } from "@/lib/disabledModels.ts";
 import { EFFORT_LABELS } from "@/lib/format.ts";
 import { modelFavoriteKey } from "@/lib/modelFavorites.ts";
 import { buildModelEntries, entryMatches, type ModelEntry } from "@/lib/modelGrouping.ts";
-import type { PaletteContent, PaletteItem } from "./ComposerPalette.tsx";
+import { useWorkspaceSelector } from "@/lib/workspace.tsx";
+import type { PaletteContent, PaletteItem, PaletteSection } from "./ComposerPalette.tsx";
+import { type ComposerEmbed, createPlanEmbed, createSkillEmbed } from "./composerEmbeds.ts";
 
 export type SlashView =
   | { readonly kind: "root" }
@@ -38,11 +42,49 @@ interface SlashContentOptions extends SlashOptions {
   readonly query: string;
   readonly drill: (view: SlashView) => void;
   readonly run: (action: () => void) => void;
+  readonly embed: (embed: ComposerEmbed) => void;
 }
 
 interface SlashCommand extends PaletteItem {
   readonly command?: string;
 }
+
+const FEATURED_SKILLS: ReadonlyArray<string> = [
+  "go",
+  "design",
+  "council",
+  "research",
+  "hillclimb",
+  "architect",
+  "setup-models",
+  "full-send",
+  "full-stop",
+  "babysit-pr",
+  "deslop",
+  "tdd",
+];
+
+const FEATURED_RANK = new Map(FEATURED_SKILLS.map((id, idx) => [id, idx]));
+
+const skillMatchesQuery = (skill: ScuttleSkill, query: string): boolean => {
+  if (query.length === 0) return true;
+  const normalized = query.replace(/^skuttle:/, "scuttle:");
+  const bare = skill.command.slice(1).toLowerCase();
+  return (
+    bare.includes(normalized) ||
+    skill.id.toLowerCase().includes(normalized) ||
+    skill.name.toLowerCase().includes(normalized) ||
+    skill.description.toLowerCase().includes(normalized)
+  );
+};
+
+const sortSkills = (skills: ReadonlyArray<ScuttleSkill>): ReadonlyArray<ScuttleSkill> =>
+  skills.toSorted((a, b) => {
+    const rankA = FEATURED_RANK.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+    const rankB = FEATURED_RANK.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+    if (rankA !== rankB) return rankA - rankB;
+    return a.id.localeCompare(b.id);
+  });
 
 const effortFor = (entry: ModelEntry, current: EffortLevel | undefined) =>
   current && entry.model.efforts.includes(current)
@@ -61,8 +103,10 @@ export function useSlashContent({
   query,
   drill,
   run,
+  embed,
 }: SlashContentOptions): PaletteContent {
   const { isDisabled } = useDisabledModels();
+  const skills = useWorkspaceSelector((s) => s.skills);
   const entries = buildModelEntries(
     providers.filter((p) => p.enabled && p.status === "ready" && p.models.length > 0),
   ).filter((entry) => !isDisabled(entry.key));
@@ -96,7 +140,8 @@ export function useSlashContent({
                 hint: "/plan",
                 icon: Idea01Icon,
                 ...(planOn ? { badge: "On" } : {}),
-                onSelect: () => run(() => onInteractionModeChange(planOn ? "default" : "plan")),
+                onSelect: () =>
+                  planOn ? run(() => onInteractionModeChange("default")) : embed(createPlanEmbed()),
               },
             ]
           : []),
@@ -145,17 +190,31 @@ export function useSlashContent({
             ]
           : []),
       ];
+      const filteredCommands = commands.filter(
+        (item) =>
+          item.label.toLowerCase().includes(normalizedQuery) ||
+          (item.command?.slice(1).startsWith(normalizedQuery) ?? false),
+      );
+      const matchingSkills = sortSkills(
+        skills.filter((skill) => skillMatchesQuery(skill, normalizedQuery)),
+      ).slice(0, normalizedQuery.length > 0 ? 20 : 12);
+      const skillItems: ReadonlyArray<PaletteItem> = matchingSkills.map((skill) => ({
+        id: `skill:${skill.id}`,
+        label: skill.command,
+        icon: CommandIcon,
+        ...(skill.description.length > 0 ? { description: skill.description } : {}),
+        onSelect: () => embed(createSkillEmbed(skill)),
+      }));
+      const sections: PaletteSection[] = [];
+      if (filteredCommands.length > 0) {
+        sections.push({ items: filteredCommands });
+      }
+      if (skillItems.length > 0) {
+        sections.push({ label: "Skills", items: skillItems });
+      }
       return {
         label: "Commands",
-        sections: [
-          {
-            items: commands.filter(
-              (item) =>
-                item.label.toLowerCase().includes(normalizedQuery) ||
-                (item.command?.slice(1).startsWith(normalizedQuery) ?? false),
-            ),
-          },
-        ],
+        sections,
         emptyText: "No matching commands",
       };
     }

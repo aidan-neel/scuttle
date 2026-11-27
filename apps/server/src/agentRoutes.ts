@@ -2,8 +2,10 @@ import {
   AskDelegationParentInput,
   AssignAgentIssueInput,
   CreateAgentInput,
+  CreateIssueCommentInput,
   CreateIssueInput,
   CreateMemoryInput,
+  CreateThreadDelegationInput,
   DelegateAgentTaskInput,
   SendTurnInput,
   SetupAgentStartInput,
@@ -12,7 +14,13 @@ import {
   UpdateIssueInput,
   UpdateMemoryInput,
 } from "@scuttle/contracts";
-import { AgentDelegationId, AgentId, AgentIssueId, AgentMemoryId } from "@scuttle/shared/ids";
+import {
+  AgentDelegationId,
+  AgentId,
+  AgentIssueId,
+  AgentMemoryId,
+  ThreadId,
+} from "@scuttle/shared/ids";
 import * as Effect from "effect/Effect";
 import { jsonError, matchRoute, readAndDecode, readOptionalAndDecode } from "./httpHelpers.ts";
 import type { AgentErrorReason } from "./services/agent/errors.ts";
@@ -46,8 +54,68 @@ export const handleAgentApiRequest = (
   Effect.gen(function* () {
     const method = request.method.toUpperCase();
     const pathname = url.pathname;
-    if (!pathname.startsWith("/api/agents")) return null;
+    const threadDelegations = matchRoute(pathname, /^\/api\/threads\/([^/]+)\/delegations$/);
+    const isDelegationRoute =
+      pathname === "/api/delegations" || pathname.startsWith("/api/delegations/");
+    const isAgentRoute = pathname === "/api/agents" || pathname.startsWith("/api/agents/");
+    if (!isAgentRoute && !isDelegationRoute && threadDelegations === null) return null;
+
     const agents = yield* AgentService.AgentService;
+
+    if (method === "GET" && pathname === "/api/delegations") {
+      return yield* respond(agents.listActiveDelegationLinks());
+    }
+
+    if (threadDelegations !== null) {
+      const threadId = ThreadId.make(threadDelegations[0]!);
+      if (method === "GET") {
+        return yield* respond(agents.listThreadDelegations(threadId));
+      }
+      if (method === "POST") {
+        return yield* respond(
+          readAndDecode(request, CreateThreadDelegationInput).pipe(
+            Effect.flatMap((input) => agents.delegateFromThread(threadId, input)),
+          ),
+          201,
+        );
+      }
+    }
+
+    const delegationById = matchRoute(pathname, /^\/api\/delegations\/([^/]+)$/);
+    if (method === "GET" && delegationById !== null) {
+      return yield* respond(agents.getDelegation(AgentDelegationId.make(delegationById[0]!)));
+    }
+
+    const threadDelegationCancel = matchRoute(pathname, /^\/api\/delegations\/([^/]+)\/cancel$/);
+    if (method === "POST" && threadDelegationCancel !== null) {
+      return yield* respond(
+        agents.cancelDelegationById(AgentDelegationId.make(threadDelegationCancel[0]!)),
+      );
+    }
+
+    const threadDelegationAsk = matchRoute(pathname, /^\/api\/delegations\/([^/]+)\/ask$/);
+    if (method === "POST" && threadDelegationAsk !== null) {
+      const delegationId = AgentDelegationId.make(threadDelegationAsk[0]!);
+      return yield* respond(
+        readAndDecode(request, AskDelegationParentInput).pipe(
+          Effect.flatMap((input) =>
+            agents.askParentByDelegation(delegationId, input, { signal: request.signal }),
+          ),
+        ),
+      );
+    }
+
+    const threadDelegationQuestions = matchRoute(
+      pathname,
+      /^\/api\/delegations\/([^/]+)\/questions$/,
+    );
+    if (method === "GET" && threadDelegationQuestions !== null) {
+      return yield* respond(
+        agents.listDelegationQuestionsById(AgentDelegationId.make(threadDelegationQuestions[0]!)),
+      );
+    }
+
+    if (!isAgentRoute) return null;
 
     if (method === "GET" && pathname === "/api/agents") {
       return yield* respond(agents.list());
@@ -162,6 +230,34 @@ export const handleAgentApiRequest = (
       return yield* respond(
         readOptionalAndDecode(request, AssignAgentIssueInput, {}).pipe(
           Effect.flatMap((input) => agents.assignIssue(id, issueId, input)),
+        ),
+        201,
+      );
+    }
+
+    const issueActivities = matchRoute(
+      pathname,
+      /^\/api\/agents\/([^/]+)\/issues\/([^/]+)\/activities$/,
+    );
+    if (method === "GET" && issueActivities !== null) {
+      return yield* respond(
+        agents.listIssueActivities(
+          AgentId.make(issueActivities[0]!),
+          AgentIssueId.make(issueActivities[1]!),
+        ),
+      );
+    }
+
+    const issueComments = matchRoute(
+      pathname,
+      /^\/api\/agents\/([^/]+)\/issues\/([^/]+)\/comments$/,
+    );
+    if (method === "POST" && issueComments !== null) {
+      const id = AgentId.make(issueComments[0]!);
+      const issueId = AgentIssueId.make(issueComments[1]!);
+      return yield* respond(
+        readAndDecode(request, CreateIssueCommentInput).pipe(
+          Effect.flatMap((input) => agents.addIssueComment(id, issueId, input)),
         ),
         201,
       );

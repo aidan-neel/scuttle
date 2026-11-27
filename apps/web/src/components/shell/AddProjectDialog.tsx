@@ -11,18 +11,26 @@ import {
   Search01Icon,
 } from "@hugeicons/core-free-icons";
 import type { DirectoryEntry, DirectoryListing, Project } from "@scuttle/contracts";
-import { AnimatePresence, motion } from "motion/react";
 import { type KeyboardEvent, type MouseEvent, useEffect, useId, useRef, useState } from "react";
+import { Skeleton } from "skullet/react";
 import { Button } from "@/components/ui/Button.tsx";
+import { DialogShell } from "@/components/ui/DialogShell.tsx";
 import { DotSpinner } from "@/components/ui/DotSpinner.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
-import { easeOut, spring } from "@/lib/motion.ts";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace.tsx";
 
 const LISTING_LIMIT = 100;
-const SPINNER_DELAY_MS = 180;
+
+const SAMPLE_FOLDERS: ReadonlyArray<DirectoryEntry> = [
+  { name: "scuttle", path: "/workspace/scuttle", isGitRepo: true },
+  { name: "design-system", path: "/workspace/design-system", isGitRepo: true },
+  { name: "api-server", path: "/workspace/api-server", isGitRepo: true },
+  { name: "scripts", path: "/workspace/scripts", isGitRepo: false },
+  { name: "notes", path: "/workspace/notes", isGitRepo: false },
+  { name: "sandbox", path: "/workspace/sandbox", isGitRepo: false },
+];
 
 interface AddProjectDialogProps {
   readonly open: boolean;
@@ -83,7 +91,6 @@ export function AddProjectDialog({ open, onOpenChange, onAdded }: AddProjectDial
   const [homePath, setHomePath] = useState<string | null>(null);
   const [knownRepos, setKnownRepos] = useState<Readonly<Record<string, boolean>>>({});
   const [status, setStatus] = useState<Status>(IDLE);
-  const [showSpinner, setShowSpinner] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
@@ -101,15 +108,6 @@ export function AddProjectDialog({ open, onOpenChange, onAdded }: AddProjectDial
 
   const labelFor = (path: string | undefined) =>
     path === undefined ? "Home" : path === query.trim() ? path : basename(path);
-
-  useEffect(() => {
-    if (status.kind !== "loading") {
-      setShowSpinner(false);
-      return;
-    }
-    const timer = setTimeout(() => setShowSpinner(true), SPINNER_DELAY_MS);
-    return () => clearTimeout(timer);
-  }, [status.kind]);
 
   const browse = async (path?: string) => {
     const request = ++requestRef.current;
@@ -198,211 +196,201 @@ export function AddProjectDialog({ open, onOpenChange, onAdded }: AddProjectDial
   };
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <AnimatePresence onExitComplete={resetInput}>
-        {open && (
-          <Dialog.Portal keepMounted>
-            <Dialog.Backdrop
-              render={
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1, transition: { duration: 0.16, ease: easeOut } }}
-                  exit={{ opacity: 0, transition: { duration: 0.12, ease: easeOut } }}
-                />
-              }
-              className="scrim-backdrop fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px]"
-            />
-            <Dialog.Popup
-              initialFocus={inputRef}
-              render={
-                <motion.div
-                  initial={{ opacity: 0, y: 8, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1, transition: spring.snappy }}
-                  exit={{ opacity: 0, y: 4, scale: 0.985, transition: { duration: 0.12 } }}
-                />
-              }
-              className="fixed inset-x-0 top-[14vh] z-50 mx-auto flex w-[min(540px,calc(100vw-2rem))] flex-col overflow-hidden rounded-canvas bg-menu shadow-menu outline-none"
-            >
-              <Dialog.Title className="sr-only">Add project</Dialog.Title>
+    <DialogShell
+      open={open}
+      onOpenChange={onOpenChange}
+      onExitComplete={resetInput}
+      initialFocus={inputRef}
+      className="top-[14vh] w-[min(33.75rem,calc(100vw-2rem))]"
+    >
+      <Dialog.Title className="sr-only">Add project</Dialog.Title>
 
-              <div className="flex h-11 shrink-0 items-center gap-2.5 px-3.5">
-                <Icon
-                  icon={pathMode ? FolderOpenIcon : Search01Icon}
-                  className="size-4 shrink-0 text-fg-muted"
-                />
-                <input
-                  ref={inputRef}
-                  type="text"
-                  role="combobox"
-                  aria-label="Filter folders or type a path"
-                  aria-expanded
-                  aria-controls={`${baseId}-list`}
-                  aria-activedescendant={activeIndex === null ? undefined : rowId(activeIndex)}
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={query}
-                  onChange={(event) => {
-                    const next = event.target.value;
-                    setQuery(next);
-                    const nextTrimmed = next.trim();
-                    setActiveIndex(nextTrimmed.length > 0 && !isPathQuery(nextTrimmed) ? 0 : null);
-                    if (status.kind === "error") setStatus(IDLE);
-                  }}
-                  onKeyDown={onKeyDown}
-                  placeholder="Filter folders, or type a path…"
-                  className={cn(
-                    "min-w-0 flex-1 bg-transparent text-body text-fg outline-none placeholder:text-fg-muted",
-                    pathMode && "font-mono text-label",
-                  )}
-                />
-                <kbd className="shrink-0 rounded-chip bg-white/6 px-1.5 py-0.5 font-mono text-[11px] text-fg-muted">
-                  ESC
-                </kbd>
-              </div>
+      <div className="flex h-11 shrink-0 items-center gap-2.5 px-3.5">
+        <Icon
+          icon={pathMode ? FolderOpenIcon : Search01Icon}
+          className="size-4 shrink-0 text-fg-muted"
+        />
+        <input
+          ref={inputRef}
+          type="text"
+          role="combobox"
+          aria-label="Filter folders or type a path"
+          aria-expanded
+          aria-controls={`${baseId}-list`}
+          aria-activedescendant={activeIndex === null ? undefined : rowId(activeIndex)}
+          autoComplete="off"
+          spellCheck={false}
+          value={query}
+          onChange={(event) => {
+            const next = event.target.value;
+            setQuery(next);
+            const nextTrimmed = next.trim();
+            setActiveIndex(nextTrimmed.length > 0 && !isPathQuery(nextTrimmed) ? 0 : null);
+            if (status.kind === "error") setStatus(IDLE);
+          }}
+          onKeyDown={onKeyDown}
+          placeholder="Filter folders, or type a path…"
+          className={cn(
+            "min-w-0 flex-1 bg-transparent text-body text-fg outline-none placeholder:text-fg-muted",
+            pathMode && "font-mono text-label",
+          )}
+        />
+        <kbd className="shrink-0 rounded-chip bg-fg/6 px-1.5 py-0.5 font-mono text-[0.6875rem] text-fg-muted">
+          ESC
+        </kbd>
+      </div>
 
-              <nav
-                aria-label="Folder location"
-                className="flex h-9 shrink-0 items-center gap-1 border-y border-line px-2 text-fg-muted"
-              >
-                <Button
+      <nav
+        aria-label="Folder location"
+        className="flex h-9 shrink-0 items-center gap-1 border-y border-dialog-line px-2 text-fg-muted"
+      >
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Parent folder"
+          disabled={listing?.parentPath == null}
+          onMouseDown={keepFocus}
+          onClick={() => listing?.parentPath != null && void browse(listing.parentPath)}
+        >
+          <Icon icon={ArrowUp01Icon} />
+        </Button>
+        <ol className="flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden">
+          {visibleCrumbs.map((crumb, index) => {
+            const last = index === visibleCrumbs.length - 1;
+            const jump = crumb ?? hiddenCrumb;
+            return (
+              <li key={crumb?.path ?? "more"} className="flex min-w-0 items-center gap-0.5">
+                {index > 0 && (
+                  <Icon icon={ArrowRight01Icon} className="size-3 shrink-0 text-fg-faint" />
+                )}
+                <button
                   type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="Parent folder"
-                  disabled={listing?.parentPath == null}
+                  title={jump?.label}
+                  aria-current={last ? "location" : undefined}
                   onMouseDown={keepFocus}
-                  onClick={() => listing?.parentPath != null && void browse(listing.parentPath)}
+                  onClick={() => jump !== undefined && !last && void browse(jump.path)}
+                  className={cn(
+                    "flex h-6 min-w-0 items-center gap-1.5 rounded-chip px-1.5 text-label transition-colors duration-(--dur-hover)",
+                    last ? "font-medium text-fg" : "text-fg-muted hover:bg-(--wash) hover:text-fg",
+                  )}
                 >
-                  <Icon icon={ArrowUp01Icon} />
-                </Button>
-                <ol className="flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden">
-                  {visibleCrumbs.map((crumb, index) => {
-                    const last = index === visibleCrumbs.length - 1;
-                    const jump = crumb ?? hiddenCrumb;
-                    return (
-                      <li key={crumb?.path ?? "more"} className="flex min-w-0 items-center gap-0.5">
-                        {index > 0 && (
-                          <Icon icon={ArrowRight01Icon} className="size-3 shrink-0 text-fg-faint" />
-                        )}
-                        <button
-                          type="button"
-                          title={jump?.label}
-                          aria-current={last ? "location" : undefined}
-                          onMouseDown={keepFocus}
-                          onClick={() => jump !== undefined && !last && void browse(jump.path)}
-                          className={cn(
-                            "flex h-6 min-w-0 items-center gap-1.5 rounded-chip px-1.5 text-label transition-colors duration-(--dur-hover)",
-                            last
-                              ? "font-medium text-fg"
-                              : "text-fg-muted hover:bg-(--wash) hover:text-fg",
-                          )}
-                        >
-                          {index === 0 && crumb !== null && (
-                            <Icon
-                              icon={crumb.label === "Home" ? Home01Icon : ComputerIcon}
-                              className="size-3.5 shrink-0"
-                            />
-                          )}
-                          <span className="truncate">{crumb?.label ?? "…"}</span>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ol>
-                <span className="flex w-5 shrink-0 items-center justify-center">
-                  {showSpinner && <DotSpinner variant="loading" label="Loading" />}
-                </span>
-              </nav>
-
-              <div
-                ref={listRef}
-                id={`${baseId}-list`}
-                role="listbox"
-                aria-label="Folders"
-                className="relative h-72 shrink-0 overflow-y-auto overscroll-contain p-1.5"
-              >
-                {pathMode ? (
-                  <div
-                    role="option"
-                    aria-selected
-                    onMouseDown={keepFocus}
-                    onClick={() => void browse(trimmed)}
-                    className="flex h-8 cursor-default items-center gap-2.5 rounded-chip bg-selected px-2"
-                  >
-                    <Icon icon={FolderOpenIcon} className="size-4 shrink-0 text-fg-muted" />
-                    <span className="shrink-0 text-body text-fg-secondary">Go to</span>
-                    <span className="min-w-0 flex-1 truncate font-mono text-label text-fg">
-                      {trimmed}
-                    </span>
-                    <kbd className="shrink-0 font-mono text-[11px] text-fg-faint">↵</kbd>
-                  </div>
-                ) : (
-                  rows.map((entry, index) => (
-                    <FolderRow
-                      key={entry.path}
-                      id={rowId(index)}
-                      entry={entry}
-                      active={index === activeIndex}
-                      adding={status.kind === "adding"}
-                      onSelect={() => setActiveIndex(index)}
-                      onEnter={() => void browse(entry.path)}
-                      onAdd={() => void add(entry.path)}
+                  {index === 0 && crumb !== null && (
+                    <Icon
+                      icon={crumb.label === "Home" ? Home01Icon : ComputerIcon}
+                      className="size-3.5 shrink-0"
                     />
-                  ))
-                )}
-                {!pathMode && listing !== null && rows.length === 0 && (
-                  <p className="grid h-full place-items-center px-6 text-center text-label text-fg-muted">
-                    {trimmed.length > 0
-                      ? `No folders match “${trimmed}”.`
-                      : `${basename(listing.path)} has no folders inside.`}
-                  </p>
-                )}
-                {!pathMode && listing !== null && listing.entries.length >= LISTING_LIMIT && (
-                  <p className="px-2 pt-2 pb-1 text-meta text-fg-faint">
-                    Showing the first {LISTING_LIMIT} folders. Type a path to jump elsewhere.
-                  </p>
-                )}
-              </div>
+                  )}
+                  <span className="truncate">{crumb?.label ?? "…"}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      </nav>
 
-              <footer className="flex h-14 shrink-0 items-center gap-3 border-t border-line bg-black/10 px-3.5">
-                <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                  {status.kind === "error" ? (
-                    <p
-                      role="alert"
-                      className="flex min-w-0 flex-1 items-center gap-2 text-label text-danger"
-                    >
-                      <Icon icon={Alert02Icon} className="size-3.5 shrink-0" />
-                      <span className="min-w-0 flex-1 truncate">{status.message}</span>
-                    </p>
-                  ) : targetPath !== null ? (
-                    <>
-                      <Identicon name={targetName} size="md" className="shrink-0" />
-                      <span className="flex min-w-0 flex-col">
-                        <span className="truncate text-body font-medium text-fg">{targetName}</span>
-                        <span className="truncate text-meta text-fg-muted">
-                          {knownRepos[targetPath] === true ? "Git repository" : "Folder"}
-                        </span>
-                      </span>
-                    </>
-                  ) : null}
-                </div>
-                <Button
-                  type="button"
-                  variant="primary"
-                  size="md"
-                  disabled={targetPath === null || status.kind === "adding"}
-                  onClick={() => targetPath !== null && void add(targetPath)}
-                  className="shrink-0"
-                >
-                  {status.kind === "adding" && <DotSpinner variant="working" label="Adding" />}
-                  Add project
-                </Button>
-              </footer>
-            </Dialog.Popup>
-          </Dialog.Portal>
+      <div
+        ref={listRef}
+        id={`${baseId}-list`}
+        role="listbox"
+        aria-label="Folders"
+        className="relative h-72 shrink-0 overflow-y-auto overscroll-contain p-1.5"
+      >
+        {pathMode ? (
+          <div
+            role="option"
+            aria-selected
+            onMouseDown={keepFocus}
+            onClick={() => void browse(trimmed)}
+            className="flex h-8 cursor-default items-center gap-2.5 rounded-chip bg-selected px-2"
+          >
+            <Icon icon={FolderOpenIcon} className="size-4 shrink-0 text-fg-muted" />
+            <span className="shrink-0 text-body text-fg-secondary">Go to</span>
+            <span className="min-w-0 flex-1 truncate font-mono text-label text-fg">{trimmed}</span>
+            <kbd className="shrink-0 font-mono text-[0.6875rem] text-fg-faint">↵</kbd>
+          </div>
+        ) : (
+          <Skeleton
+            loading={status.kind === "loading" && listing === null}
+            id="folder-browser"
+            label="Loading folders"
+          >
+            {listing === null
+              ? SAMPLE_FOLDERS.map((entry, index) => (
+                  <FolderRow
+                    key={entry.path}
+                    id={rowId(index)}
+                    entry={entry}
+                    active={false}
+                    adding={false}
+                    onSelect={() => {}}
+                    onEnter={() => {}}
+                    onAdd={() => {}}
+                  />
+                ))
+              : rows.map((entry, index) => (
+                  <FolderRow
+                    key={entry.path}
+                    id={rowId(index)}
+                    entry={entry}
+                    active={index === activeIndex}
+                    adding={status.kind === "adding"}
+                    onSelect={() => setActiveIndex(index)}
+                    onEnter={() => void browse(entry.path)}
+                    onAdd={() => void add(entry.path)}
+                  />
+                ))}
+          </Skeleton>
         )}
-      </AnimatePresence>
-    </Dialog.Root>
+        {!pathMode && listing !== null && rows.length === 0 && (
+          <p className="grid h-full place-items-center px-6 text-center text-label text-fg-muted">
+            {trimmed.length > 0
+              ? `No folders match “${trimmed}”.`
+              : `${basename(listing.path)} has no folders inside.`}
+          </p>
+        )}
+        {!pathMode && listing !== null && listing.entries.length >= LISTING_LIMIT && (
+          <p className="px-2 pt-2 pb-1 text-meta text-fg-faint">
+            Showing the first {LISTING_LIMIT} folders. Type a path to jump elsewhere.
+          </p>
+        )}
+      </div>
+
+      <footer className="flex h-14 shrink-0 items-center gap-3 border-t border-dialog-line px-3.5">
+        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+          {status.kind === "error" ? (
+            <p
+              role="alert"
+              className="flex min-w-0 flex-1 items-center gap-2 text-label text-danger"
+            >
+              <Icon icon={Alert02Icon} className="size-3.5 shrink-0" />
+              <span className="min-w-0 flex-1 truncate">{status.message}</span>
+            </p>
+          ) : targetPath !== null ? (
+            <>
+              <Identicon name={targetName} size="md" className="shrink-0" />
+              <span className="flex min-w-0 flex-col">
+                <span className="truncate text-body font-medium text-fg">{targetName}</span>
+                <span className="truncate text-meta text-fg-muted">
+                  {knownRepos[targetPath] === true ? "Git repository" : "Folder"}
+                </span>
+              </span>
+            </>
+          ) : null}
+        </div>
+        <Button
+          type="button"
+          variant="primary"
+          size="md"
+          disabled={targetPath === null || status.kind === "adding"}
+          onClick={() => targetPath !== null && void add(targetPath)}
+          className="shrink-0"
+        >
+          {status.kind === "adding" && <DotSpinner variant="working" label="Adding" />}
+          Add project
+        </Button>
+      </footer>
+    </DialogShell>
   );
 }
 
@@ -449,7 +437,7 @@ function FolderRow({ id, entry, active, adding, onSelect, onEnter, onAdd }: Fold
       </span>
       {entry.isGitRepo ? (
         <div className="relative flex h-6 w-12 shrink-0 items-center justify-end">
-          <span className="flex items-center gap-1 rounded-chip bg-white/6 px-1.5 py-0.5 text-meta text-fg-muted transition-opacity duration-100 group-hover:opacity-0 group-data-[active=true]:opacity-0">
+          <span className="flex items-center gap-1 rounded-chip bg-fg/6 px-1.5 py-0.5 text-meta text-fg-muted transition-opacity duration-100 group-hover:opacity-0 group-data-[active=true]:opacity-0">
             <Icon icon={GitBranchIcon} className="size-3" />
             Git
           </span>

@@ -59,7 +59,7 @@ function DeviceFlowPanel({
   return (
     <div className="flex flex-wrap items-center gap-3 px-4 py-3">
       <div className="min-w-0 flex-1 basis-56">
-        <div className="font-mono text-[19px] leading-7 font-medium tracking-[0.18em] text-fg select-all">
+        <div className="font-mono text-[1.1875rem] leading-7 font-medium tracking-[0.18em] text-fg select-all">
           {flow.userCode}
         </div>
         <div className="mt-0.5 flex items-center gap-1.5 text-label text-fg-muted">

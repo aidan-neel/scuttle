@@ -1,8 +1,10 @@
 import { Popover } from "@base-ui/react/popover";
 import type { Agent, AgentDelegation, Thread } from "@scuttle/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { motion } from "motion/react";
+import { useId, useState } from "react";
 import { isAgentThread } from "@/lib/agentState.ts";
+import { spring } from "@/lib/motion.ts";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace.tsx";
 
@@ -22,7 +24,7 @@ const PALETTE = [
 ] as const;
 
 const POPUP_CLASS =
-  "w-[min(368px,calc(100vw-24px))] origin-(--transform-origin) rounded-canvas bg-menu p-3 shadow-menu outline-none transition-[opacity,scale,translate] duration-180 ease-out-quint data-ending-style:scale-98 data-ending-style:opacity-0 data-ending-style:duration-110 data-starting-style:-translate-y-1 data-starting-style:scale-97 data-starting-style:opacity-0";
+  "w-[min(23rem,calc(100vw-1.5rem))] origin-(--transform-origin) rounded-canvas bg-menu p-3 shadow-menu outline-none transition-[opacity,scale,translate] duration-180 ease-out-quint data-ending-style:scale-98 data-ending-style:opacity-0 data-ending-style:duration-110 data-starting-style:-translate-y-1 data-starting-style:scale-97 data-starting-style:opacity-0";
 
 type CostTab = "thread" | "model";
 
@@ -30,7 +32,7 @@ interface CostEntry {
   readonly id: string;
   readonly label: string;
   readonly subtitle?: string;
-  readonly keysUsd: number;
+  readonly costUsd: number;
   readonly color: string;
   readonly threadId?: Thread["id"];
 }
@@ -48,6 +50,7 @@ interface AgentCostPopoverProps {
 export function AgentCostPopover({ agent, primaryThread, delegations }: AgentCostPopoverProps) {
   const { agents, threads, providers } = useWorkspace();
   const navigate = useNavigate();
+  const pillId = useId();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<CostTab>("thread");
 
@@ -69,7 +72,7 @@ export function AgentCostPopover({ agent, primaryThread, delegations }: AgentCos
   const threadEntries: ReadonlyArray<CostEntry> = relatedThreads.map((t, index) => ({
     id: t.id,
     label: t.id === primaryThread.id ? "This thread" : t.title,
-    keysUsd: t.costUsd ?? 0,
+    costUsd: t.costUsd ?? 0,
     color: colorAt(index),
     ...(t.id !== primaryThread.id ? { threadId: t.id } : {}),
   }));
@@ -82,68 +85,65 @@ export function AgentCostPopover({ agent, primaryThread, delegations }: AgentCos
     return slug;
   };
 
-  const modelBuckets = new Map<string, { label: string; subtitle: string; keysUsd: number }>();
+  const modelBuckets = new Map<string, { label: string; subtitle: string; costUsd: number }>();
   for (const t of relatedThreads) {
     const key = `${t.modelSelection.providerKind}:${t.modelSelection.model}:${t.runtime}`;
     const existing = modelBuckets.get(key);
     const add = t.costUsd ?? 0;
     if (existing !== undefined) {
-      existing.keysUsd += add;
+      existing.costUsd += add;
     } else {
       modelBuckets.set(key, {
         label: modelLabel(t.modelSelection.model),
         subtitle: t.runtime === "worktree" ? "Worktree" : "Local",
-        keysUsd: add,
+        costUsd: add,
       });
     }
   }
   const modelEntries: ReadonlyArray<CostEntry> = Array.from(modelBuckets.entries())
-    .toSorted(([, a], [, b]) => b.keysUsd - a.keysUsd)
+    .toSorted(([, a], [, b]) => b.costUsd - a.costUsd)
     .map(([id, item], index) => ({
       id,
       label: item.label,
       subtitle: item.subtitle,
-      keysUsd: item.keysUsd,
+      costUsd: item.costUsd,
       color: colorAt(index),
     }));
 
-  const totalKeysUsd = threadEntries.reduce((sum, entry) => sum + entry.keysUsd, 0);
+  const totalCostUsd = threadEntries.reduce((sum, entry) => sum + entry.costUsd, 0);
   const activeEntries = tab === "thread" ? threadEntries : modelEntries;
-  const barEntries = activeEntries.filter((entry) => entry.keysUsd > 0);
+  const barEntries = activeEntries.filter((entry) => entry.costUsd > 0);
 
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger
-        aria-label={`Agent cost ${formatUsd(totalKeysUsd)}`}
+        aria-label={`Agent cost ${formatUsd(totalCostUsd)}`}
         className="inline-flex h-7 cursor-default items-center rounded-chip px-2 text-label font-medium text-fg-muted tabular-nums outline-none transition-colors duration-100 hover:bg-(--wash) hover:text-fg focus-visible:shadow-focus data-popup-open:bg-(--wash) data-popup-open:text-fg"
       >
-        {formatUsd(totalKeysUsd)}
+        {formatUsd(totalCostUsd)}
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Positioner sideOffset={6} align="end" className="z-50 outline-none">
           <Popover.Popup aria-label="Agent cost breakdown" className={POPUP_CLASS}>
-            <div className="flex items-start justify-between gap-4">
+            <div className="flex items-baseline justify-between gap-4">
               <div>
-                <p className="text-[19px] leading-tight font-semibold text-fg tabular-nums">
-                  {formatUsd(0)}
+                <p className="text-[1.1875rem] leading-tight font-semibold text-fg tabular-nums">
+                  {formatUsd(totalCostUsd)}
                 </p>
-                <p className="mt-0.5 text-meta text-fg-muted">Charged by Scuttle</p>
+                <p className="mt-0.5 text-meta text-fg-muted">Estimated spend</p>
               </div>
-              <div className="text-right">
-                <p className="text-[19px] leading-tight font-semibold text-fg-muted tabular-nums">
-                  {formatUsd(totalKeysUsd)}
-                </p>
-                <p className="mt-0.5 text-meta text-fg-muted">On your keys</p>
-              </div>
+              <span className="text-meta text-fg-muted tabular-nums">
+                {relatedThreads.length} {relatedThreads.length === 1 ? "thread" : "threads"}
+              </span>
             </div>
 
-            <div className="mt-3 flex h-2 w-full gap-0.5 overflow-hidden rounded-full bg-white/8">
-              {totalKeysUsd > 0 &&
+            <div className="mt-3 flex h-2 w-full gap-0.5 overflow-hidden rounded-full bg-fg/8">
+              {totalCostUsd > 0 &&
                 barEntries.map((entry) => (
                   <span
                     key={entry.id}
                     style={{
-                      width: `${Math.max(2, (entry.keysUsd / totalKeysUsd) * 100)}%`,
+                      width: `${Math.max(2, (entry.costUsd / totalCostUsd) * 100)}%`,
                       backgroundColor: entry.color,
                     }}
                     className="h-full rounded-[1px]"
@@ -171,13 +171,19 @@ export function AgentCostPopover({ agent, primaryThread, delegations }: AgentCos
                     aria-selected={selected}
                     onClick={() => setTab(item.id)}
                     className={cn(
-                      "h-7 rounded-[5px] px-2 text-label font-medium outline-none transition-colors duration-100 focus-visible:shadow-focus",
-                      selected
-                        ? "bg-selected text-fg shadow-raised"
-                        : "text-fg-muted hover:text-fg",
+                      "relative h-7 cursor-pointer rounded-[5px] px-2 text-label font-medium outline-none transition-colors duration-100 active:scale-[0.98] focus-visible:shadow-focus",
+                      selected ? "text-fg" : "text-fg-muted hover:text-fg",
                     )}
                   >
-                    {item.label}
+                    {selected && (
+                      <motion.span
+                        layoutId={`${pillId}-cost-tab`}
+                        transition={spring.snappy}
+                        aria-hidden
+                        className="absolute inset-0 rounded-[5px] bg-selected shadow-raised"
+                      />
+                    )}
+                    <span className="relative z-10">{item.label}</span>
                   </button>
                 );
               })}
@@ -185,12 +191,13 @@ export function AgentCostPopover({ agent, primaryThread, delegations }: AgentCos
 
             <ul className="mt-2.5 flex max-h-72 flex-col gap-0.5 overflow-y-auto overscroll-contain pr-0.5">
               {activeEntries.map((entry) => {
+                const { threadId } = entry;
                 const rowBody = (
                   <>
                     <span
                       aria-hidden
                       style={{
-                        backgroundColor: entry.keysUsd > 0 ? entry.color : "rgb(255 255 255 / 22%)",
+                        backgroundColor: entry.costUsd > 0 ? entry.color : "rgb(255 255 255 / 22%)",
                       }}
                       className="size-2 shrink-0 rounded-full"
                     />
@@ -200,25 +207,22 @@ export function AgentCostPopover({ agent, primaryThread, delegations }: AgentCos
                         <span className="shrink-0 text-meta text-fg-faint">{entry.subtitle}</span>
                       )}
                     </span>
-                    <span className="w-13 shrink-0 text-right text-label text-fg tabular-nums">
-                      {formatUsd(0)}
-                    </span>
-                    <span className="w-14 shrink-0 text-right text-label text-fg-muted tabular-nums">
-                      {formatUsd(entry.keysUsd)}
+                    <span className="shrink-0 text-right text-label text-fg-secondary tabular-nums">
+                      {formatUsd(entry.costUsd)}
                     </span>
                   </>
                 );
 
                 return (
                   <li key={entry.id}>
-                    {entry.threadId !== undefined ? (
+                    {threadId !== undefined ? (
                       <button
                         type="button"
                         onClick={() => {
                           setOpen(false);
                           void navigate({
                             to: "/threads/$threadId",
-                            params: { threadId: entry.threadId! },
+                            params: { threadId },
                           });
                         }}
                         className="flex h-8 w-full items-center gap-2 rounded-chip px-1.5 text-left outline-none transition-colors hover:bg-(--wash) focus-visible:shadow-focus"

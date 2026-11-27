@@ -16,6 +16,7 @@ export interface StdioJsonRpcOptions {
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
   readonly env?: Record<string, string | undefined>;
+  readonly replaceEnv?: boolean;
   readonly onNotification?: (notification: JsonRpcNotification) => void;
   readonly onRequest?: (request: JsonRpcIncomingRequest) => Promise<unknown>;
   readonly onStderr?: (text: string) => void;
@@ -39,12 +40,15 @@ export class StdioJsonRpcProcess {
 
   constructor(private readonly options: StdioJsonRpcOptions) {
     const mergedEnv: Record<string, string> = {};
-    for (const [key, value] of Object.entries(process.env)) {
-      if (value !== undefined) mergedEnv[key] = value;
+    if (!options.replaceEnv) {
+      for (const [key, value] of Object.entries(process.env)) {
+        if (value !== undefined) mergedEnv[key] = value;
+      }
     }
     if (options.env) {
       for (const [key, value] of Object.entries(options.env)) {
-        if (value !== undefined) mergedEnv[key] = value;
+        if (value === undefined) delete mergedEnv[key];
+        else mergedEnv[key] = value;
       }
     }
 

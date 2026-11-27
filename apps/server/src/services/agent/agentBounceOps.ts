@@ -22,19 +22,21 @@ import {
   applyQuestionPatch,
   buildParentTurnOutcomePatch,
   markParentNeedsAttention,
-  persistPendingQuestionPatch,
   type QuestionSettlementPatch,
   validateAskInput,
 } from "./agentBounceHelpers.ts";
-import {
-  insertQuestion,
-  listPendingQuestionIdsForAgent,
-  listQuestionsForDelegation,
-  readPendingQuestionForDelegation,
-  readQuestionById,
-} from "./agentQuestionStore.ts";
 import { readAgentByPrimaryThreadId } from "./agentStore.ts";
-import { readDelegationById, updateDelegationRow } from "./agentWorkStore.ts";
+import {
+  insertThreadQuestion,
+  listPendingQuestionIdsByAgent,
+  listQuestionsByDelegationId,
+  readDelegationByDelegationId,
+  readDelegationById,
+  readPendingThreadQuestionForDelegation,
+  readThreadQuestionById,
+  updateDelegationRow,
+  updateThreadQuestionRow,
+} from "./agentWorkStore.ts";
 import { AgentServiceError } from "./errors.ts";
 
 export const DEFAULT_ASK_PARENT_TIMEOUT_MS = 300_000;
@@ -48,8 +50,8 @@ export const makeAgentBounceOps = (deps: {
   readonly db: Database;
   readonly eventBus: EventBus.EventBus["Service"];
   readonly requireAgent: (agentId: AgentId) => Effect.Effect<Agent, AgentServiceError>;
-  readonly sendAgentTurn: (
-    agentId: AgentId,
+  readonly sendThreadTurn: (
+    threadId: ThreadId,
     input: SendTurnInput,
     options?: { readonly origin?: TurnOrigin },
   ) => Effect.Effect<ThreadTurn, AgentServiceError>;
@@ -63,14 +65,13 @@ export const makeAgentBounceOps = (deps: {
     db,
     eventBus,
     requireAgent,
-    sendAgentTurn,
+    sendThreadTurn,
     interruptThreadTurn,
     askParentTimeoutMs = DEFAULT_ASK_PARENT_TIMEOUT_MS,
   } = deps;
-
   const waiters = new Map<AgentDelegationQuestionId, QuestionWaiter>();
   const questionTimers = new Map<AgentDelegationQuestionId, ReturnType<typeof setTimeout>>();
-  const queues = new Map<AgentId, AgentDelegationQuestionId[]>();
+  const queues = new Map<ThreadId, AgentDelegationQuestionId[]>();
   const activeParentTurns = new Map<TurnId, ActiveParentTurn>();
   let disposed = false;
 
@@ -81,12 +82,12 @@ export const makeAgentBounceOps = (deps: {
     questionTimers.delete(questionId);
   };
 
-  const removeFromQueue = (agentId: AgentId, questionId: AgentDelegationQuestionId) => {
-    const queue = queues.get(agentId);
+  const removeFromQueue = (parentThreadId: ThreadId, questionId: AgentDelegationQuestionId) => {
+    const queue = queues.get(parentThreadId);
     if (!queue) return;
     const idx = queue.indexOf(questionId);
     if (idx !== -1) queue.splice(idx, 1);
-    if (queue.length === 0) queues.delete(agentId);
+    if (queue.length === 0) queues.delete(parentThreadId);
   };
 
   const resolveWaiter = (
@@ -105,34 +106,51 @@ export const makeAgentBounceOps = (deps: {
 
   const interruptActiveParentTurnForQuestion = (
     questionId: AgentDelegationQuestionId,
-  ): AgentId | null => {
+  ): ThreadId | null => {
     for (const [turnId, entry] of activeParentTurns.entries()) {
       if (entry.questionId !== questionId) continue;
       activeParentTurns.delete(turnId);
       interruptTurn(entry.parentThreadId, turnId);
-      return entry.agentId;
+      return entry.parentThreadId;
     }
     return null;
+  };
+
+  const persistPendingPatch = (
+    questionId: string,
+    patch: QuestionSettlementPatch,
+    restoreDelegation: boolean,
+  ): AgentDelegationQuestion | null => {
+    const current = readThreadQuestionById(db, questionId);
+    if (!current) return null;
+    if (current.status !== "pending") return current;
+    const updated = applyQuestionPatch(current, patch);
+    updateThreadQuestionRow(db, updated);
+    if (restoreDelegation) {
+      const delegation = readDelegationByDelegationId(db, current.delegationId);
+      if (delegation && delegation.status === "waiting_parent") {
+        const restored: AgentDelegation = { ...delegation, status: "running" };
+        updateDelegationRow(db, restored);
+        eventBus.publishSync({ kind: "agent.delegation.upserted", delegation: restored });
+      }
+    }
+    eventBus.publishSync({ kind: "agent.delegation.question.upserted", question: updated });
+    return updated;
   };
 
   const settlePendingQuestion = (
     questionId: AgentDelegationQuestionId,
     patch: QuestionSettlementPatch,
-    options: { readonly restoreDelegation: boolean; readonly fallbackAgentId?: AgentId },
+    options: { readonly restoreDelegation: boolean; readonly fallbackParentThreadId?: ThreadId },
   ): AgentDelegationQuestion | null => {
     clearQuestionTimer(questionId);
     const waiter = waiters.get(questionId);
-    const persisted = persistPendingQuestionPatch(
-      db,
-      eventBus,
-      questionId,
-      patch,
-      options.restoreDelegation,
-    );
-    const agentId = persisted?.agentId ?? waiter?.question.agentId ?? options.fallbackAgentId;
-    if (agentId) {
-      removeFromQueue(agentId, questionId);
-    }
+    const persisted = persistPendingPatch(questionId, patch, options.restoreDelegation);
+    const parentThreadId =
+      persisted?.parentThreadId ??
+      waiter?.question.parentThreadId ??
+      options.fallbackParentThreadId;
+    if (parentThreadId) removeFromQueue(parentThreadId, questionId);
     if (!persisted) {
       if (!waiter) return null;
       const fallback = applyQuestionPatch(waiter.question, patch);
@@ -144,15 +162,19 @@ export const makeAgentBounceOps = (deps: {
   };
 
   const settleParentTurnQuestion = (
-    agentId: AgentId,
+    parentThreadId: ThreadId,
     questionId: AgentDelegationQuestionId,
     turn: ThreadTurn,
+    agentId?: AgentId,
   ) => {
-    const question = readQuestionById(db, questionId);
+    const question = readThreadQuestionById(db, questionId);
     if (!question || question.status !== "pending") return;
     const outcome = buildParentTurnOutcomePatch(turn);
     if (!outcome.ok) {
-      markParentNeedsAttention(db, eventBus, agentId, outcome.completedAt);
+      const resolvedAgentId =
+        agentId ?? question.agentId ?? readAgentByPrimaryThreadId(db, parentThreadId)?.id;
+      if (resolvedAgentId)
+        markParentNeedsAttention(db, eventBus, resolvedAgentId, outcome.completedAt);
     }
     settlePendingQuestion(question.id, outcome.patch, { restoreDelegation: true });
   };
@@ -165,7 +187,7 @@ export const makeAgentBounceOps = (deps: {
     isDisposed: () => disposed,
     removeFromQueue,
     interruptTurn,
-    sendAgentTurn,
+    sendThreadTurn,
     settlePendingQuestion,
     settleParentTurnQuestion,
   });
@@ -175,61 +197,71 @@ export const makeAgentBounceOps = (deps: {
     error: string,
     options: {
       readonly restoreDelegation: boolean;
-      readonly fallbackAgentId?: AgentId;
+      readonly fallbackParentThreadId?: ThreadId;
       readonly pumpAfter?: boolean;
     },
   ): AgentDelegationQuestion | null => {
-    const interruptedAgentId = interruptActiveParentTurnForQuestion(questionId);
+    const interruptedParent = interruptActiveParentTurnForQuestion(questionId);
     const settled = settlePendingQuestion(
       questionId,
       { status: "canceled", error, answeredAt: new Date().toISOString() },
       options,
     );
-    const agentId = settled?.agentId ?? interruptedAgentId ?? options.fallbackAgentId;
-    if (options.pumpAfter !== false && interruptedAgentId && agentId && !disposed) {
-      triggerPump(agentId);
-    }
+    const parentThreadId =
+      settled?.parentThreadId ?? interruptedParent ?? options.fallbackParentThreadId;
+    if (options.pumpAfter !== false && interruptedParent && parentThreadId && !disposed)
+      triggerPump(parentThreadId);
     return settled;
   };
 
-  const startQuestionTimer = (agentId: AgentId, questionId: AgentDelegationQuestionId) => {
+  const startQuestionTimer = (parentThreadId: ThreadId, questionId: AgentDelegationQuestionId) => {
     if (askParentTimeoutMs <= 0 || !Number.isFinite(askParentTimeoutMs)) return;
     clearQuestionTimer(questionId);
     const timer = setTimeout(() => {
       questionTimers.delete(questionId);
       cancelPendingQuestion(
         questionId,
-        `Timed out after ${askParentTimeoutMs}ms waiting for parent Agent.`,
-        { restoreDelegation: true, fallbackAgentId: agentId },
+        `Timed out after ${askParentTimeoutMs}ms waiting for parent thread.`,
+        {
+          restoreDelegation: true,
+          fallbackParentThreadId: parentThreadId,
+        },
       );
     }, askParentTimeoutMs);
     questionTimers.set(questionId, timer);
   };
 
-  const askParent = Effect.fn("AgentService.askParent")(function* (
-    agentId: AgentId,
+  const resolveOwnedDelegation = Effect.fn("AgentService.resolveOwnedDelegation")(function* (
     delegationId: AgentDelegationId,
-    input: AskDelegationParentInput,
-    options?: { readonly signal?: AbortSignal },
+    agentId?: AgentId,
   ) {
-    const inputError = validateAskInput(input);
-    if (inputError !== null) {
-      return yield* new AgentServiceError({ reason: "invalid", detail: inputError });
-    }
-    const agent = yield* requireAgent(agentId);
-    const delegation = readDelegationById(db, agent.id, delegationId);
+    if (agentId) yield* requireAgent(agentId);
+    const delegation = agentId
+      ? readDelegationById(db, agentId, delegationId)
+      : readDelegationByDelegationId(db, delegationId);
     if (!delegation) {
       return yield* new AgentServiceError({
         reason: "not-found",
         detail: `Delegation "${delegationId}" was not found.`,
       });
     }
+    return delegation;
+  });
+
+  const askWithDelegation = Effect.fn("AgentService.askWithDelegation")(function* (
+    delegation: AgentDelegation,
+    input: AskDelegationParentInput,
+    options?: { readonly signal?: AbortSignal },
+  ) {
+    const inputError = validateAskInput(input);
+    if (inputError !== null)
+      return yield* new AgentServiceError({ reason: "invalid", detail: inputError });
     if (delegation.status !== "running") {
       return yield* new AgentServiceError({
         reason: "rejected",
         detail:
           delegation.status === "waiting_parent"
-            ? "Delegation already has a pending question awaiting the parent Agent."
+            ? "Delegation already has a pending question awaiting the parent."
             : `Delegation is "${delegation.status}" and cannot ask parent.`,
       });
     }
@@ -239,12 +271,11 @@ export const makeAgentBounceOps = (deps: {
         detail: `Bounce limit reached (${delegation.bounceCount}/${delegation.maxBounces}). Stop retrying and report your findings and blockers cleanly.`,
       });
     }
-    if (options?.signal?.aborted) {
+    if (options?.signal?.aborted)
       return yield* new AgentServiceError({
         reason: "rejected",
         detail: "Request aborted before submitting question.",
       });
-    }
 
     const now = new Date().toISOString();
     const trimmedAttempted = input.attempted?.trim();
@@ -252,13 +283,13 @@ export const makeAgentBounceOps = (deps: {
     const question: AgentDelegationQuestion = {
       id: AgentDelegationQuestionId.make(crypto.randomUUID()),
       delegationId: delegation.id,
-      agentId: agent.id,
+      ...(delegation.agentId !== undefined ? { agentId: delegation.agentId } : {}),
       childThreadId: delegation.childThreadId,
       parentThreadId: delegation.parentThreadId,
       kind: input.kind ?? "other",
       question: input.question.trim(),
-      ...(trimmedAttempted && trimmedAttempted.length > 0 ? { attempted: trimmedAttempted } : {}),
-      ...(trimmedContext && trimmedContext.length > 0 ? { context: trimmedContext } : {}),
+      ...(trimmedAttempted ? { attempted: trimmedAttempted } : {}),
+      ...(trimmedContext ? { context: trimmedContext } : {}),
       status: "pending",
       bounceNumber: delegation.bounceCount + 1,
       createdAt: now,
@@ -268,9 +299,8 @@ export const makeAgentBounceOps = (deps: {
       status: "waiting_parent",
       bounceCount: delegation.bounceCount + 1,
     };
-
     db.transaction(() => {
-      insertQuestion(db, question);
+      insertThreadQuestion(db, question);
       updateDelegationRow(db, waitingDelegation);
     })();
     eventBus.publishSync({ kind: "agent.delegation.upserted", delegation: waitingDelegation });
@@ -278,7 +308,6 @@ export const makeAgentBounceOps = (deps: {
 
     return yield* Effect.callback<AgentDelegationQuestion>((resume) => {
       let detached = false;
-
       const detachWaiter = (): boolean => {
         if (detached) return false;
         detached = true;
@@ -286,24 +315,19 @@ export const makeAgentBounceOps = (deps: {
         waiters.delete(question.id);
         return true;
       };
-
-      const finish = (settledQuestion: AgentDelegationQuestion) => {
-        if (!detachWaiter()) return;
-        resume(Effect.succeed(settledQuestion));
+      const finish = (settled: AgentDelegationQuestion) => {
+        if (detachWaiter()) resume(Effect.succeed(settled));
       };
-
       const onAbort = () => {
-        if (!detachWaiter()) return;
-        resume(Effect.succeed(readQuestionById(db, question.id) ?? question));
+        if (detachWaiter())
+          resume(Effect.succeed(readThreadQuestionById(db, question.id) ?? question));
       };
-
       waiters.set(question.id, { question, resolve: finish });
-      const queue = queues.get(agent.id) ?? [];
+      const queue = queues.get(delegation.parentThreadId) ?? [];
       queue.push(question.id);
-      queues.set(agent.id, queue);
-      startQuestionTimer(agent.id, question.id);
-      triggerPump(agent.id);
-
+      queues.set(delegation.parentThreadId, queue);
+      startQuestionTimer(delegation.parentThreadId, question.id);
+      triggerPump(delegation.parentThreadId);
       if (options?.signal) {
         if (options.signal.aborted) {
           onAbort();
@@ -311,41 +335,59 @@ export const makeAgentBounceOps = (deps: {
         }
         options.signal.addEventListener("abort", onAbort, { once: true });
       }
-
       return Effect.sync(() => {
         detachWaiter();
       });
     });
   });
 
+  const askParentByDelegation = Effect.fn("AgentService.askParentByDelegation")(function* (
+    delegationId: AgentDelegationId,
+    input: AskDelegationParentInput,
+    options?: { readonly signal?: AbortSignal },
+  ) {
+    return yield* askWithDelegation(yield* resolveOwnedDelegation(delegationId), input, options);
+  });
+
+  const askParent = Effect.fn("AgentService.askParent")(function* (
+    agentId: AgentId,
+    delegationId: AgentDelegationId,
+    input: AskDelegationParentInput,
+    options?: { readonly signal?: AbortSignal },
+  ) {
+    return yield* askWithDelegation(
+      yield* resolveOwnedDelegation(delegationId, agentId),
+      input,
+      options,
+    );
+  });
+
+  const listDelegationQuestionsById = Effect.fn("AgentService.listDelegationQuestionsById")(
+    function* (delegationId: AgentDelegationId) {
+      yield* resolveOwnedDelegation(delegationId);
+      return listQuestionsByDelegationId(db, delegationId);
+    },
+  );
+
   const listQuestions = Effect.fn("AgentService.listDelegationQuestions")(function* (
     agentId: AgentId,
     delegationId: AgentDelegationId,
   ) {
-    yield* requireAgent(agentId);
-    const delegation = readDelegationById(db, agentId, delegationId);
-    if (!delegation) {
-      return yield* new AgentServiceError({
-        reason: "not-found",
-        detail: `Delegation "${delegationId}" was not found.`,
-      });
-    }
-    return listQuestionsForDelegation(db, agentId, delegationId);
+    yield* resolveOwnedDelegation(delegationId, agentId);
+    return listQuestionsByDelegationId(db, delegationId);
   });
 
   const handlePrimaryOrParentTurnSettled = (turn: ThreadTurn): boolean => {
     const active = activeParentTurns.get(turn.id);
     if (active) {
       activeParentTurns.delete(turn.id);
-      settleParentTurnQuestion(active.agentId, active.questionId, turn);
-      triggerPump(active.agentId);
+      settleParentTurnQuestion(active.parentThreadId, active.questionId, turn, active.agentId);
+      triggerPump(active.parentThreadId);
       return true;
     }
-
-    const primaryAgent = readAgentByPrimaryThreadId(db, turn.threadId);
-    if (!primaryAgent) return false;
-    triggerPump(primaryAgent.id);
-    return true;
+    if (queues.has(turn.threadId) || readAgentByPrimaryThreadId(db, turn.threadId) !== null)
+      triggerPump(turn.threadId);
+    return false;
   };
 
   const cancelForDelegation = (
@@ -354,41 +396,29 @@ export const makeAgentBounceOps = (deps: {
     options?: { readonly restoreDelegation?: boolean },
   ) => {
     const pendingId =
-      readPendingQuestionForDelegation(db, delegationId)?.id ??
+      readPendingThreadQuestionForDelegation(db, delegationId)?.id ??
       Array.from(waiters.values()).find((w) => w.question.delegationId === delegationId)?.question
         .id;
-    if (!pendingId) return;
-    cancelPendingQuestion(pendingId, error, {
-      restoreDelegation: options?.restoreDelegation ?? false,
-    });
+    if (pendingId)
+      cancelPendingQuestion(pendingId, error, {
+        restoreDelegation: options?.restoreDelegation ?? false,
+      });
   };
 
   const cancelPendingForAgent = (agentId: AgentId, reason: string) => {
-    const questionIds = new Set<AgentDelegationQuestionId>(queues.get(agentId) ?? []);
-    for (const entry of activeParentTurns.values()) {
+    const questionIds = new Set<AgentDelegationQuestionId>();
+    for (const entry of activeParentTurns.values())
       if (entry.agentId === agentId) questionIds.add(entry.questionId);
-    }
-    for (const waiter of waiters.values()) {
+    for (const waiter of waiters.values())
       if (waiter.question.agentId === agentId) questionIds.add(waiter.question.id);
-    }
-    for (const qid of listPendingQuestionIdsForAgent(db, agentId)) {
-      questionIds.add(qid);
-    }
-    for (const questionId of questionIds) {
-      cancelPendingQuestion(questionId, reason, {
-        restoreDelegation: false,
-        fallbackAgentId: agentId,
-        pumpAfter: false,
-      });
-    }
-    queues.delete(agentId);
+    for (const qid of listPendingQuestionIdsByAgent(db, agentId)) questionIds.add(qid);
+    for (const questionId of questionIds)
+      cancelPendingQuestion(questionId, reason, { restoreDelegation: false, pumpAfter: false });
   };
 
   const dispose = () => {
     disposed = true;
-    for (const timer of questionTimers.values()) {
-      clearTimeout(timer);
-    }
+    for (const timer of questionTimers.values()) clearTimeout(timer);
     questionTimers.clear();
     const now = new Date().toISOString();
     for (const [questionId, waiter] of Array.from(waiters.entries())) {
@@ -396,7 +426,7 @@ export const makeAgentBounceOps = (deps: {
         settlePendingQuestion(
           questionId,
           { status: "canceled", error: "Server shutting down.", answeredAt: now },
-          { restoreDelegation: true, fallbackAgentId: waiter.question.agentId },
+          { restoreDelegation: true, fallbackParentThreadId: waiter.question.parentThreadId },
         );
       } catch {
         waiters.delete(questionId);
@@ -409,7 +439,9 @@ export const makeAgentBounceOps = (deps: {
 
   return {
     askParent,
+    askParentByDelegation,
     listQuestions,
+    listDelegationQuestionsById,
     handlePrimaryOrParentTurnSettled,
     cancelForDelegation,
     cancelPendingForAgent,

@@ -54,5 +54,6 @@ For fast iteration:
 - `bun run dev` — starts `@scuttle/server` and `@scuttle/web` together (single-origin on `:5173`).
 - `bun run desktop:prepare` — projects the Electrobun v2 Hutch devkit into `apps/desktop/.hutch/devkit`.
 - `bun run dev:desktop` — runs `@scuttle/server` + `@scuttle/web` and launches Electrobun. Inside WSL, it automatically stages and launches the **native Windows WebView2** desktop shell (`%LOCALAPPDATA%\Scuttle\desktop-dev`) pointing at WSL's Vite dev server (`SCUTTLE_DESKTOP_FORCE_LINUX=1` forces Linux/WSLg).
+- `bun run desktop:compile` — compiles the full standalone desktop app (`@scuttle/web` + embedded `@scuttle/server` + Electrobun shell) and installs/updates it in-place with a Start Menu shortcut. Inside WSL, it compiles and installs the native Windows app into `%LOCALAPPDATA%\Scuttle\DevApp` (pass `--launch` or run `bun run desktop:install` to launch immediately; `--installer` also emits Windows `Setup.exe` into `apps/desktop/artifacts`; `bun run desktop:uninstall` removes the install and shortcuts).
 - `bun run test` — runs Bun unit tests across packages and apps.
 - `bun run rust:check` — runs `cargo fmt --check`, `cargo clippy -- -D warnings`, and `cargo test`.

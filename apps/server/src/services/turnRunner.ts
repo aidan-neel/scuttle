@@ -1,32 +1,46 @@
 import type { Database } from "bun:sqlite";
 import type {
   ActivityItem,
+  ModelPerfRun,
   PendingApproval,
   ProviderConfig,
+  RecordMeasuredRunInput,
   Thread,
+  ThreadAttachment,
   ThreadStatus,
   ThreadTurn,
+  TurnStatus,
   TurnUsage,
 } from "@scuttle/contracts";
 import { ActivityId, ApprovalId, type ThreadId, type TurnId } from "@scuttle/shared/ids";
 import { getHarnessAdapter } from "../providers/registry.ts";
-import type { ApprovalDecision, HarnessEvent } from "../providers/types.ts";
+import type {
+  ApprovalDecision,
+  HarnessEvent,
+  ResolvedAttachment,
+  SteerHandler,
+} from "../providers/types.ts";
+import type * as CheckpointService from "./CheckpointService.ts";
 import type * as EventBus from "./EventBus.ts";
 import { commitTurnContextEffects } from "./agent/agentContext.ts";
-import { readAgentByPrimaryThreadId } from "./agent/agentStore.ts";
 import { LiveTurnBuffer } from "./liveTurnBuffer.ts";
-import { readThreadById, updateTurnOutcomeRow } from "./threadStore.ts";
-import { deriveThreadTitle, shouldRefreshThreadTitle } from "./threadTitle.ts";
+import { capturePostTurnCheckpoint, ensureBaselineCheckpoint } from "./threadCheckpointStore.ts";
+import { readThreadById, readTurnById, updateTurnOutcomeRow } from "./threadStore.ts";
+import { readTurnChildren } from "./turnQueries.ts";
 import {
-  readCompletedTurnCount,
-  readRecentCompletedTitleTurns,
-  readTurnById,
-  readTurnChildren,
-} from "./turnQueries.ts";
+  emitMeasuredTurnPerformance,
+  finishActivityRow,
+  insertActivityRow,
+  insertApprovalRow,
+  refreshThreadTitleOnSettle,
+  updateActivityRow,
+} from "./turnRunnerHelpers.ts";
 
 export interface ActiveRun {
   readonly turnId: TurnId;
   readonly controller: AbortController;
+  steerHandler?: SteerHandler;
+  readonly steerPrompts: string[];
 }
 
 export interface PendingApprovalResolver {
@@ -41,6 +55,9 @@ export interface TurnRunnerDeps {
   readonly activeRuns: Map<string, ActiveRun>;
   readonly pendingApprovals: Map<string, PendingApprovalResolver>;
   readonly liveTurnBuffer?: LiveTurnBuffer;
+  readonly checkpointService?: CheckpointService.CheckpointService["Service"];
+  readonly recordPerformance?: (input: RecordMeasuredRunInput) => Promise<ModelPerfRun | null>;
+  readonly onTurnSettled?: (threadId: ThreadId, status: TurnStatus) => void;
   readonly updateThreadStatus: (threadId: ThreadId, status: ThreadStatus) => Thread | null;
   readonly onProjectActivity: (thread: Thread, summary: string) => void;
   readonly isDisposed?: () => boolean;
@@ -48,6 +65,13 @@ export interface TurnRunnerDeps {
 
 export interface TurnLaunchOptions {
   readonly freshSessionPrompt?: string;
+  readonly attachments?: ReadonlyArray<ThreadAttachment>;
+  readonly resolvedAttachments?: ReadonlyArray<ResolvedAttachment>;
+  readonly mcpServer?: {
+    readonly url: string;
+    readonly authorizationHeader: string;
+    readonly threadId: string;
+  };
   readonly agentId?: string;
   readonly pendingContextHash?: string;
   readonly pendingNotifiedDelegationIds?: ReadonlyArray<string>;
@@ -76,7 +100,8 @@ export const launchTurnExecution = (
   const liveTurnBuffer = deps.liveTurnBuffer ?? new LiveTurnBuffer(db);
   const turnEpoch = turn.sessionEpoch ?? thread.sessionEpoch ?? 0;
   const controller = new AbortController();
-  activeRuns.set(thread.id, { turnId: turn.id, controller });
+  const activeRun: ActiveRun = { turnId: turn.id, controller, steerPrompts: [] };
+  activeRuns.set(thread.id, activeRun);
 
   const startedMs = Date.parse(turn.startedAt);
   let assistantText = "";
@@ -86,31 +111,7 @@ export const launchTurnExecution = (
   let thinkingActivityKey: string | null = null;
   let currentPhase: "thinking" | "working" = "thinking";
   let latestUsage: TurnUsage | undefined;
-
-  const insertActivityRow = (seq: number, item: ActivityItem) => {
-    db.query(
-      `INSERT INTO activities
-         (id, turn_id, thread_id, seq, kind, label, active_label, detail, status, started_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      item.id,
-      item.turnId,
-      item.threadId,
-      seq,
-      item.kind,
-      item.label,
-      item.activeLabel,
-      item.detail ?? null,
-      item.status,
-      item.startedAt,
-    );
-  };
-
-  const finishActivityRow = (item: ActivityItem) => {
-    db.query(
-      "UPDATE activities SET status = ?, completed_at = ?, duration_ms = ? WHERE id = ?",
-    ).run(item.status, item.completedAt ?? null, item.durationMs ?? 0, item.id);
-  };
+  let firstTokenMs: number | undefined;
 
   const closeThinkingIfOpen = () => {
     if (!thinkingActivityKey) return;
@@ -118,22 +119,20 @@ export const launchTurnExecution = (
     thinkingActivityKey = null;
     if (!item || item.status !== "running") return;
     const now = new Date().toISOString();
-    const durationMs = Math.max(0, Date.parse(now) - Date.parse(item.startedAt));
     const updated: ActivityItem = {
       ...item,
       status: "completed",
       completedAt: now,
-      durationMs,
+      durationMs: Math.max(0, Date.parse(now) - Date.parse(item.startedAt)),
     };
     activitiesByKey.set(item.id, updated);
-    finishActivityRow(updated);
+    finishActivityRow(db, updated);
     eventBus.publishSync({ kind: "turn.activity", activity: updated });
   };
 
   const ensureThinkingActivity = () => {
     if (thinkingActivityKey) return;
     const id = ActivityId.make(crypto.randomUUID());
-    const now = new Date().toISOString();
     activitySeq += 1;
     const item: ActivityItem = {
       id,
@@ -143,11 +142,11 @@ export const launchTurnExecution = (
       label: "Thought",
       activeLabel: "Thinking",
       status: "running",
-      startedAt: now,
+      startedAt: new Date().toISOString(),
     };
     thinkingActivityKey = id;
     activitiesByKey.set(id, item);
-    insertActivityRow(activitySeq, item);
+    insertActivityRow(db, activitySeq, item);
     eventBus.publishSync({ kind: "turn.activity", activity: item });
   };
 
@@ -167,6 +166,7 @@ export const launchTurnExecution = (
         return;
       }
       case "thinking.delta": {
+        if (firstTokenMs === undefined) firstTokenMs = Math.max(0, Date.now() - startedMs);
         ensureThinkingActivity();
         const offset = thinkingText.length;
         thinkingText += event.text;
@@ -182,6 +182,7 @@ export const launchTurnExecution = (
         return;
       }
       case "assistant.delta": {
+        if (firstTokenMs === undefined) firstTokenMs = Math.max(0, Date.now() - startedMs);
         closeThinkingIfOpen();
         const offset = assistantText.length;
         assistantText += event.text;
@@ -220,7 +221,6 @@ export const launchTurnExecution = (
         }
         if (activitiesByKey.has(event.key)) return;
         const id = ActivityId.make(crypto.randomUUID());
-        const now = new Date().toISOString();
         activitySeq += 1;
         const item: ActivityItem = {
           id,
@@ -231,10 +231,10 @@ export const launchTurnExecution = (
           activeLabel: event.activeLabel,
           ...(event.detail ? { detail: event.detail } : {}),
           status: "running",
-          startedAt: now,
+          startedAt: new Date().toISOString(),
         };
         activitiesByKey.set(event.key, item);
-        insertActivityRow(activitySeq, item);
+        insertActivityRow(db, activitySeq, item);
         eventBus.publishSync({ kind: "turn.activity", activity: item });
         return;
       }
@@ -260,25 +260,12 @@ export const launchTurnExecution = (
           ...(durationMs !== undefined ? { durationMs } : {}),
         };
         activitiesByKey.set(event.key, updated);
-        db.query(
-          `UPDATE activities
-           SET status = ?, label = ?, active_label = ?, detail = ?, completed_at = ?, duration_ms = ?
-           WHERE id = ?`,
-        ).run(
-          updated.status,
-          updated.label,
-          updated.activeLabel,
-          updated.detail ?? null,
-          updated.completedAt ?? null,
-          updated.durationMs ?? null,
-          updated.id,
-        );
+        updateActivityRow(db, updated);
         eventBus.publishSync({ kind: "turn.activity", activity: updated });
         return;
       }
       case "approval.requested": {
         const approvalId = ApprovalId.make(crypto.randomUUID());
-        const now = new Date().toISOString();
         const approval: PendingApproval = {
           id: approvalId,
           threadId: thread.id,
@@ -288,25 +275,11 @@ export const launchTurnExecution = (
           ...(event.description ? { description: event.description } : {}),
           ...(event.command ? { command: event.command } : {}),
           options: [...event.options],
+          ...(event.questions ? { questions: [...event.questions] } : {}),
           status: "pending",
-          createdAt: now,
+          createdAt: new Date().toISOString(),
         };
-        db.query(
-          `INSERT INTO approvals
-             (id, thread_id, turn_id, kind, title, description, command, options_json, status, selected_option_id, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
-        ).run(
-          approvalId,
-          thread.id,
-          turn.id,
-          approval.kind,
-          approval.title,
-          approval.description ?? null,
-          approval.command ?? null,
-          JSON.stringify(approval.options),
-          approval.status,
-          now,
-        );
+        insertApprovalRow(db, approval);
         pendingApprovals.set(approvalId, {
           threadId: thread.id,
           turnId: turn.id,
@@ -319,12 +292,11 @@ export const launchTurnExecution = (
       case "usage": {
         latestUsage = event.usage;
         const encoded = JSON.stringify(event.usage);
-        const now = new Date().toISOString();
         liveTurnBuffer.flush(turn.id);
         db.query("UPDATE turns SET usage_json = ? WHERE id = ?").run(encoded, turn.id);
         db.query(
           "UPDATE threads SET last_usage_json = ?, updated_at = ? WHERE id = ? AND session_epoch = ?",
-        ).run(encoded, now, thread.id, turnEpoch);
+        ).run(encoded, new Date().toISOString(), thread.id, turnEpoch);
         const refreshed = readThreadById(db, thread.id);
         if (refreshed) {
           eventBus.publishSync({ kind: "thread.upserted", thread: refreshed });
@@ -346,48 +318,118 @@ export const launchTurnExecution = (
         durationMs: Math.max(0, Date.parse(completedAt) - Date.parse(item.startedAt)),
       };
       activitiesByKey.set(key, doneItem);
-      finishActivityRow(doneItem);
+      finishActivityRow(db, doneItem);
       eventBus.publishSync({ kind: "turn.activity", activity: doneItem });
     }
   };
 
-  const refreshThreadTitle = () => {
-    try {
-      if (readAgentByPrimaryThreadId(db, thread.id) !== null) return;
-      const completedCount = readCompletedTurnCount(db, thread.id);
-      if (!shouldRefreshThreadTitle(completedCount)) return;
-      const current = readThreadById(db, thread.id);
-      if (!current) return;
-      const recentTurns = readRecentCompletedTitleTurns(db, thread.id, 3);
-      const nextTitle = deriveThreadTitle(recentTurns);
-      if (nextTitle.length === 0 || nextTitle === current.title) return;
-      db.query("UPDATE threads SET title = ?, updated_at = ? WHERE id = ?").run(
-        nextTitle,
-        new Date().toISOString(),
-        thread.id,
-      );
-      const refreshed = readThreadById(db, thread.id);
-      if (refreshed) eventBus.publishSync({ kind: "thread.upserted", thread: refreshed });
-    } catch {
-      return;
+  const releaseRun = () => {
+    if (activeRuns.get(thread.id)?.turnId === turn.id) activeRuns.delete(thread.id);
+    for (const [approvalId, entry] of pendingApprovals.entries()) {
+      if (entry.turnId === turn.id) pendingApprovals.delete(approvalId);
     }
   };
 
-  const releaseRun = () => {
-    if (activeRuns.get(thread.id)?.turnId === turn.id) {
-      activeRuns.delete(thread.id);
-    }
-    for (const [approvalId, entry] of pendingApprovals.entries()) {
-      if (entry.turnId === turn.id) {
-        pendingApprovals.delete(approvalId);
+  const settleTurn = async (outcome: {
+    readonly status: TurnStatus;
+    readonly finalMessage: string;
+    readonly costUsd?: number;
+    readonly usage?: TurnUsage;
+    readonly firstTokenMs?: number;
+    readonly errorMessage?: string;
+    readonly commitEffects: boolean;
+  }) => {
+    if (isClosed()) return;
+    closeThinkingIfOpen();
+    const completedAt = new Date().toISOString();
+    const durationMs = Math.max(0, Date.parse(completedAt) - startedMs);
+    closeRunningActivities(completedAt, outcome.status === "failed" ? "failed" : "completed");
+    const { activities, approvals } = readTurnChildren(db, turn.id);
+    const settledTurn: ThreadTurn = {
+      ...turn,
+      assistantMessage: outcome.finalMessage,
+      thinkingText,
+      status: outcome.status,
+      completedAt,
+      durationMs,
+      ...(outcome.costUsd !== undefined && outcome.costUsd > 0 ? { costUsd: outcome.costUsd } : {}),
+      ...(outcome.usage ? { usage: outcome.usage } : {}),
+      ...(outcome.errorMessage !== undefined ? { error: outcome.errorMessage } : {}),
+      activities,
+      approvals,
+    };
+    updateTurnOutcomeRow(db, thread.id, turnEpoch, settledTurn);
+    liveTurnBuffer.delete(turn.id);
+    if (outcome.commitEffects) {
+      commitTurnContextEffects({
+        db,
+        eventBus,
+        threadId: thread.id,
+        sessionEpoch: turnEpoch,
+        completedAt,
+        ...(launchOptions?.agentId !== undefined ? { agentId: launchOptions.agentId } : {}),
+        ...(launchOptions?.pendingContextHash !== undefined
+          ? { pendingContextHash: launchOptions.pendingContextHash }
+          : {}),
+        ...(launchOptions?.pendingNotifiedDelegationIds !== undefined
+          ? { pendingNotifiedDelegationIds: launchOptions.pendingNotifiedDelegationIds }
+          : {}),
+        ...(launchOptions?.pendingAccessedMemoryIds !== undefined
+          ? { pendingAccessedMemoryIds: launchOptions.pendingAccessedMemoryIds }
+          : {}),
+      });
+      refreshThreadTitleOnSettle(db, eventBus, thread.id);
+      if (deps.checkpointService) {
+        await capturePostTurnCheckpoint({
+          db,
+          eventBus,
+          checkpointService: deps.checkpointService,
+          thread,
+          turnId: turn.id,
+        });
       }
+    }
+    const ttft = outcome.firstTokenMs ?? firstTokenMs;
+    await emitMeasuredTurnPerformance({
+      ...(deps.recordPerformance ? { recordPerformance: deps.recordPerformance } : {}),
+      eventBus,
+      isClosed,
+      thread,
+      turnId: turn.id,
+      durationMs,
+      ...(outcome.costUsd !== undefined ? { costUsd: outcome.costUsd } : {}),
+      ...(outcome.usage !== undefined ? { usage: outcome.usage } : {}),
+      ...(ttft !== undefined ? { firstTokenMs: ttft } : {}),
+    });
+    releaseRun();
+    updateThreadStatus(
+      thread.id,
+      outcome.status === "failed"
+        ? { kind: "error", message: outcome.errorMessage ?? "Turn failed" }
+        : { kind: "idle" },
+    );
+    eventBus.publishSync({ kind: "turn.upserted", turn: settledTurn });
+    if (outcome.status !== "failed") {
+      if (outcome.status === "completed") {
+        onProjectActivity(thread, outcome.finalMessage.trim() || turn.userMessage);
+      }
+      deps.onTurnSettled?.(thread.id, outcome.status);
     }
   };
 
   const adapter = getHarnessAdapter(thread.modelSelection.providerKind);
   void Promise.resolve()
-    .then(() =>
-      adapter.runTurn({
+    .then(async () => {
+      if (deps.checkpointService && !controller.signal.aborted && !isClosed()) {
+        await ensureBaselineCheckpoint({
+          db,
+          eventBus,
+          checkpointService: deps.checkpointService,
+          thread,
+        });
+      }
+      if (controller.signal.aborted) return { interrupted: true };
+      return adapter.runTurn({
         config: providerConfig,
         cwd: thread.cwd,
         prompt: fullPrompt,
@@ -399,88 +441,43 @@ export const launchTurnExecution = (
         runtimeMode: thread.runtimeMode,
         interactionMode: thread.interactionMode,
         ...(thread.providerSessionId ? { providerSessionId: thread.providerSessionId } : {}),
+        ...(launchOptions?.attachments ? { attachments: launchOptions.attachments } : {}),
+        ...(launchOptions?.resolvedAttachments
+          ? { resolvedAttachments: launchOptions.resolvedAttachments }
+          : {}),
+        ...(launchOptions?.mcpServer ? { mcpServer: launchOptions.mcpServer } : {}),
         ...(extraEnv ? { extraEnv } : {}),
+        registerSteer: (handler) => {
+          if (activeRuns.get(thread.id)?.turnId === turn.id) activeRun.steerHandler = handler;
+        },
         signal: controller.signal,
         emit: handleEvent,
-      }),
-    )
+      });
+    })
     .then((result) => {
-      if (isClosed()) return;
-      closeThinkingIfOpen();
-      const completedAt = new Date().toISOString();
-      const durationMs = Math.max(0, Date.parse(completedAt) - startedMs);
-      closeRunningActivities(completedAt, "completed");
-      const finalMessage =
-        assistantText.length > 0 ? assistantText : (result.finalText ?? assistantText);
-      const { activities, approvals } = readTurnChildren(db, turn.id);
-      const finalUsage = result.usage ?? latestUsage;
-      const finalTurn: ThreadTurn = {
-        ...turn,
-        assistantMessage: finalMessage,
-        thinkingText,
-        status: result.interrupted ? "interrupted" : "completed",
-        completedAt,
-        durationMs,
-        ...(result.costUsd !== undefined && result.costUsd > 0 ? { costUsd: result.costUsd } : {}),
-        ...(finalUsage ? { usage: finalUsage } : {}),
-        activities,
-        approvals,
-      };
-      updateTurnOutcomeRow(db, thread.id, turnEpoch, finalTurn);
-      liveTurnBuffer.delete(turn.id);
-      if (!result.interrupted) {
-        commitTurnContextEffects({
-          db,
-          eventBus,
-          threadId: thread.id,
-          sessionEpoch: turnEpoch,
-          completedAt,
-          ...(launchOptions?.agentId !== undefined ? { agentId: launchOptions.agentId } : {}),
-          ...(launchOptions?.pendingContextHash !== undefined
-            ? { pendingContextHash: launchOptions.pendingContextHash }
-            : {}),
-          ...(launchOptions?.pendingNotifiedDelegationIds !== undefined
-            ? { pendingNotifiedDelegationIds: launchOptions.pendingNotifiedDelegationIds }
-            : {}),
-          ...(launchOptions?.pendingAccessedMemoryIds !== undefined
-            ? { pendingAccessedMemoryIds: launchOptions.pendingAccessedMemoryIds }
-            : {}),
-        });
-        refreshThreadTitle();
-      }
-      releaseRun();
-      updateThreadStatus(thread.id, { kind: "idle" });
-      eventBus.publishSync({ kind: "turn.upserted", turn: finalTurn });
-      onProjectActivity(thread, finalMessage.trim() || turn.userMessage);
+      const isInterrupted = Boolean(result.interrupted || controller.signal.aborted);
+      const settledUsage = result.usage ?? latestUsage;
+      return settleTurn({
+        status: isInterrupted ? "interrupted" : "completed",
+        finalMessage:
+          assistantText.length > 0 ? assistantText : (result.finalText ?? assistantText),
+        ...(result.costUsd !== undefined ? { costUsd: result.costUsd } : {}),
+        ...(settledUsage !== undefined ? { usage: settledUsage } : {}),
+        ...(result.firstTokenMs !== undefined ? { firstTokenMs: result.firstTokenMs } : {}),
+        commitEffects: !isInterrupted,
+      });
     })
     .catch((error: unknown) => {
-      if (isClosed()) return;
-      closeThinkingIfOpen();
-      const completedAt = new Date().toISOString();
-      const durationMs = Math.max(0, Date.parse(completedAt) - startedMs);
-      closeRunningActivities(completedAt, controller.signal.aborted ? "completed" : "failed");
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      const { activities, approvals } = readTurnChildren(db, turn.id);
-      const failedTurn: ThreadTurn = {
-        ...turn,
-        assistantMessage: assistantText,
-        thinkingText,
-        status: controller.signal.aborted ? "interrupted" : "failed",
-        completedAt,
-        durationMs,
+      const isAborted = controller.signal.aborted;
+      return settleTurn({
+        status: isAborted ? "interrupted" : "failed",
+        finalMessage: assistantText,
         ...(latestUsage ? { usage: latestUsage } : {}),
-        ...(controller.signal.aborted ? {} : { error: errorMessage }),
-        activities,
-        approvals,
-      };
-      releaseRun();
-      updateTurnOutcomeRow(db, thread.id, turnEpoch, failedTurn);
-      liveTurnBuffer.delete(turn.id);
-      updateThreadStatus(
-        thread.id,
-        controller.signal.aborted ? { kind: "idle" } : { kind: "error", message: errorMessage },
-      );
-      eventBus.publishSync({ kind: "turn.upserted", turn: failedTurn });
+        ...(isAborted
+          ? {}
+          : { errorMessage: error instanceof Error ? error.message : String(error) }),
+        commitEffects: false,
+      });
     })
     .finally(() => {
       releaseRun();

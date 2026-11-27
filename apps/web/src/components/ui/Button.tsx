@@ -3,7 +3,7 @@ import type { ComponentProps } from "react";
 import { cn } from "@/lib/utils";
 
 export type ButtonVariant = "primary" | "secondary" | "outline" | "ghost" | "quiet" | "destructive";
-export type ButtonSize = "sm" | "md" | "lg" | "icon" | "icon-sm";
+export type ButtonSize = "sm" | "md" | "dialog" | "lg" | "icon" | "icon-sm";
 
 const BASE = [
   "relative inline-flex shrink-0 cursor-default items-center justify-center whitespace-nowrap select-none outline-none",
@@ -41,11 +41,13 @@ const VARIANTS: Record<ButtonVariant, string> = {
 };
 
 const SIZES: Record<ButtonSize, string> = {
-  sm: "h-6 gap-1 rounded-chip px-[7px] text-label [&_svg:not([class*=size-])]:size-[13px]",
-  md: "h-7 gap-1.5 rounded-control px-[9px] [&_svg:not([class*=size-])]:size-3.5",
-  lg: "h-8 gap-2 rounded-control px-[11px] text-body [&_svg:not([class*=size-])]:size-4",
+  sm: "h-6 gap-1 rounded-chip px-[0.4375rem] text-label [&_svg:not([class*=size-])]:size-[0.8125rem]",
+  md: "h-7 gap-1.5 rounded-control px-[0.5625rem] [&_svg:not([class*=size-])]:size-3.5",
+  dialog:
+    "h-[1.875rem] gap-1.5 rounded-control px-3 text-[0.84375rem] [&_svg:not([class*=size-])]:size-3.5",
+  lg: "h-8 gap-2 rounded-control px-[0.6875rem] text-body [&_svg:not([class*=size-])]:size-4",
   icon: "size-7 rounded-control [&_svg:not([class*=size-])]:size-4",
-  "icon-sm": "size-[22px] rounded-chip [&_svg:not([class*=size-])]:size-3.5",
+  "icon-sm": "size-[1.375rem] rounded-chip [&_svg:not([class*=size-])]:size-3.5",
 };
 
 export const buttonClass = (

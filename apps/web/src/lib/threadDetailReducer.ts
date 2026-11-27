@@ -1,4 +1,12 @@
-import type { ThreadDetail, ThreadTurn } from "@scuttle/contracts";
+import type {
+  QueuedTurn,
+  RewindThreadResult,
+  ServerPushEvent,
+  ThreadCheckpoint,
+  ThreadDetail,
+  ThreadTurn,
+  ThreadVisualization,
+} from "@scuttle/contracts";
 
 const THREAD_DETAILS_CACHE_LIMIT = 12;
 
@@ -186,4 +194,151 @@ export const applyPendingTurnDeltas = (
   }
   pendingByThread.clear();
   return nextThreadDetails;
+};
+
+const byOrdinal = (a: ThreadCheckpoint, b: ThreadCheckpoint) => a.ordinal - b.ordinal;
+
+export const activeQueuedTurns = (queued: ReadonlyArray<QueuedTurn>): ReadonlyArray<QueuedTurn> =>
+  queued.filter((item) => item.status === "queued").toSorted((a, b) => a.position - b.position);
+
+const upsertCheckpoint = (
+  checkpoints: ReadonlyArray<ThreadCheckpoint>,
+  next: ThreadCheckpoint,
+): ReadonlyArray<ThreadCheckpoint> =>
+  [...checkpoints.filter((cp) => cp.ordinal !== next.ordinal && cp.id !== next.id), next].toSorted(
+    byOrdinal,
+  );
+
+const upsertVisualization = (
+  visualizations: ReadonlyArray<ThreadVisualization>,
+  next: ThreadVisualization,
+): ReadonlyArray<ThreadVisualization> => {
+  const index = visualizations.findIndex((viz) => viz.id === next.id);
+  if (index === -1) return [...visualizations, next];
+  const copy = [...visualizations];
+  copy[index] = next;
+  return copy;
+};
+
+export const rewindCutoffIndex = (
+  turns: ReadonlyArray<ThreadTurn>,
+  checkpoints: ReadonlyArray<ThreadCheckpoint>,
+  ordinal: number,
+): number => {
+  if (ordinal === 0) return 0;
+  const checkpoint = checkpoints.find((cp) => cp.ordinal === ordinal);
+  const byTurn = checkpoint?.turnId ? turns.findIndex((turn) => turn.id === checkpoint.turnId) : -1;
+  if (byTurn !== -1) return byTurn + 1;
+  return Math.min(ordinal, turns.length);
+};
+
+const keepLinkedVisualizations = (
+  visualizations: ReadonlyArray<ThreadVisualization> | undefined,
+  turns: ReadonlyArray<ThreadTurn>,
+): ReadonlyArray<ThreadVisualization> | undefined => {
+  if (visualizations === undefined) return undefined;
+  const kept = new Set(turns.map((turn) => turn.id));
+  return visualizations.filter((viz) => viz.turnId === undefined || kept.has(viz.turnId));
+};
+
+export const applyRewindResult = (
+  detail: ThreadDetail,
+  result: RewindThreadResult,
+): ThreadDetail => {
+  const visualizations = keepLinkedVisualizations(detail.visualizations, result.turns);
+  return {
+    ...detail,
+    thread: result.thread,
+    turns: result.turns,
+    checkpoints: result.checkpoints,
+    ...(visualizations !== undefined ? { visualizations } : {}),
+  };
+};
+
+export interface RewindPlan {
+  readonly turn: ThreadTurn;
+  readonly target: ThreadCheckpoint;
+  readonly turnsRemoved: number;
+  readonly insertions: number;
+  readonly deletions: number;
+  readonly changedCheckpoints: number;
+}
+
+export const rewindTargetFor = (
+  turns: ReadonlyArray<ThreadTurn>,
+  checkpoints: ReadonlyArray<ThreadCheckpoint>,
+  index: number,
+): ThreadCheckpoint | undefined => {
+  const previous = index > 0 ? turns[index - 1] : undefined;
+  return previous === undefined
+    ? checkpoints.find((cp) => cp.ordinal === 0)
+    : checkpoints.find((cp) => cp.turnId === previous.id);
+};
+
+export const planRewind = (
+  turns: ReadonlyArray<ThreadTurn>,
+  checkpoints: ReadonlyArray<ThreadCheckpoint>,
+  turnId: string,
+): RewindPlan | null => {
+  const index = turns.findIndex((turn) => turn.id === turnId);
+  const turn = turns[index];
+  const target = turn === undefined ? undefined : rewindTargetFor(turns, checkpoints, index);
+  if (turn === undefined || target === undefined) return null;
+  const after = checkpoints.filter((cp) => cp.ordinal > target.ordinal);
+  return {
+    turn,
+    target,
+    turnsRemoved: turns.length - index,
+    insertions: after.reduce((sum, cp) => sum + cp.insertions, 0),
+    deletions: after.reduce((sum, cp) => sum + cp.deletions, 0),
+    changedCheckpoints: after.filter((cp) => cp.filesChanged > 0).length,
+  };
+};
+
+export const threadIdOfExtrasEvent = (event: ServerPushEvent): string | null => {
+  switch (event.kind) {
+    case "checkpoint.created":
+      return event.checkpoint.threadId;
+    case "viz.upserted":
+      return event.visualization.threadId;
+    case "queue.updated":
+    case "thread.rewound":
+      return event.threadId;
+    default:
+      return null;
+  }
+};
+
+export const applyThreadExtrasEvent = (
+  detail: ThreadDetail,
+  event: ServerPushEvent,
+): ThreadDetail => {
+  switch (event.kind) {
+    case "checkpoint.created":
+      return {
+        ...detail,
+        checkpoints: upsertCheckpoint(detail.checkpoints ?? [], event.checkpoint),
+      };
+    case "queue.updated":
+      return { ...detail, queuedTurns: activeQueuedTurns(event.queuedTurns) };
+    case "viz.upserted":
+      return {
+        ...detail,
+        visualizations: upsertVisualization(detail.visualizations ?? [], event.visualization),
+      };
+    case "thread.rewound": {
+      const checkpoints = detail.checkpoints ?? [];
+      const cutoff = rewindCutoffIndex(detail.turns, checkpoints, event.checkpointOrdinal);
+      const turns = detail.turns.slice(0, cutoff);
+      const visualizations = keepLinkedVisualizations(detail.visualizations, turns);
+      return {
+        ...detail,
+        turns,
+        checkpoints: checkpoints.filter((cp) => cp.ordinal <= event.checkpointOrdinal),
+        ...(visualizations !== undefined ? { visualizations } : {}),
+      };
+    }
+    default:
+      return detail;
+  }
 };

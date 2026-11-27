@@ -1,74 +1,19 @@
 import { Add01Icon, Delete02Icon } from "@hugeicons/core-free-icons";
 import type { Project } from "@scuttle/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { AddProjectDialog } from "@/components/shell/AddProjectDialog.tsx";
-import { BrandLogo } from "@/components/ui/BrandLogo.tsx";
 import { Button } from "@/components/ui/Button.tsx";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
-import { useDisabledModels } from "@/lib/disabledModels.ts";
 import { formatRelativeAge } from "@/lib/format.ts";
-import { modelFavoriteKey } from "@/lib/modelFavorites.ts";
-import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace.tsx";
-import { ModelList } from "./ModelList.tsx";
 import { SettingsGroup } from "./primitives.tsx";
 
-export function ModelsSection() {
-  const { providers } = useWorkspace();
-  const { isDisabled } = useDisabledModels();
-  const withModels = providers.filter((p) => p.models.length > 0);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const active = withModels.find((p) => p.id === selectedId) ?? withModels[0] ?? null;
-
-  if (active === null) {
-    return (
-      <div className="rounded-card bg-panel px-4 py-5 text-label text-fg-muted shadow-raised">
-        No provider has reported models yet. Enable a harness under Providers.
-      </div>
-    );
-  }
-
-  return (
-    <section className="space-y-3">
-      <div role="group" aria-label="Provider" className="flex flex-wrap gap-1">
-        {withModels.map((provider) => {
-          const selected = provider.id === active.id;
-          const enabledCount = provider.models.filter(
-            (model) => !isDisabled(modelFavoriteKey(provider.id, model.slug)),
-          ).length;
-          return (
-            <button
-              key={provider.id}
-              type="button"
-              aria-pressed={selected}
-              onClick={() => setSelectedId(provider.id)}
-              className={cn(
-                "inline-flex h-8 shrink-0 items-center gap-2 rounded-control px-3 text-label outline-none transition-colors duration-(--dur-hover) ease-hover focus-visible:shadow-focus",
-                selected
-                  ? "bg-panel text-fg shadow-raised"
-                  : "text-fg-muted hover:bg-(--wash) hover:text-fg-secondary",
-              )}
-            >
-              <BrandLogo brand={provider.kind} className="size-3.5" />
-              {provider.name}
-              <span className="font-mono text-meta text-fg-faint">
-                {enabledCount === provider.models.length
-                  ? provider.models.length
-                  : `${enabledCount}/${provider.models.length}`}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-      <ModelList key={active.id} provider={active} />
-    </section>
-  );
-}
-
 export function ProjectsSection() {
-  const { projects, deleteProject } = useWorkspace();
+  const navigate = useNavigate();
+  const { projects, modelTiers, deleteProject } = useWorkspace();
   const [addOpen, setAddOpen] = useState(false);
   const [removing, setRemoving] = useState<Project | null>(null);
   return (
@@ -91,7 +36,7 @@ export function ProjectsSection() {
                 <div className="flex items-center gap-2">
                   <span className="truncate text-body font-medium text-fg">{project.name}</span>
                   {project.isGitRepo && (
-                    <span className="shrink-0 rounded-chip bg-white/6 px-1.5 py-0.5 font-mono text-meta text-fg-muted">
+                    <span className="shrink-0 rounded-chip bg-fg/6 px-1.5 py-0.5 font-mono text-meta text-fg-muted">
                       {project.defaultBranch}
                     </span>
                   )}
@@ -101,6 +46,22 @@ export function ProjectsSection() {
                   {age.length > 0 && ` · active ${age === "now" ? "just now" : `${age} ago`}`}
                 </div>
               </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  void navigate({
+                    to: "/settings/$section",
+                    params: { section: "stack" },
+                    search: { scope: "project", projectId: project.id },
+                  })
+                }
+                className="text-meta text-fg-muted"
+              >
+                {Object.keys(modelTiers.projects[project.id] ?? {}).length > 0
+                  ? `Stack (${Object.keys(modelTiers.projects[project.id] ?? {}).length})`
+                  : "Model stack"}
+              </Button>
               <Button
                 variant="ghost"
                 size="icon-sm"

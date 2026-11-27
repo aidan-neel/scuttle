@@ -5,8 +5,9 @@ import { Identicon } from "@/components/ui/Identicon.tsx";
 import { isAgentThread } from "@/lib/agentState.ts";
 import { formatRelativeAge } from "@/lib/format.ts";
 import { useWorkspaceActions, useWorkspaceSelector } from "@/lib/workspace.tsx";
+import { FileBadgeMark } from "./ComposerEmbedNode.tsx";
 import type { PaletteContent, PaletteItem } from "./ComposerPalette.tsx";
-import { formatMention } from "./composerTriggers.ts";
+import { type ComposerEmbed, createContextEmbed } from "./composerEmbeds.ts";
 
 export type MentionView =
   | { readonly kind: "root" }
@@ -20,7 +21,7 @@ interface MentionContentOptions {
   readonly filesRoot: string | undefined;
   readonly enabled: boolean;
   readonly drill: (view: MentionView) => void;
-  readonly insert: (token: string) => void;
+  readonly embed: (embed: ComposerEmbed) => void;
 }
 
 type FolderListing =
@@ -46,7 +47,7 @@ export function useMentionContent({
   filesRoot,
   enabled,
   drill,
-  insert,
+  embed,
 }: MentionContentOptions): PaletteContent {
   const agents = useWorkspaceSelector((s) => s.agents);
   const threads = useWorkspaceSelector((s) => s.threads);
@@ -58,13 +59,13 @@ export function useMentionContent({
     if (filesDir === null) return;
     let active = true;
     setListing({ kind: "loading", dir: filesDir });
-    listDirectory(filesDir)
+    listDirectory(filesDir, { includeFiles: true })
       .then((result) => {
         if (active) setListing({ kind: "loaded", dir: filesDir, entries: result.entries });
       })
       .catch((error: unknown) => {
         if (!active) return;
-        const message = error instanceof Error ? error.message : "Could not list folders.";
+        const message = error instanceof Error ? error.message : "Could not list files.";
         setListing({ kind: "failed", dir: filesDir, message });
       });
     return () => {
@@ -78,8 +79,18 @@ export function useMentionContent({
     id: `agent:${agent.id}`,
     label: agent.name,
     description: agent.purpose || agent.projectName,
-    leading: <Identicon name={agent.name} size="sm" className="shrink-0" />,
-    onSelect: () => insert(formatMention(agent.name)),
+    leading: (
+      <Identicon name={agent.name} style={agent.identiconStyle} size="sm" className="shrink-0" />
+    ),
+    onSelect: () =>
+      embed(
+        createContextEmbed({
+          target: "agent",
+          ref: agent.id,
+          label: agent.name,
+          subtitle: agent.purpose || agent.projectName,
+        }),
+      ),
   });
 
   const threadItem = (thread: Thread): PaletteItem => ({
@@ -87,7 +98,15 @@ export function useMentionContent({
     label: thread.title,
     description: `${thread.projectName} · ${formatRelativeAge(thread.updatedAt)}`,
     icon: BubbleChatIcon,
-    onSelect: () => insert(formatMention(thread.title)),
+    onSelect: () =>
+      embed(
+        createContextEmbed({
+          target: "thread",
+          ref: thread.id,
+          label: thread.title,
+          subtitle: thread.projectName,
+        }),
+      ),
   });
 
   const categories: ReadonlyArray<PaletteItem> = [
@@ -113,7 +132,7 @@ export function useMentionContent({
           {
             id: "category:files",
             label: "Files",
-            description: "Folders in this workspace",
+            description: "Files and folders in this workspace",
             icon: Folder01Icon,
             drill: true,
             onSelect: () => drill({ kind: "files", dir: filesRoot }),
@@ -122,6 +141,29 @@ export function useMentionContent({
   ];
 
   const back = () => drill({ kind: "root" });
+
+  const folderItem = (entry: DirectoryEntry): PaletteItem => ({
+    id: `folder:${entry.path}`,
+    label: entry.name,
+    icon: Folder01Icon,
+    drill: true,
+    onSelect: () => drill({ kind: "files", dir: entry.path }),
+  });
+
+  const fileItem = (root: string, entry: DirectoryEntry): PaletteItem => {
+    const path = relativePath(root, entry.path);
+    return {
+      id: `file:${entry.path}`,
+      label: entry.name,
+      leading: (
+        <span className="flex w-3.5 shrink-0 justify-center">
+          <FileBadgeMark name={entry.name} className="shrink-0" />
+        </span>
+      ),
+      onSelect: () =>
+        embed(createContextEmbed({ target: "file", ref: entry.path, label: path, path })),
+    };
+  };
 
   switch (view.kind) {
     case "root": {
@@ -196,34 +238,32 @@ export function useMentionContent({
                 label: `Use ${relativeDir}/`,
                 icon: Folder01Icon,
                 hint: "folder",
-                onSelect: () => insert(formatMention(`${relativeDir}/`)),
+                onSelect: () =>
+                  embed(
+                    createContextEmbed({
+                      target: "folder",
+                      ref: view.dir,
+                      label: `${relativeDir}/`,
+                    }),
+                  ),
               },
             ];
+      const isLoading = current === null || current.kind === "loading";
       const entries = current?.kind === "loaded" ? current.entries : [];
       return {
         label: "Files",
         title: relativeDir.length === 0 ? "Files" : `Files / ${relativeDir}`,
         onBack: relativeDir.length === 0 ? back : () => drill({ kind: "files", dir: parent }),
+        loading: isLoading,
         sections: [
           { items: useFolder },
           {
             items: entries
               .filter((entry) => matches(entry.name, query))
-              .map((entry) => ({
-                id: `folder:${entry.path}`,
-                label: entry.name,
-                icon: Folder01Icon,
-                drill: true,
-                onSelect: () => drill({ kind: "files", dir: entry.path }),
-              })),
+              .map((entry) => (entry.kind === "file" ? fileItem(root, entry) : folderItem(entry))),
           },
         ],
-        emptyText:
-          current === null || current.kind === "loading"
-            ? "Loading folders…"
-            : current.kind === "failed"
-              ? current.message
-              : "No folders here",
+        emptyText: current?.kind === "failed" ? current.message : "Nothing here",
       };
     }
   }

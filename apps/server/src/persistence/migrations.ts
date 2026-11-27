@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { ensureThreadFeatureSchemas } from "./threadSchemas.ts";
 
 const ensureColumn = (db: Database, table: string, column: string, definition: string): boolean => {
   const columns = db.query<{ readonly name: string }, []>(`PRAGMA table_info(${table})`).all();
@@ -106,6 +107,19 @@ export const applyScuttleMigrations = (db: Database): void => {
   ensureColumn(db, "turns", "cost_usd", "REAL NOT NULL DEFAULT 0");
   ensureColumn(db, "turns", "session_epoch", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "turns", "usage_json", "TEXT");
+  ensureColumn(db, "turns", "attachments_json", "TEXT");
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS attachments (
+      id TEXT PRIMARY KEY NOT NULL,
+      kind TEXT NOT NULL,
+      name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      size_bytes INTEGER NOT NULL,
+      ext TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+  `);
 
   db.run(`
     CREATE INDEX IF NOT EXISTS idx_turns_thread_id ON turns(thread_id, seq);
@@ -161,6 +175,10 @@ export const applyScuttleMigrations = (db: Database): void => {
     CREATE INDEX IF NOT EXISTS idx_approvals_thread_created ON approvals(thread_id, created_at);
   `);
 
+  ensureColumn(db, "approvals", "questions_json", "TEXT");
+  ensureColumn(db, "approvals", "answers_json", "TEXT");
+  ensureColumn(db, "approvals", "dismissed", "INTEGER NOT NULL DEFAULT 0");
+
   db.run(`
     CREATE TABLE IF NOT EXISTS git_forge_accounts (
       forge TEXT PRIMARY KEY NOT NULL,
@@ -195,6 +213,7 @@ export const applyScuttleMigrations = (db: Database): void => {
   `);
 
   ensureColumn(db, "agents", "pinned", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "agents", "identicon_style", "TEXT");
 
   db.run(`
     UPDATE agents
@@ -264,6 +283,36 @@ export const applyScuttleMigrations = (db: Database): void => {
   db.run(`
     CREATE INDEX IF NOT EXISTS idx_agent_issues_agent_id
     ON agent_issues(agent_id, updated_at DESC);
+  `);
+
+  ensureColumn(db, "agent_issues", "priority", "TEXT NOT NULL DEFAULT 'normal'");
+  ensureColumn(db, "agent_issues", "assignee_kind", "TEXT NOT NULL DEFAULT 'unassigned'");
+  ensureColumn(db, "agent_issues", "assignee_agent_id", "TEXT");
+  ensureColumn(db, "agent_issues", "created_by", "TEXT NOT NULL DEFAULT 'user'");
+  ensureColumn(db, "agent_issues", "due_date", "TEXT");
+  ensureColumn(db, "agent_issues", "related_issue_id", "TEXT");
+  ensureColumn(db, "agent_issues", "agent_notified_at", "TEXT");
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS agent_issue_activities (
+      id TEXT PRIMARY KEY NOT NULL,
+      issue_id TEXT NOT NULL REFERENCES agent_issues(id) ON DELETE CASCADE,
+      agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      actor_kind TEXT NOT NULL DEFAULT 'user',
+      actor_agent_id TEXT,
+      kind TEXT NOT NULL,
+      body TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+  `);
+
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_agent_issue_activities_issue_id
+    ON agent_issue_activities(issue_id, created_at ASC);
+  `);
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_agent_issue_activities_agent_created
+    ON agent_issue_activities(agent_id, created_at DESC);
   `);
 
   db.run(`
@@ -352,4 +401,56 @@ export const applyScuttleMigrations = (db: Database): void => {
     CREATE INDEX IF NOT EXISTS idx_agent_checkins_agent_id
     ON agent_checkins(agent_id, created_at DESC);
   `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS model_tier_configs (
+      scope_key TEXT PRIMARY KEY NOT NULL,
+      scope_kind TEXT NOT NULL,
+      target_id TEXT,
+      config_json TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT NOT NULL
+    );
+  `);
+
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_turns_started_at ON turns(started_at);
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS usage_source_files (
+      source_key TEXT PRIMARY KEY NOT NULL,
+      provider_kind TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      mtime_ms INTEGER NOT NULL,
+      size_bytes INTEGER NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_usage_source_files_provider
+    ON usage_source_files(provider_kind, session_id);
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS usage_buckets (
+      source_key TEXT NOT NULL REFERENCES usage_source_files(source_key) ON DELETE CASCADE,
+      provider_kind TEXT NOT NULL,
+      model TEXT NOT NULL,
+      bucket_hour TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+      cost_usd REAL NOT NULL DEFAULT 0,
+      PRIMARY KEY (source_key, model, bucket_hour)
+    );
+  `);
+
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_usage_buckets_hour
+    ON usage_buckets(bucket_hour, provider_kind);
+  `);
+  ensureThreadFeatureSchemas(db);
 };

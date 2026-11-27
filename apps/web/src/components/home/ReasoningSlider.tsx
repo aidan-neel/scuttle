@@ -4,6 +4,7 @@ import { type KeyboardEvent, type PointerEvent, useRef, useState } from "react";
 import { DitherShader } from "@/lib/dither";
 import { EFFORT_LABELS } from "@/lib/format.ts";
 import { spring } from "@/lib/motion.ts";
+import { remToPx } from "@/lib/uiScale.ts";
 
 interface ReasoningSliderProps {
   readonly efforts: ReadonlyArray<EffortLevel>;
@@ -30,7 +31,7 @@ float field(vec2 uv, vec2 res, float t) {
 }
 `;
 
-const THUMB_HALF_PX = 5;
+const THUMB_HALF_REM = 0.3125;
 
 const stopPercent = (idx: number, count: number): number =>
   count <= 1 ? 100 : (idx / (count - 1)) * 100;
@@ -46,8 +47,9 @@ export function ReasoningSlider({ efforts, value, onChange }: ReasoningSliderPro
   const indexFromClientX = (clientX: number): number => {
     const rect = trackRef.current?.getBoundingClientRect();
     if (!rect || count <= 1) return 0;
-    const usableWidth = Math.max(1, rect.width - THUMB_HALF_PX * 2);
-    const ratio = Math.min(1, Math.max(0, (clientX - rect.left - THUMB_HALF_PX) / usableWidth));
+    const thumbHalfPx = remToPx(THUMB_HALF_REM);
+    const usableWidth = Math.max(1, rect.width - thumbHalfPx * 2);
+    const ratio = Math.min(1, Math.max(0, (clientX - rect.left - thumbHalfPx) / usableWidth));
     return Math.round(ratio * (count - 1));
   };
 
@@ -120,27 +122,30 @@ export function ReasoningSlider({ efforts, value, onChange }: ReasoningSliderPro
         onKeyDown={onKeyDown}
         className="group/slider relative h-7 w-full cursor-pointer touch-none overflow-visible outline-none select-none"
       >
-        <div className="pointer-events-none absolute inset-x-0 top-1 h-5 overflow-hidden rounded-[7px] bg-[#0d0d10] shadow-[inset_0_0_0_1px_rgb(255_255_255/10%),inset_0_1px_2px_rgb(0_0_0/55%)] group-focus-visible/slider:shadow-focus">
-          <div aria-hidden className="absolute inset-y-0 inset-x-[5px]">
+        <div className="pointer-events-none absolute inset-x-0 top-1 h-5 overflow-hidden rounded-control bg-[#0d0d10] shadow-[inset_0_0_0_1px_rgb(255_255_255/10%),inset_0_1px_2px_rgb(0_0_0/55%)] group-focus-visible/slider:shadow-focus">
+          <div aria-hidden className="absolute inset-y-0 inset-x-[0.3125rem]">
             {efforts.map((effort, idx) => (
               <span
                 key={effort}
                 style={{ left: `${stopPercent(idx, count)}%` }}
                 className={`absolute top-1/2 h-1.5 w-px -translate-x-1/2 -translate-y-1/2 rounded-full transition-colors duration-150 ${
-                  idx <= activeIndex ? "bg-white/30" : "bg-white/12"
+                  idx <= activeIndex ? "bg-fg/30" : "bg-fg/12"
                 }`}
               />
             ))}
           </div>
 
-          <div aria-hidden className="absolute inset-[2px] overflow-hidden rounded-[5px]">
+          <div
+            aria-hidden
+            className="absolute inset-[0.125rem] overflow-hidden rounded-[0.3125rem]"
+          >
             <motion.div
               initial={false}
               animate={{
                 clipPath:
                   count <= 1
                     ? "inset(0 0% 0 0)"
-                    : `inset(0 calc(${100 - activePct}% - ${THUMB_HALF_PX - 2}px) 0 0)`,
+                    : `inset(0 calc(${100 - activePct}% - ${THUMB_HALF_REM - 0.125}rem) 0 0)`,
               }}
               transition={spring.snappy}
               className="absolute inset-0"
@@ -167,12 +172,12 @@ export function ReasoningSlider({ efforts, value, onChange }: ReasoningSliderPro
           </div>
         </div>
 
-        <div aria-hidden className="pointer-events-none absolute inset-y-0 inset-x-[5px]">
+        <div aria-hidden className="pointer-events-none absolute inset-y-0 inset-x-[0.3125rem]">
           <motion.div
             initial={false}
             animate={{ left: `${activePct}%`, scale: dragging ? 1.06 : 1 }}
             transition={spring.snappy}
-            className="absolute inset-y-0 flex h-7 w-2.5 -translate-x-1/2 items-center justify-center gap-px rounded-[4px] bg-[linear-gradient(180deg,#ffffff_0%,#e4e7ee_100%)] shadow-[0_0_0_0.5px_rgb(0_0_0/55%),0_1px_2px_rgb(0_0_0/70%),0_3px_8px_rgb(0_0_0/45%),0_0_10px_rgb(126_166_255/35%),inset_0_1px_0_rgb(255_255_255),inset_0_-1px_0_rgb(0_0_0/12%)] transition-shadow duration-150 group-hover/slider:shadow-[0_0_0_0.5px_rgb(0_0_0/55%),0_1px_2px_rgb(0_0_0/70%),0_3px_8px_rgb(0_0_0/45%),0_0_14px_rgb(126_166_255/55%),inset_0_1px_0_rgb(255_255_255),inset_0_-1px_0_rgb(0_0_0/12%)]"
+            className="absolute inset-y-0 flex h-7 w-2.5 -translate-x-1/2 items-center justify-center gap-px rounded-[0.25rem] bg-[linear-gradient(180deg,#ffffff_0%,#e4e7ee_100%)] shadow-[0_0_0_0.5px_rgb(0_0_0/55%),0_1px_2px_rgb(0_0_0/70%),0_3px_8px_rgb(0_0_0/45%),0_0_10px_rgb(126_166_255/35%),inset_0_1px_0_rgb(255_255_255),inset_0_-1px_0_rgb(0_0_0/12%)] transition-shadow duration-150 group-hover/slider:shadow-[0_0_0_0.5px_rgb(0_0_0/55%),0_1px_2px_rgb(0_0_0/70%),0_3px_8px_rgb(0_0_0/45%),0_0_14px_rgb(126_166_255/55%),inset_0_1px_0_rgb(255_255_255),inset_0_-1px_0_rgb(0_0_0/12%)]"
           >
             <span className="h-3 w-px rounded-full bg-black/20" />
             <span className="h-3 w-px rounded-full bg-black/20" />
@@ -180,7 +185,7 @@ export function ReasoningSlider({ efforts, value, onChange }: ReasoningSliderPro
         </div>
       </div>
 
-      <div className="relative mx-[5px] h-4">
+      <div className="relative mx-[0.3125rem] h-4">
         {efforts.map((effort, idx) => {
           const active = idx === activeIndex;
           const pct = stopPercent(idx, count);
@@ -196,7 +201,7 @@ export function ReasoningSlider({ efforts, value, onChange }: ReasoningSliderPro
               type="button"
               style={idx === 0 || idx === count - 1 ? undefined : { left: `${pct}%` }}
               onClick={() => onChange(effort)}
-              className={`absolute top-0 cursor-pointer rounded-[4px] py-0.5 text-[11.5px] leading-none whitespace-nowrap transition-colors duration-100 outline-none ${alignClass} ${
+              className={`absolute top-0 cursor-pointer rounded-[0.25rem] py-0.5 text-[0.71875rem] leading-none whitespace-nowrap transition-colors duration-100 outline-none ${alignClass} ${
                 active ? "font-medium text-fg" : "text-fg-faint hover:text-fg-muted"
               }`}
             >

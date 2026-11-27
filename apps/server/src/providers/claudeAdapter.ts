@@ -1,18 +1,31 @@
-import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
 import type { ProviderConfig, ProviderSnapshot, TurnUsage } from "@scuttle/contracts";
 import * as Effect from "effect/Effect";
+import { defaultServerConfig } from "../config.ts";
 import {
   getBuiltInProviderSpec,
   parseVersionNumber,
   resolveExecutable,
-  runCliProbe,
   tokenizeLaunchArgs,
 } from "./catalog.ts";
+import {
+  buildClaudeMcpConfigArg,
+  buildClaudeSteerMessage,
+  buildClaudeUserContent,
+  hasClaudeAuthHints,
+  runClaudeProbeWithEnv,
+} from "./claudeMcpAndSteer.ts";
+import { handleClaudeControlRequest } from "./claudePermissions.ts";
+import { materializeProviderRuntime, type ResolvedProviderRuntime } from "./shadowHomes.ts";
 import { presentToolActivity } from "./toolLabel.ts";
-import type { HarnessAdapter, HarnessTurnInput, HarnessTurnResult } from "./types.ts";
+import type {
+  ApprovalDecision,
+  HarnessAdapter,
+  HarnessTurnInput,
+  HarnessTurnResult,
+} from "./types.ts";
 import { parseClaudeUsage } from "./usageParsing.ts";
+
+export { isScuttleBridgeCurl } from "./claudePermissions.ts";
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -32,70 +45,71 @@ const mapPermissionMode = (input: HarnessTurnInput): string => {
   }
 };
 
-const hasClaudeAuthHints = (): boolean => {
-  if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) return true;
-  const home = NodeOS.homedir();
-  const candidates = [
-    NodePath.join(home, ".claude", ".credentials.json"),
-    NodePath.join(home, ".claude.json"),
-  ];
-  return candidates.some((file) => NodeFS.existsSync(file));
-};
+const buildClaudeRuntime = (config: ProviderConfig, dataDir?: string): ResolvedProviderRuntime =>
+  materializeProviderRuntime({
+    instanceId: config.id,
+    kind: "claude",
+    dataDir: dataDir ?? process.env.SCUTTLE_DATA_DIR ?? defaultServerConfig().dataDir,
+    ...(config.homePath ? { homePath: config.homePath } : {}),
+    ...(config.shadowHomePath ? { shadowHomePath: config.shadowHomePath } : {}),
+    ...(config.env ? { env: config.env } : {}),
+  });
 
-export const claudeAdapter: HarnessAdapter = {
+export const claudeAdapter: HarnessAdapter & {
+  readonly probe: (
+    config: ProviderConfig,
+    options?: { readonly dataDir?: string },
+  ) => Effect.Effect<ProviderSnapshot>;
+} = {
   kind: "claude",
 
-  probe: (config: ProviderConfig) =>
+  probe: (config: ProviderConfig, options?: { readonly dataDir?: string }) =>
     Effect.promise(async (): Promise<ProviderSnapshot> => {
       const spec = getBuiltInProviderSpec("claude");
       const checkedAt = new Date().toISOString();
-      if (!config.enabled) {
-        return {
-          ...config,
-          status: "disabled",
-          models: [...spec.fallbackModels],
-          setupHint: spec.setupHint,
-          checkedAt,
-        };
-      }
+      const baseSnap = {
+        ...config,
+        setupHint: spec.setupHint,
+        models: [...spec.fallbackModels],
+        checkedAt,
+      };
+      if (!config.enabled) return { ...baseSnap, status: "disabled" };
 
       const resolvedPath = resolveExecutable(config.binaryPath, spec.defaultBinary);
       if (!resolvedPath) {
+        return { ...baseSnap, status: "unavailable", message: "Claude CLI not found on PATH." };
+      }
+
+      let runtime: ResolvedProviderRuntime;
+      try {
+        runtime = buildClaudeRuntime(config, options?.dataDir);
+      } catch (err) {
         return {
-          ...config,
+          ...baseSnap,
+          resolvedPath,
           status: "unavailable",
-          message: "Claude CLI not found on PATH.",
-          setupHint: spec.setupHint,
-          models: [...spec.fallbackModels],
-          checkedAt,
+          message: err instanceof Error ? err.message : String(err),
         };
       }
 
-      const probe = await runCliProbe(resolvedPath, ["--version"]);
+      const probe = await runClaudeProbeWithEnv(resolvedPath, ["--version"], runtime.env);
       if (!probe.ok) {
         return {
-          ...config,
+          ...baseSnap,
           resolvedPath,
           status: "unavailable",
           message: probe.stderr || "Failed to execute Claude CLI.",
-          setupHint: spec.setupHint,
-          models: [...spec.fallbackModels],
-          checkedAt,
         };
       }
 
       const version = parseVersionNumber(probe.stdout || probe.stderr);
-      const authed = hasClaudeAuthHints();
-
+      const authed = hasClaudeAuthHints(runtime);
       return {
-        ...config,
+        ...baseSnap,
         resolvedPath,
         ...(version ? { version } : {}),
         status: authed ? "ready" : "unauthenticated",
         ...(authed ? {} : { message: "Run `claude login` to authenticate Claude Code." }),
-        setupHint: spec.setupHint,
-        models: [...spec.fallbackModels],
-        checkedAt,
       };
     }),
 
@@ -106,14 +120,20 @@ export const claudeAdapter: HarnessAdapter = {
       throw new Error("Claude CLI binary not found. Configure it in Settings.");
     }
 
+    const initialContent = buildClaudeUserContent(input.prompt, input.resolvedAttachments);
+
     const args: string[] = [
       "--print",
+      "--input-format",
+      "stream-json",
       "--output-format",
       "stream-json",
       "--verbose",
       "--include-partial-messages",
       "--permission-mode",
       mapPermissionMode(input),
+      "--permission-prompt-tool",
+      "stdio",
     ];
 
     if (input.runtimeMode === "full-access") {
@@ -128,28 +148,60 @@ export const claudeAdapter: HarnessAdapter = {
     if (input.providerSessionId) {
       args.push("--resume", input.providerSessionId);
     }
-    args.push(...tokenizeLaunchArgs(input.config.launchArgs));
-    args.push("--", input.prompt);
-
-    const env: Record<string, string> = {};
-    for (const [k, v] of Object.entries(process.env)) {
-      if (v !== undefined && k !== "CLAUDECODE") env[k] = v;
+    if (input.mcpServer) {
+      args.push("--mcp-config", buildClaudeMcpConfigArg(input.mcpServer));
     }
+    const runtime = buildClaudeRuntime(input.config);
+    args.push(...runtime.extraLaunchArgs, ...tokenizeLaunchArgs(input.config.launchArgs));
+
+    const env: Record<string, string> = { ...runtime.env };
     if (input.extraEnv) {
       for (const [k, v] of Object.entries(input.extraEnv)) {
         env[k] = v;
       }
     }
 
+    const turnStartMs = Date.now();
     const proc = Bun.spawn([executable, ...args], {
       cwd: input.cwd,
       env,
-      stdin: "ignore",
+      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
 
+    let stdinClosed = false;
+    let turnEnded = false;
+    const writeStdin = (payload: unknown): boolean => {
+      if (stdinClosed || turnEnded) return false;
+      try {
+        proc.stdin.write(`${JSON.stringify(payload)}\n`);
+        void proc.stdin.flush();
+        return true;
+      } catch {
+        stdinClosed = true;
+        return false;
+      }
+    };
+    const closeStdin = () => {
+      if (stdinClosed) return;
+      stdinClosed = true;
+      try {
+        void proc.stdin.end();
+      } catch {
+        // Ignore already-closed stdin.
+      }
+    };
+
+    const pendingApprovalResolvers = new Set<(decision: ApprovalDecision) => void>();
+
     const onAbort = () => {
+      turnEnded = true;
+      for (const resolve of pendingApprovalResolvers) {
+        resolve({ optionId: "deny", customText: "Turn interrupted." });
+      }
+      pendingApprovalResolvers.clear();
+      closeStdin();
       try {
         proc.kill("SIGTERM");
       } catch {
@@ -160,6 +212,18 @@ export const claudeAdapter: HarnessAdapter = {
       onAbort();
     } else {
       input.signal.addEventListener("abort", onAbort, { once: true });
+      writeStdin({
+        type: "user",
+        message: { role: "user", content: initialContent },
+      });
+      input.registerSteer?.(async (payload) => {
+        if (stdinClosed || turnEnded || input.signal.aborted) return false;
+        try {
+          return writeStdin(buildClaudeSteerMessage(payload.prompt, payload.attachments));
+        } catch {
+          return false;
+        }
+      });
     }
 
     let providerSessionId = input.providerSessionId;
@@ -168,8 +232,15 @@ export const claudeAdapter: HarnessAdapter = {
     let resultError: string | undefined;
     let costUsd: number | undefined;
     let turnUsage: TurnUsage | undefined;
+    let firstTokenMs: number | undefined;
     const seenToolIds = new Set<string>();
     let stderrText = "";
+
+    const markFirstToken = () => {
+      if (firstTokenMs === undefined) {
+        firstTokenMs = Math.max(0, Date.now() - turnStartMs);
+      }
+    };
 
     const stderrPromise = (async () => {
       try {
@@ -187,15 +258,29 @@ export const claudeAdapter: HarnessAdapter = {
         input.emit({ kind: "session", providerSessionId: sessionId });
       }
 
+      if (eventType === "control_request") {
+        void handleClaudeControlRequest({
+          parsed,
+          input,
+          writeStdin: (payload) => {
+            writeStdin(payload);
+          },
+          pendingResolvers: pendingApprovalResolvers,
+        });
+        return;
+      }
+
       if (eventType === "stream_event" && isObject(parsed.event)) {
         const inner = parsed.event;
         const innerType = asString(inner.type);
         if (innerType === "content_block_delta" && isObject(inner.delta)) {
           const deltaType = asString(inner.delta.type);
           if (deltaType === "text_delta" && typeof inner.delta.text === "string") {
+            if (inner.delta.text.length > 0) markFirstToken();
             streamedAssistant += inner.delta.text;
             input.emit({ kind: "assistant.delta", text: inner.delta.text });
           } else if (deltaType === "thinking_delta" && typeof inner.delta.thinking === "string") {
+            if (inner.delta.thinking.length > 0) markFirstToken();
             input.emit({ kind: "thinking.delta", text: inner.delta.thinking });
           }
         } else if (innerType === "content_block_start" && isObject(inner.content_block)) {
@@ -257,6 +342,7 @@ export const claudeAdapter: HarnessAdapter = {
             }
           }
           if (messageText.length > 0 && streamedAssistant.length === 0) {
+            markFirstToken();
             streamedAssistant = messageText;
             input.emit({ kind: "assistant.replace", text: messageText });
           }
@@ -299,6 +385,8 @@ export const claudeAdapter: HarnessAdapter = {
             input.emit({ kind: "assistant.replace", text: parsed.result });
           }
         }
+        turnEnded = true;
+        closeStdin();
       }
     };
 
@@ -326,6 +414,12 @@ export const claudeAdapter: HarnessAdapter = {
         }
       }
     } finally {
+      turnEnded = true;
+      for (const resolve of pendingApprovalResolvers) {
+        resolve({ optionId: "deny", customText: "Claude process exited." });
+      }
+      pendingApprovalResolvers.clear();
+      closeStdin();
       input.signal.removeEventListener("abort", onAbort);
     }
 
@@ -352,6 +446,7 @@ export const claudeAdapter: HarnessAdapter = {
       ...(providerSessionId ? { providerSessionId } : {}),
       ...(costUsd !== undefined && costUsd > 0 ? { costUsd } : {}),
       ...(turnUsage ? { usage: turnUsage } : {}),
+      ...(firstTokenMs !== undefined ? { firstTokenMs } : {}),
     };
   },
 };

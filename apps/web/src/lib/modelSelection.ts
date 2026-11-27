@@ -44,6 +44,9 @@ export const pickBestSelection = (
     !disabled.has(modelFavoriteKey(providerId, slug));
   if (preferred) {
     const match = providers.find((p) => p.id === preferred.providerId && p.enabled);
+    if (match && match.status === "probing" && isEnabled(match.id, preferred.model)) {
+      return preferred;
+    }
     if (match && match.status === "ready") {
       const enabledModels = match.models.filter((m) => isEnabled(match.id, m.slug));
       const model =

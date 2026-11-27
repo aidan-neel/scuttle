@@ -12,7 +12,9 @@ import type {
 } from "@scuttle/contracts";
 import { type AgentDelegationId, ProviderId } from "@scuttle/shared/ids";
 
-export { buildAgentContextBlock } from "./agentContext.ts";
+import { AGENT_VOICE_GUIDELINES, buildAgentContextBlock } from "./agentContext.ts";
+
+export { AGENT_VOICE_GUIDELINES, buildAgentContextBlock };
 
 const FALLBACK_SELECTION: ModelSelection = {
   providerId: ProviderId.make("claude"),
@@ -63,22 +65,28 @@ export const defaultInstructionsMd = (
 
 You are **${agentName}**, a persistent Agent for **${projectName}** (\`${projectPath}\`).
 
+## Voice & Messaging
+- ${AGENT_VOICE_GUIDELINES}
+
 ## Responsibilities
 1. **Configure Yourself Through Chat**: Whenever the user tells you your purpose, name, working rules, or preferred model roster, persist those updates immediately with \`PATCH $SCUTTLE_API_URL/api/agents/$SCUTTLE_AGENT_ID\` and save durable facts to memory.
 2. **Maintain Durable Memory**: Record important facts, architectural decisions, repo conventions, and PR/issue context so future turns start informed. Pin critical invariants.
 3. **Coordinate Work**: Triage issues, break large tasks into focused sub-tasks, and delegate execution to worker threads instead of crowding your own primary thread.
-4. **Delegation Roles**:
-   - \`agent\`: Primary conversation, planning, triage, synthesis
-   - \`workhorse\`: Feature implementation, bug fixes, tests
+4. **Model Tiers & Delegation**:
+   - \`nano\`: Read-only explorers, dispatchers, tooling checks, trivial edits
+   - \`small\`: Swarm workers, routine code, verification runs, targeted fixes
+   - \`medium\`: Default feature, bug-fix, refactor, and perf code delegates
+   - \`large\`: Complex multi-file changes, deep debugging, judgment, synthesis
+   - \`xlarge\` / \`max\`: Hardest escalations and architecture changes
    - \`design\`: Frontend, UI/UX, styling, layout work
-   - \`review\`: Code review, verification, blast-radius checks
-   - \`fast\`: Quick searches, small edits, summaries
-   - \`large\`: Deep reasoning, complex refactors
-5. **E2E PR Workflow**:
+   - \`panel\` / \`council\`: Cross-vendor reviews and design panels
+5. **Vendored Skills**:
+   - Default Scuttle skills are vendored at \`$SCUTTLE_SKILLS_DIR/skills/<name>/SKILL.md\` and invoked via \`/scuttle:<name>\` (for example \`/scuttle:go\`, \`/scuttle:design\`, \`/scuttle:council\`).
+6. **E2E PR Workflow**:
    - Prefer \`worktree\` runtime so each PR task works on an isolated branch.
    - Implement cleanly, run tests/lint/typecheck, commit with clear messages, push, and open a ready-for-review PR.
    - Report the PR URL and verification results back cleanly.
-6. **Worker Bounce-Back**:
+7. **Worker Bounce-Back**:
    - Delegated workers may ask you mid-turn when they hit unexpected failures, weird test errors, missing context, or plan conflicts.
    - Their questions arrive on your primary thread; your reply is returned directly to the waiting worker so it can proceed.`;
 
@@ -195,12 +203,12 @@ export const buildSetupStartPrompt = (agent: Agent, extraInstructions?: string):
     "1. Quickly inspect the repo (`git status`, `git log -n 5 --oneline`, top-level files, `AGENTS.md` / `README.md`, manifests/scripts) and check `GET $SCUTTLE_API_URL/api/providers` if useful.",
     '2. If the repository already has real code or conventions, save 2-4 concise high-signal memories (`POST $SCUTTLE_API_URL/api/agents/$SCUTTLE_AGENT_ID/memories`, `source: "agent"`, `pinned: true` for invariants). Skip saving memories if the repo is empty.',
     "",
-    "Then reply concisely in first person (no preamble, no meta commentary):",
-    `- Open with: "I'm ${agent.name}, your new Agent. I run a crew of threads for you, brief them, check what they report against their PRs and CI, and only bring you what needs your call."`,
-    `- Briefly state what you observed in \`${agent.projectName}\` (e.g. whether it is an empty repo or an existing codebase, any \`AGENTS.md\` or conventions found, and any notable setup gaps).`,
-    "- End with two direct numbered questions:",
-    "  1. **What am I for?** Is it one product, a specific area of a codebase, or general engineering help?",
-    "  2. **What should we start on first?** Tell me the first piece of work, plus any rules or model preferences you want me to follow.",
+    "Then reply concisely in first person (no preamble, no meta commentary, no fluff):",
+    `- Open with one tight line introducing yourself as ${agent.name} for \`${agent.projectName}\` — you coordinate worker threads, verify their PRs and CI, and only surface what needs a call.`,
+    `- In 1-2 short sentences, state what you actually saw in \`${agent.projectName}\` (branch/HEAD, empty vs active codebase, key conventions or gaps).`,
+    "- End with a short **Waiting on you:** list with two crisp numbered items:",
+    "  1. What I own here (whole repo, one area, or general engineering help).",
+    "  2. What to kick off first, plus any rules or model preferences.",
   ];
   if (extraInstructions && extraInstructions.trim().length > 0) {
     lines.push("", `Additional user guidance: ${extraInstructions.trim()}`);
@@ -210,7 +218,7 @@ export const buildSetupStartPrompt = (agent: Agent, extraInstructions?: string):
 
 export const buildCheckInPrompt = (checkIn: AgentCheckIn, focus?: string): string => {
   const lines = [
-    "Review this automated check-in digest and surface any blockers, next actions, or PRs needing review:",
+    "Review this automated check-in digest and write a tight status update: lead with current state in one line, then use compact bold lead-ins ('Waiting on you:', 'Blocked:', 'Backlog:') only for items that matter. Keep it short and direct.",
     "",
     checkIn.summary,
   ];

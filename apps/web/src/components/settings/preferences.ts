@@ -1,6 +1,13 @@
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { useSyncExternalStore } from "react";
+import {
+  applyTheme,
+  DEFAULT_THEME_ID,
+  getTheme,
+  type ThemeDefinition,
+  ThemeId,
+} from "@/lib/themes.ts";
 
 const STORAGE_KEY = "scuttle.preferences.v1";
 const CHANGE_EVENT = "scuttle:preferences-changed";
@@ -8,21 +15,30 @@ const CHANGE_EVENT = "scuttle:preferences-changed";
 export const EnterBehavior = Schema.Literals(["enter", "mod-enter"]);
 export type EnterBehavior = typeof EnterBehavior.Type;
 
+export const ActiveTurnDispatch = Schema.Literals(["steer", "queue"]);
+export type ActiveTurnDispatch = typeof ActiveTurnDispatch.Type;
+
 const StoredPreferences = Schema.Struct({
   enterBehavior: Schema.optionalKey(EnterBehavior),
+  activeTurnDispatch: Schema.optionalKey(ActiveTurnDispatch),
   ditherBackground: Schema.optionalKey(Schema.Boolean),
+  theme: Schema.optionalKey(ThemeId),
   compactAtByWindow: Schema.optionalKey(Schema.Record(Schema.String, Schema.Number)),
 });
 
 export interface Preferences {
   readonly enterBehavior: EnterBehavior;
+  readonly activeTurnDispatch: ActiveTurnDispatch;
   readonly ditherBackground: boolean;
+  readonly theme: ThemeId;
   readonly compactAtByWindow: Readonly<Record<string, number>>;
 }
 
 const DEFAULTS: Preferences = {
   enterBehavior: "enter",
+  activeTurnDispatch: "steer",
   ditherBackground: true,
+  theme: DEFAULT_THEME_ID,
   compactAtByWindow: {},
 };
 
@@ -62,6 +78,9 @@ export const writePreference = <Key extends keyof Preferences>(
   value: Preferences[Key],
 ): void => {
   const next = { ...readPreferences(), [key]: value };
+  if (key === "theme") {
+    applyTheme(next.theme);
+  }
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   } catch {
@@ -70,12 +89,20 @@ export const writePreference = <Key extends keyof Preferences>(
   window.dispatchEvent(new Event(CHANGE_EVENT));
 };
 
+export const initTheme = (): void => {
+  applyTheme(readPreferences().theme);
+};
+
 const subscribe = (onChange: () => void) => {
+  const handleStorage = () => {
+    applyTheme(readPreferences().theme);
+    onChange();
+  };
   window.addEventListener(CHANGE_EVENT, onChange);
-  window.addEventListener("storage", onChange);
+  window.addEventListener("storage", handleStorage);
   return () => {
     window.removeEventListener(CHANGE_EVENT, onChange);
-    window.removeEventListener("storage", onChange);
+    window.removeEventListener("storage", handleStorage);
   };
 };
 
@@ -83,6 +110,8 @@ export const usePreferences = (): Preferences =>
   useSyncExternalStore(subscribe, readPreferences, () => DEFAULTS);
 
 export const useDitherBackground = (): boolean => usePreferences().ditherBackground;
+
+export const useTheme = (): ThemeDefinition => getTheme(usePreferences().theme);
 
 export const useCompactAtOverride = (windowTokens: number): number | null => {
   const value = usePreferences().compactAtByWindow[String(windowTokens)];

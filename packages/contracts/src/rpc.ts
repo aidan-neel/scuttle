@@ -13,9 +13,14 @@ import {
   AgentDelegation,
   AgentDelegationQuestion,
   AgentIssue,
+  AgentIssueActivity,
   AgentMemory,
 } from "./agent.ts";
+import { ScopedModelTierConfigs } from "./astack.ts";
+import { ModelPerfRun } from "./performance.ts";
 import { ProviderSnapshot } from "./provider.ts";
+import { QueuedTurn, ThreadCheckpoint } from "./thread.ts";
+import { ThreadVisualization } from "./viz.ts";
 import { ActivityItem, PendingApproval, Project, Thread, ThreadTurn } from "./workspace.ts";
 
 export const RuntimeKind = Schema.Literals(["web", "desktop"]);
@@ -152,6 +157,11 @@ export const AgentIssueDeletedEvent = Schema.Struct({
   issueId: AgentIssueId,
 });
 
+export const AgentIssueActivityCreatedEvent = Schema.Struct({
+  kind: Schema.Literals(["agent.issue.activity.created"]),
+  activity: AgentIssueActivity,
+});
+
 export const AgentDelegationUpsertedEvent = Schema.Struct({
   kind: Schema.Literals(["agent.delegation.upserted"]),
   delegation: AgentDelegation,
@@ -165,6 +175,38 @@ export const AgentDelegationQuestionUpsertedEvent = Schema.Struct({
 export const AgentCheckInCreatedEvent = Schema.Struct({
   kind: Schema.Literals(["agent.checkin.created"]),
   checkIn: AgentCheckIn,
+});
+
+export const ModelTiersUpdatedEvent = Schema.Struct({
+  kind: Schema.Literals(["modelTiers.updated"]),
+  modelTiers: ScopedModelTierConfigs,
+});
+
+export const CheckpointCreatedEvent = Schema.Struct({
+  kind: Schema.Literals(["checkpoint.created"]),
+  checkpoint: ThreadCheckpoint,
+});
+
+export const ThreadRewoundEvent = Schema.Struct({
+  kind: Schema.Literals(["thread.rewound"]),
+  threadId: ThreadId,
+  checkpointOrdinal: Schema.Number,
+});
+
+export const QueueUpdatedEvent = Schema.Struct({
+  kind: Schema.Literals(["queue.updated"]),
+  threadId: ThreadId,
+  queuedTurns: Schema.Array(QueuedTurn),
+});
+
+export const VizUpsertedEvent = Schema.Struct({
+  kind: Schema.Literals(["viz.upserted"]),
+  visualization: ThreadVisualization,
+});
+
+export const PerfRecordedEvent = Schema.Struct({
+  kind: Schema.Literals(["perf.recorded"]),
+  run: ModelPerfRun,
 });
 
 export const ServerPushEvent = Schema.Union([
@@ -183,9 +225,16 @@ export const ServerPushEvent = Schema.Union([
   AgentMemoryDeletedEvent,
   AgentIssueUpsertedEvent,
   AgentIssueDeletedEvent,
+  AgentIssueActivityCreatedEvent,
   AgentDelegationUpsertedEvent,
   AgentDelegationQuestionUpsertedEvent,
   AgentCheckInCreatedEvent,
+  ModelTiersUpdatedEvent,
+  CheckpointCreatedEvent,
+  ThreadRewoundEvent,
+  QueueUpdatedEvent,
+  VizUpsertedEvent,
+  PerfRecordedEvent,
 ]);
 export type ServerPushEvent = typeof ServerPushEvent.Type;
 
@@ -208,8 +257,15 @@ export const ServerWsMessage = Schema.Union([
   AgentMemoryDeletedEvent,
   AgentIssueUpsertedEvent,
   AgentIssueDeletedEvent,
+  AgentIssueActivityCreatedEvent,
   AgentDelegationUpsertedEvent,
   AgentDelegationQuestionUpsertedEvent,
   AgentCheckInCreatedEvent,
+  ModelTiersUpdatedEvent,
+  CheckpointCreatedEvent,
+  ThreadRewoundEvent,
+  QueueUpdatedEvent,
+  VizUpsertedEvent,
+  PerfRecordedEvent,
 ]);
 export type ServerWsMessage = typeof ServerWsMessage.Type;

@@ -1,5 +1,14 @@
-import { dicebearIdenticonUrl, IDENTICON_GRID, identicon } from "@scuttle/shared/identicon";
+import {
+  DEFAULT_IDENTICON_STYLE,
+  dicebearIdenticonUrl,
+  IDENTICON_GRID,
+  IDENTICON_STYLE_IDS,
+  IDENTICON_STYLE_LABELS,
+  type IdenticonStyle,
+  identicon,
+} from "@scuttle/shared/identicon";
 import { useSyncExternalStore } from "react";
+import type { PickerOption } from "@/components/ui/Picker.tsx";
 import { cn } from "@/lib/utils";
 
 const MAX_CONSECUTIVE_FAILURES = 3;
@@ -102,20 +111,21 @@ function recordLoadFailure(url: string): void {
 }
 
 const SIZES = {
-  sm: { box: 16, radius: 4, classes: "size-4 rounded-[4px]" },
-  md: { box: 24, radius: 6, classes: "size-6 rounded-[6px]" },
-  lg: { box: 32, radius: 8, classes: "size-8 rounded-[8px]" },
-  xl: { box: 56, radius: 14, classes: "size-14 rounded-[14px]" },
+  sm: { box: 16, radius: 4, classes: "size-4 rounded-[0.25rem]" },
+  md: { box: 24, radius: 6, classes: "size-6 rounded-chip" },
+  lg: { box: 32, radius: 8, classes: "size-8 rounded-row" },
+  xl: { box: 56, radius: 14, classes: "size-14 rounded-dialog" },
 } as const;
 
 interface IdenticonProps {
   name: string;
   size: keyof typeof SIZES;
+  style?: IdenticonStyle | undefined;
   className?: string;
 }
 
 function FallbackIdenticon({ name, size, className }: IdenticonProps) {
-  const { box, radius } = SIZES[size];
+  const { box, radius, classes } = SIZES[size];
   const { foreground, background, cells } = identicon(name);
   const pad = box * 0.18;
   const cell = (box - pad * 2) / IDENTICON_GRID;
@@ -126,7 +136,7 @@ function FallbackIdenticon({ name, size, className }: IdenticonProps) {
       width={box}
       height={box}
       viewBox={`0 0 ${box} ${box}`}
-      className={cn("shrink-0", className)}
+      className={cn("shrink-0", classes, className)}
     >
       <rect width={box} height={box} rx={radius} fill={background} />
       {cells.flatMap((row, y) =>
@@ -147,9 +157,14 @@ function FallbackIdenticon({ name, size, className }: IdenticonProps) {
   );
 }
 
-export function Identicon({ name, size, className }: IdenticonProps) {
+export function Identicon({
+  name,
+  size,
+  style = DEFAULT_IDENTICON_STYLE,
+  className,
+}: IdenticonProps) {
   const { box, classes } = SIZES[size];
-  const url = dicebearIdenticonUrl(name);
+  const url = dicebearIdenticonUrl(name, style);
   useSyncExternalStore(subscribe, getFailureVersion, getServerFailureVersion);
 
   if (disabledUntil > 0 || failedUrls.has(url)) {
@@ -173,7 +188,15 @@ export function Identicon({ name, size, className }: IdenticonProps) {
       decoding="async"
       onLoad={() => recordLoadSuccess(url)}
       onError={() => recordLoadFailure(url)}
-      className={cn("shrink-0 bg-white/[0.06] object-cover select-none", classes, className)}
+      className={cn("shrink-0 bg-fg/[0.06] object-cover select-none", classes, className)}
     />
   );
+}
+
+export function identiconStyleOptions(seed: string): ReadonlyArray<PickerOption<IdenticonStyle>> {
+  return IDENTICON_STYLE_IDS.map((styleId) => ({
+    value: styleId,
+    label: IDENTICON_STYLE_LABELS[styleId],
+    icon: <Identicon name={seed} style={styleId} size="sm" className="size-3.5" />,
+  }));
 }

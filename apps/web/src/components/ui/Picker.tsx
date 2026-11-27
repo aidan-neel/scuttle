@@ -18,7 +18,7 @@ export interface PickerAction {
   readonly onSelect: () => void;
 }
 
-export type PickerVariant = "ghost" | "pill";
+export type PickerVariant = "ghost" | "pill" | "field";
 
 export const pillTriggerClass = (className?: string, variant: PickerVariant = "pill") =>
   cn(
@@ -26,28 +26,39 @@ export const pillTriggerClass = (className?: string, variant: PickerVariant = "p
     "transition-[background-color,color,box-shadow] duration-(--dur-hover) ease-hover",
     "disabled:pointer-events-none disabled:opacity-40",
     "[&_svg]:pointer-events-none [&_svg]:shrink-0",
-    variant === "ghost"
+    variant === "field"
       ? [
-          "h-6 gap-1 rounded-chip px-1.5 text-label text-fg-muted",
-          "hover:bg-(--wash) hover:text-fg active:bg-hover active:duration-(--dur-tap)",
-          "data-popup-open:bg-(--wash) data-popup-open:text-fg",
+          "h-7 gap-[0.4375rem] rounded-control pr-1.5 pl-2 text-[0.84375rem] text-fg",
+          "hover:bg-(--wash) active:bg-(--wash-strong) active:duration-(--dur-tap)",
+          "data-popup-open:bg-(--wash)",
           "focus-visible:shadow-focus",
-          "[&_svg:not([class*=size-])]:size-3",
-        ]
-      : [
-          "h-6.5 gap-1.5 rounded-control pr-1.5 pl-2 text-label text-fg-secondary",
-          "bg-panel/70 shadow-[inset_0_0_0_1px_var(--color-edge)] backdrop-blur-xs",
-          "hover:bg-raised hover:text-fg active:bg-hover active:duration-(--dur-tap)",
-          "data-popup-open:bg-raised data-popup-open:text-fg data-popup-open:shadow-[inset_0_0_0_1px_var(--color-edge-strong)]",
-          "focus-visible:shadow-[var(--shadow-focus),inset_0_0_0_1px_var(--color-edge-strong)]",
           "[&_svg:not([class*=size-])]:size-3.5",
-        ],
+        ]
+      : variant === "ghost"
+        ? [
+            "h-6 gap-1 rounded-chip px-1.5 text-label text-fg-muted",
+            "hover:bg-(--wash) hover:text-fg active:bg-hover active:duration-(--dur-tap)",
+            "data-popup-open:bg-(--wash) data-popup-open:text-fg",
+            "focus-visible:shadow-focus",
+            "[&_svg:not([class*=size-])]:size-3",
+          ]
+        : [
+            "h-6.5 gap-1.5 rounded-control pr-1.5 pl-2 text-label text-fg-secondary",
+            "bg-panel/70 shadow-[inset_0_0_0_1px_var(--color-edge)] backdrop-blur-xs",
+            "hover:bg-raised hover:text-fg active:bg-hover active:duration-(--dur-tap)",
+            "data-popup-open:bg-raised data-popup-open:text-fg data-popup-open:shadow-[inset_0_0_0_1px_var(--color-edge-strong)]",
+            "focus-visible:shadow-[var(--shadow-focus),inset_0_0_0_1px_var(--color-edge-strong)]",
+            "[&_svg:not([class*=size-])]:size-3.5",
+          ],
     className,
   );
 
 export function PillLabel({ children, mono }: { children: string; mono?: boolean }) {
   return (
-    <span title={children} className={cn("min-w-0 truncate leading-[18px]", mono && "font-mono")}>
+    <span
+      title={children}
+      className={cn("min-w-0 truncate leading-[1.125rem]", mono && "font-mono")}
+    >
       {children}
     </span>
   );
@@ -57,7 +68,7 @@ export function PillChevron() {
   return (
     <Icon
       icon={ArrowDown01Icon}
-      className="size-2.5 text-fg-faint transition-[rotate,color] duration-150 ease-out group-hover/pill:text-fg-muted group-data-popup-open/pill:rotate-180 group-data-popup-open/pill:text-fg-muted"
+      className="size-3 text-fg-faint transition-[rotate,color] duration-150 ease-out group-hover/pill:text-fg-muted group-data-popup-open/pill:rotate-180 group-data-popup-open/pill:text-fg-muted"
     />
   );
 }
@@ -111,7 +122,7 @@ export function Picker<Value extends string>({
           {options.map((option) => (
             <MenuRadioItem key={option.value} value={option.value}>
               {option.icon}
-              <span className="min-w-0 truncate leading-[18px]">{option.label}</span>
+              <span className="min-w-0 truncate leading-[1.125rem]">{option.label}</span>
             </MenuRadioItem>
           ))}
         </Menu.RadioGroup>

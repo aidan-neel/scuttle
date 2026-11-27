@@ -53,7 +53,7 @@ export function ResizeHandle({ width, onResize, onResizeEnd, onReset }: ResizeHa
       onDoubleClick={onReset}
       className="group/handle absolute inset-y-0 right-0 z-20 flex w-2 cursor-col-resize justify-end outline-none"
     >
-      <span className="my-3 w-px rounded-full bg-edge-strong opacity-0 transition-opacity duration-150 ease-out group-hover/handle:opacity-100 group-focus-visible/handle:bg-fg-muted group-focus-visible/handle:opacity-100 group-active/handle:bg-fg-muted group-active/handle:opacity-100" />
+      <span className="h-full w-px bg-edge-strong opacity-0 transition-opacity duration-150 ease-out group-hover/handle:opacity-100 group-focus-visible/handle:bg-fg-muted group-focus-visible/handle:opacity-100 group-active/handle:bg-fg-muted group-active/handle:opacity-100" />
     </div>
   );
 }

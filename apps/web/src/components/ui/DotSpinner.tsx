@@ -3,13 +3,11 @@ import { cn } from "@/lib/utils";
 
 export type DotSpinnerVariant = "working" | "thinking" | "loading";
 
-const DELAYS: Record<DotSpinnerVariant, ReadonlyArray<number>> = {
-  working: [0, 1, 2, 7, -1, 3, 6, 5, 4],
-  thinking: [0, 1, 2, 1, 2, 3, 2, 3, 4],
-  loading: [2, 1, 2, 1, 0, 1, 2, 1, 2],
+const DURATION_MS: Record<DotSpinnerVariant, number> = {
+  working: 750,
+  thinking: 950,
+  loading: 850,
 };
-
-const STEP: Record<DotSpinnerVariant, number> = { working: 110, thinking: 120, loading: 160 };
 
 interface DotSpinnerProps {
   variant: DotSpinnerVariant;
@@ -18,36 +16,32 @@ interface DotSpinnerProps {
 }
 
 export function DotSpinner({ variant, label, className }: DotSpinnerProps) {
-  const step = STEP[variant];
-  const cycle = variant === "working" ? step * 8 : step * 6;
   const software = isSoftwareRenderer();
 
   return (
-    <span
+    <svg
       role="img"
       aria-label={label}
-      className={cn("grid size-[13px] shrink-0 grid-cols-3 place-items-center", className)}
+      viewBox="0 0 16 16"
+      fill="none"
+      className={cn(
+        "size-3.5 shrink-0",
+        software ? undefined : "animate-spinner motion-reduce:animate-none",
+        className,
+      )}
+      style={software ? undefined : { animationDuration: `${DURATION_MS[variant]}ms` }}
     >
-      {DELAYS[variant].map((slot, index) => (
-        <span
-          key={index}
-          className={cn(
-            "size-[3px] rounded-[0.75px] bg-current",
-            slot < 0
-              ? "opacity-25"
-              : software
-                ? undefined
-                : "animate-dot motion-reduce:animate-none motion-reduce:opacity-60",
-          )}
-          style={
-            slot < 0
-              ? undefined
-              : software
-                ? { opacity: Math.max(0.25, 0.9 - slot * 0.1) }
-                : { animationDelay: `${slot * step - cycle}ms`, animationDuration: `${cycle}ms` }
-          }
-        />
-      ))}
-    </span>
+      <circle cx="8" cy="8" r="5.75" stroke="currentColor" strokeOpacity="0.18" strokeWidth="2" />
+      <circle
+        cx="8"
+        cy="8"
+        r="5.75"
+        pathLength={100}
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeDasharray="30 70"
+      />
+    </svg>
   );
 }

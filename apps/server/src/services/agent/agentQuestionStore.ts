@@ -67,7 +67,7 @@ export const insertQuestion = (db: Database, question: AgentDelegationQuestion):
   ).run(
     question.id,
     question.delegationId,
-    question.agentId,
+    question.agentId ?? null,
     question.childThreadId,
     question.parentThreadId,
     question.parentTurnId ?? null,

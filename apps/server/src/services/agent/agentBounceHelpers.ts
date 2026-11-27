@@ -11,7 +11,11 @@ import type * as EventBus from "../EventBus.ts";
 import { readThreadById, readTurnsForThread } from "../threadStore.ts";
 import { readQuestionById, updateQuestionRow } from "./agentQuestionStore.ts";
 import { readAgentById, updateAgentRow } from "./agentStore.ts";
-import { readDelegationById, updateDelegationRow } from "./agentWorkStore.ts";
+import {
+  readDelegationByDelegationId,
+  readDelegationById,
+  updateDelegationRow,
+} from "./agentWorkStore.ts";
 
 export const MAX_QUESTION_CHARS = 4_000;
 export const MAX_ATTEMPTED_CHARS = 4_000;
@@ -71,10 +75,12 @@ export const applyQuestionPatch = (
 export const restoreDelegationIfWaiting = (
   db: Database,
   eventBus: EventBus.EventBus["Service"],
-  agentId: AgentId,
+  agentId: AgentId | undefined,
   delegationId: AgentDelegationId,
 ): void => {
-  const delegation = readDelegationById(db, agentId, delegationId);
+  const delegation = agentId
+    ? readDelegationById(db, agentId, delegationId)
+    : readDelegationByDelegationId(db, delegationId);
   if (!delegation || delegation.status !== "waiting_parent") return;
   const restored: AgentDelegation = { ...delegation, status: "running" };
   updateDelegationRow(db, restored);

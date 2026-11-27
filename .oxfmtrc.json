@@ -4,6 +4,7 @@
     "dist/**",
     "build/**",
     "target/**",
+    "vendor/**",
     "**/.hutch/**",
     "apps/web/src/routeTree.gen.ts",
     "Cargo.lock",

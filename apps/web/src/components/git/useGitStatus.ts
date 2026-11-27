@@ -11,8 +11,13 @@ export interface GitStatusState {
   readonly replace: (status: GitStatus) => void;
 }
 
+const statusCache = new Map<string, GitStatus>();
+
+const targetCacheKey = (target: GitTargetRef) => `${target.projectId}:${target.threadId ?? ""}`;
+
 export function useGitStatus(target: GitTargetRef, refreshKey: string): GitStatusState {
-  const [status, setStatus] = useState<GitStatus | null>(null);
+  const cacheKey = targetCacheKey(target);
+  const [status, setStatus] = useState<GitStatus | null>(() => statusCache.get(cacheKey) ?? null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -21,6 +26,7 @@ export function useGitStatus(target: GitTargetRef, refreshKey: string): GitStatu
     try {
       const api = await getGitApi();
       const next = await api.getGitStatus(target);
+      statusCache.set(cacheKey, next);
       if (isActive()) {
         setStatus(next);
         setError(null);
@@ -33,11 +39,15 @@ export function useGitStatus(target: GitTargetRef, refreshKey: string): GitStatu
 
   useEffect(() => {
     let active = true;
+    const cached = statusCache.get(cacheKey);
+    if (cached !== undefined) {
+      setStatus(cached);
+    }
     void load(() => active);
     return () => {
       active = false;
     };
-  }, [target.projectId, target.threadId, refreshKey]);
+  }, [cacheKey, refreshKey]);
 
   return {
     status,
@@ -45,6 +55,7 @@ export function useGitStatus(target: GitTargetRef, refreshKey: string): GitStatu
     loading,
     refresh: () => load(() => true),
     replace: (next) => {
+      statusCache.set(cacheKey, next);
       setStatus(next);
       setError(null);
     },

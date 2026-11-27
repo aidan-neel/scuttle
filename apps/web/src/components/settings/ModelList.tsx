@@ -1,11 +1,13 @@
 import { StarIcon } from "@hugeicons/core-free-icons";
 import type { ProviderModel, ProviderSnapshot } from "@scuttle/contracts";
-import { useState } from "react";
+import { motion } from "motion/react";
+import { useId, useState } from "react";
 import { Button } from "@/components/ui/Button.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
 import { Switch } from "@/components/ui/Switch.tsx";
 import { useDisabledModels } from "@/lib/disabledModels.ts";
 import { modelFavoriteKey, useFavoriteModels } from "@/lib/modelFavorites.ts";
+import { spring } from "@/lib/motion.ts";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace.tsx";
 import {
@@ -23,11 +25,13 @@ function UpstreamPill({
   label,
   count,
   active,
+  layoutId,
   onSelect,
 }: {
   readonly label: string;
   readonly count: number;
   readonly active: boolean;
+  readonly layoutId: string;
   readonly onSelect: () => void;
 }) {
   return (
@@ -36,15 +40,23 @@ function UpstreamPill({
       aria-pressed={active}
       onClick={onSelect}
       className={cn(
-        "inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-label outline-none transition-colors duration-(--dur-hover) ease-hover focus-visible:shadow-focus",
-        active
-          ? "bg-white/10 text-fg shadow-[inset_0_0_0_1px_var(--color-edge)]"
-          : "text-fg-muted hover:bg-(--wash) hover:text-fg-secondary",
+        "relative inline-flex h-6 shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-2.5 text-label outline-none transition-colors duration-(--dur-hover) ease-hover active:scale-[0.98] focus-visible:shadow-focus",
+        active ? "text-fg" : "text-fg-muted hover:bg-(--wash) hover:text-fg-secondary",
       )}
     >
-      {label}
-      <span className={cn("font-mono text-meta", active ? "text-fg-muted" : "text-fg-faint")}>
-        {count}
+      {active && (
+        <motion.span
+          layoutId={layoutId}
+          transition={spring.snappy}
+          aria-hidden
+          className="absolute inset-0 rounded-full bg-fg/10 shadow-[inset_0_0_0_1px_var(--color-edge)]"
+        />
+      )}
+      <span className="relative z-10 inline-flex items-center gap-1.5">
+        {label}
+        <span className={cn("font-mono text-meta", active ? "text-fg-muted" : "text-fg-faint")}>
+          {count}
+        </span>
       </span>
     </button>
   );
@@ -61,6 +73,8 @@ function UpstreamPills({
   readonly active: string;
   readonly onSelect: (id: string) => void;
 }) {
+  const pillId = useId();
+  const layoutId = `${pillId}-upstream`;
   return (
     <div
       role="group"
@@ -71,6 +85,7 @@ function UpstreamPills({
         label="All"
         count={total}
         active={active === ALL_UPSTREAMS}
+        layoutId={layoutId}
         onSelect={() => onSelect(ALL_UPSTREAMS)}
       />
       {groups.map((group) => (
@@ -79,6 +94,7 @@ function UpstreamPills({
           label={group.label}
           count={group.count}
           active={active === group.id}
+          layoutId={layoutId}
           onSelect={() => onSelect(group.id)}
         />
       ))}
@@ -90,6 +106,7 @@ function ModelRow({
   model,
   showUpstream,
   enabled,
+  canMakeDefault,
   starred,
   isDefault,
   onToggleEnabled,
@@ -99,6 +116,7 @@ function ModelRow({
   readonly model: ProviderModel;
   readonly showUpstream: boolean;
   readonly enabled: boolean;
+  readonly canMakeDefault: boolean;
   readonly starred: boolean;
   readonly isDefault: boolean;
   readonly onToggleEnabled: (enabled: boolean) => void;
@@ -110,12 +128,12 @@ function ModelRow({
   return (
     <div className={cn("group flex items-center gap-2.5 px-4 py-2", !enabled && "opacity-50")}>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
+        <div className="flex min-h-6 items-center gap-2">
           <span className="truncate text-body text-fg" title={model.slug}>
             {name}
           </span>
           {isDefault && enabled && (
-            <span className="shrink-0 rounded-chip bg-primary/16 px-1.5 py-0.5 text-meta text-input">
+            <span className="shrink-0 rounded-chip bg-primary/16 px-1.5 py-0.5 text-meta font-medium text-input">
               Default
             </span>
           )}
@@ -126,12 +144,12 @@ function ModelRow({
           </div>
         )}
       </div>
-      {enabled && !isDefault && (
+      {canMakeDefault && !isDefault && (
         <Button
           variant="ghost"
           size="sm"
           onClick={onMakeDefault}
-          className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
+          className="cursor-pointer opacity-0 transition-opacity duration-(--dur-hover) group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
         >
           Make default
         </Button>
@@ -157,7 +175,8 @@ function ModelRow({
 }
 
 export function ModelList({ provider }: { readonly provider: ProviderSnapshot }) {
-  const { defaultModelSelection, setDefaultModelSelection } = useWorkspace();
+  const { defaultModelSelection, setDefaultModelSelection, reconcileDefaultModelSelection } =
+    useWorkspace();
   const { isFavorite, toggle } = useFavoriteModels();
   const { isDisabled, setDisabled, setManyDisabled } = useDisabledModels();
   const [query, setQuery] = useState("");
@@ -169,6 +188,11 @@ export function ModelList({ provider }: { readonly provider: ProviderSnapshot })
   const visibleKeys = visible.map((model) => modelFavoriteKey(provider.id, model.slug));
   const enabledVisibleCount = visibleKeys.filter((key) => !isDisabled(key)).length;
   const allVisibleDisabled = visible.length > 0 && enabledVisibleCount === 0;
+  const providerReady = provider.enabled && provider.status === "ready";
+  const currentDefaultKey = modelFavoriteKey(
+    defaultModelSelection.providerId,
+    defaultModelSelection.model,
+  );
 
   if (provider.models.length === 0) {
     return (
@@ -194,7 +218,13 @@ export function ModelList({ provider }: { readonly provider: ProviderSnapshot })
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setManyDisabled(visibleKeys, !allVisibleDisabled)}
+              onClick={() => {
+                const disableAll = !allVisibleDisabled;
+                setManyDisabled(visibleKeys, disableAll);
+                if (disableAll && visibleKeys.includes(currentDefaultKey)) {
+                  reconcileDefaultModelSelection();
+                }
+              }}
               className="shrink-0 text-meta text-fg-muted"
             >
               {allVisibleDisabled ? "Enable all" : "Disable all"}
@@ -215,29 +245,36 @@ export function ModelList({ provider }: { readonly provider: ProviderSnapshot })
           />
         )}
       </div>
-      <div className="max-h-[440px] divide-y divide-line overflow-y-auto overscroll-contain">
+      <div className="scrollbar-none max-h-[27.5rem] divide-y divide-line overflow-y-auto overscroll-contain">
         {visible.map((model) => {
           const key = modelFavoriteKey(provider.id, model.slug);
           const enabled = !isDisabled(key);
+          const isDefault =
+            defaultModelSelection.providerId === provider.id &&
+            defaultModelSelection.model === model.slug;
+          const effort = model.defaultEffort ?? model.efforts[0];
           return (
             <ModelRow
               key={model.slug}
               model={model}
               showUpstream={showUpstream}
               enabled={enabled}
+              canMakeDefault={enabled && providerReady}
               starred={isFavorite(key)}
-              isDefault={
-                defaultModelSelection.providerId === provider.id &&
-                defaultModelSelection.model === model.slug
-              }
-              onToggleEnabled={(nextEnabled) => setDisabled(key, !nextEnabled)}
+              isDefault={isDefault}
+              onToggleEnabled={(nextEnabled) => {
+                setDisabled(key, !nextEnabled);
+                if (!nextEnabled && isDefault) {
+                  reconcileDefaultModelSelection();
+                }
+              }}
               onToggleFavorite={() => toggle(key)}
               onMakeDefault={() =>
                 setDefaultModelSelection({
                   providerId: provider.id,
                   providerKind: provider.kind,
                   model: model.slug,
-                  ...(model.defaultEffort !== undefined ? { effort: model.defaultEffort } : {}),
+                  ...(effort !== undefined ? { effort } : {}),
                 })
               }
             />

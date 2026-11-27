@@ -9,12 +9,25 @@ import type {
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
+import { Skeleton } from "skullet/react";
 import { ThreadGitPopover } from "@/components/git/ThreadGitPopover.tsx";
-import { Composer, type ComposerSubmitPayload } from "@/components/home/Composer.tsx";
+import {
+  Composer,
+  type ComposerHandle,
+  type ComposerSubmitPayload,
+} from "@/components/home/Composer.tsx";
+import {
+  type ComposerSubmitOutcome,
+  toSubmitOutcome,
+} from "@/components/home/ComposerBottomBar.tsx";
 import { estimateContextUsage } from "@/components/home/contextUsage.ts";
+import { QueuedTurnsTray, useQueuedTurnsTray } from "@/components/home/QueuedTurnsTray.tsx";
 import { useThreadLocationControls } from "@/components/home/useThreadLocationControls.ts";
+import { WorkspaceHeaderActions } from "@/components/shell/WorkspaceHeaderContext.tsx";
+import { RewindDialog, useRewindFlow } from "@/components/thread/RewindDialog.tsx";
 import { ScrollRuler } from "@/components/thread/ScrollRuler.tsx";
 import { ScrollToEndButton } from "@/components/thread/ScrollToEndButton.tsx";
+import { ThreadDelegationsBar } from "@/components/thread/ThreadDelegationsBar.tsx";
 import {
   computeInitialVisibleStart,
   expandVisibleStart,
@@ -22,11 +35,12 @@ import {
   LOAD_EARLIER_BATCH,
   ThreadTurnList,
 } from "@/components/thread/ThreadTurnList.tsx";
+import { QuestionPromptPanel } from "@/components/thread/QuestionPromptPanel.tsx";
+import { findPendingQuestion } from "@/components/thread/questionModel.ts";
 import { useStickToBottom } from "@/components/thread/useStickToBottom.ts";
 import { Button } from "@/components/ui/Button.tsx";
-import { DotSpinner } from "@/components/ui/DotSpinner.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
-import { Identicon } from "@/components/ui/Identicon.tsx";
+import { ConversationPageSkeleton } from "@/components/ui/SkeletonSamples.tsx";
 import { easeOut } from "@/lib/motion.ts";
 import { useThreadDetail, useWorkspaceActions, useWorkspaceSelector } from "@/lib/workspace.tsx";
 
@@ -71,16 +85,16 @@ function ThreadPage() {
     );
   }
 
-  if (!detail) {
-    return (
-      <section className="flex flex-1 items-center justify-center gap-2 text-label text-fg-muted">
-        <DotSpinner variant="loading" label="Loading thread" />
-        Loading thread…
-      </section>
-    );
-  }
-
-  return <ThreadView detail={detail} />;
+  return (
+    <Skeleton
+      loading={detail === undefined}
+      id="thread-page"
+      label="Loading thread"
+      className="skullet-fill"
+    >
+      {detail ? <ThreadView detail={detail} /> : <ConversationPageSkeleton showBreadcrumb />}
+    </Skeleton>
+  );
 }
 
 function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
@@ -91,6 +105,7 @@ function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
   const [compacting, setCompacting] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const composerRef = useRef<ComposerHandle | null>(null);
 
   const { thread, turns } = detail;
   const [visibleWindow, setVisibleWindow] = useState<{
@@ -131,13 +146,17 @@ function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
     });
   };
 
-  const { isAtBottom, scrollToBottom, unpin } = useStickToBottom(
-    scrollRef,
-    contentRef,
-    turns,
-    thread.id,
-  );
+  const { isAtBottom, scrollToBottom, unpin, anchoredTurnId, anchoredTurnMinHeightPx } =
+    useStickToBottom(scrollRef, contentRef, turns, thread.id);
   const isRunning = thread.status.kind === "running" || thread.status.kind === "needs-input";
+  const queue = useQueuedTurnsTray({
+    detail,
+    running: isRunning,
+    composerRef,
+    onError: setSubmitError,
+  });
+  const rewind = useRewindFlow({ detail, composerRef });
+  const pendingQuestion = findPendingQuestion(turns);
   const contextUsage = estimateContextUsage({
     turns,
     model: thread.modelSelection.model,
@@ -162,16 +181,21 @@ function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
     });
   };
 
-  const handleSubmit = async (payload: ComposerSubmitPayload) => {
+  const handleSubmit = async (payload: ComposerSubmitPayload): Promise<ComposerSubmitOutcome> => {
     setSubmitError(null);
     try {
-      await sendTurn(thread.id, {
+      const edited = await queue.submitEdit(payload);
+      if (edited !== null) return edited;
+      const result = await sendTurn(thread.id, {
         prompt: payload.prompt,
         modelSelection: payload.modelSelection,
+        ...(payload.mode !== undefined ? { mode: payload.mode } : {}),
         ...(payload.attachments.length > 0 ? { attachments: [...payload.attachments] } : {}),
       });
+      return toSubmitOutcome(result, queue.tray.items);
     } catch (error) {
       setSubmitError(describeApiError(error, "Failed to send message."));
+      return { kind: "failed" };
     }
   };
 
@@ -198,13 +222,7 @@ function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
 
   return (
     <section className="flex min-h-0 flex-1 flex-col">
-      <header className="flex h-11 shrink-0 items-center gap-2 border-b border-line px-4">
-        <Identicon name={thread.projectName} size="sm" />
-        <span className="shrink-0 text-label font-medium text-fg-secondary">
-          {thread.projectName}
-        </span>
-        <span className="text-fg-faint">/</span>
-        <h1 className="min-w-0 flex-1 truncate text-body font-medium text-fg">{thread.title}</h1>
+      <WorkspaceHeaderActions>
         <ThreadGitPopover
           target={{ projectId: thread.projectId, threadId: thread.id }}
           fallbackBranch={thread.branch}
@@ -216,7 +234,7 @@ function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
             Stop
           </Button>
         )}
-      </header>
+      </WorkspaceHeaderActions>
 
       <motion.div
         key={thread.id}
@@ -232,15 +250,24 @@ function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
           onEnsureTurnVisible={handleEnsureTurnVisible}
           onBeforeJump={unpin}
         />
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 pt-8 pb-10">
+        <div
+          ref={scrollRef}
+          className="flex-1 overflow-y-auto px-4 pt-8 pb-10 [scrollbar-gutter:stable_both-edges]"
+        >
           <div className="mx-auto w-full max-w-composer">
+            <ThreadDelegationsBar threadId={thread.id} projectId={thread.projectId} />
             <ThreadTurnList
               turns={turns}
               threadId={thread.id}
               scrollRef={scrollRef}
               contentRef={contentRef}
               visibleStart={visibleStart}
+              anchoredTurnId={anchoredTurnId}
+              anchoredTurnMinHeightPx={anchoredTurnMinHeightPx}
               onLoadEarlier={handleLoadEarlier}
+              checkpoints={detail.checkpoints}
+              visualizations={detail.visualizations}
+              onRewind={isRunning ? undefined : rewind.requestRewind}
               onRespondApproval={respondApproval}
             />
           </div>
@@ -252,33 +279,45 @@ function ThreadView({ detail }: { readonly detail: ThreadDetail }) {
         <ScrollToEndButton visible={!isAtBottom} onClick={scrollToBottom} />
       </motion.div>
 
-      <div className="shrink-0 px-4 pt-0 pb-2">
+      <div className="shrink-0 px-4 pt-0 pb-6">
         <div className="mx-auto w-full max-w-composer space-y-2">
           {submitError && (
             <div className="rounded-control border border-danger/30 bg-danger/10 px-3 py-1.5 text-label text-danger">
               {submitError}
             </div>
           )}
-          <Composer
-            id={`composer-${thread.id}`}
-            placeholder={
-              isRunning ? "Agent is working… press Esc or click Stop to interrupt" : undefined
-            }
-            providers={providers}
-            modelSelection={thread.modelSelection}
-            onModelSelectionChange={handleModelSelectionChange}
-            running={isRunning}
-            onSubmit={handleSubmit}
-            onStop={handleStop}
-            interactionMode={thread.interactionMode}
-            onInteractionModeChange={handleInteractionModeChange}
-            onCompact={compacting ? undefined : handleCompact}
-            filesRoot={thread.cwd}
-            status={status}
-            contextUsage={contextUsage}
-          />
+          <div>
+            <QueuedTurnsTray {...queue.tray} />
+            <QuestionPromptPanel
+              approval={pendingQuestion}
+              returnFocusId={`composer-${thread.id}`}
+              onRespond={(approvalId, input) => respondApproval(thread.id, approvalId, input)}
+            />
+            <Composer
+              ref={composerRef}
+              id={`composer-${thread.id}`}
+              compact
+              providers={providers}
+              modelSelection={thread.modelSelection}
+              onModelSelectionChange={handleModelSelectionChange}
+              running={isRunning}
+              onSubmit={handleSubmit}
+              onStop={handleStop}
+              interactionMode={thread.interactionMode}
+              onInteractionModeChange={handleInteractionModeChange}
+              onCompact={compacting ? undefined : handleCompact}
+              filesRoot={thread.cwd}
+              status={status}
+              contextUsage={contextUsage}
+              threadCompactAtTokens={thread.compactAtTokens}
+              onCompactAtChange={(tokens) =>
+                updateThread(thread.id, { compactAtTokens: tokens }).then(() => undefined)
+              }
+            />
+          </div>
         </div>
       </div>
+      <RewindDialog {...rewind.dialog} />
     </section>
   );
 }

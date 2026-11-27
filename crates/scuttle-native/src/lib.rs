@@ -1,3 +1,6 @@
+pub mod json_cursor;
+pub mod usage_scan;
+
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

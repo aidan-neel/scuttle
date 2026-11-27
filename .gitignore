@@ -14,6 +14,7 @@ apps/desktop/artifacts/
 
 # TanStack Router generated tree
 apps/web/src/routeTree.gen.ts
+.tanstack/
 
 # Local databases & runtime data
 *.sqlite

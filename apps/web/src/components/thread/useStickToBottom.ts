@@ -4,12 +4,23 @@ import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "re
 export const STICK_THRESHOLD_PX = 220;
 export const AT_BOTTOM_PX = 32;
 export const UNPIN_SUPPRESS_MS = 800;
+export const SCROLL_VERTICAL_PADDING_PX = 60;
 
 export interface StickToBottom {
   readonly isAtBottom: boolean;
   readonly scrollToBottom: () => void;
   readonly unpin: () => void;
+  readonly anchoredTurnId: string | null;
+  readonly anchoredTurnMinHeightPx: number;
 }
+
+export const computeAnchoredTurnMinHeight = (
+  viewportHeight: number,
+  verticalPaddingPx: number = SCROLL_VERTICAL_PADDING_PX,
+): number => Math.max(0, Math.floor(viewportHeight - verticalPaddingPx));
+
+export const isAnchorableTurn = (turn: Pick<ThreadTurn, "origin"> | undefined): boolean =>
+  turn !== undefined && turn.origin !== "system";
 
 export interface PinTransitionInput {
   readonly currentlyPinned: boolean;
@@ -46,18 +57,90 @@ export function useStickToBottom(
   turns: ReadonlyArray<ThreadTurn>,
   resetKey?: string,
 ): StickToBottom {
+  const lastTurn = turns.at(-1);
+  const lastTurnId = lastTurn?.id ?? null;
+  const lastTurnAnchorable = isAnchorableTurn(lastTurn);
+  const lastTurnRunning = lastTurnAnchorable && lastTurn?.status === "running";
+
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const [anchor, setAnchor] = useState<{
+    readonly key: string | undefined;
+    readonly turnId: string | null;
+  }>(() => ({
+    key: resetKey,
+    turnId: lastTurnRunning ? lastTurnId : null,
+  }));
+
   const pinnedRef = useRef(true);
+  const autoScrollingRef = useRef(false);
   const prevScrollTopRef = useRef(0);
   const prevDistanceRef = useRef(0);
   const suppressPinUntilRef = useRef(0);
   const resizeRafRef = useRef<number | null>(null);
+  const prevTrackRef = useRef<{
+    readonly key: string | undefined;
+    readonly lastTurnId: string | null;
+    readonly count: number;
+  }>({ key: resetKey, lastTurnId, count: turns.length });
   const hasTurns = turns.length > 0;
+
+  const anchoredTurnId =
+    anchor.key === resetKey ? anchor.turnId : lastTurnRunning ? lastTurnId : null;
+  const anchoredTurnMinHeightPx =
+    anchoredTurnId !== null ? computeAnchoredTurnMinHeight(viewportHeight) : 0;
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const syncHeight = () => {
+      const next = el.clientHeight;
+      setViewportHeight((prev) => (prev === next ? prev : next));
+    };
+    syncHeight();
+    const observer = new ResizeObserver(syncHeight);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [resetKey, scrollRef]);
+
+  useLayoutEffect(() => {
+    const prev = prevTrackRef.current;
+    const sameThread = prev.key === resetKey;
+    const appendedTurn =
+      sameThread &&
+      lastTurnId !== null &&
+      lastTurnId !== prev.lastTurnId &&
+      turns.length > prev.count;
+    prevTrackRef.current = { key: resetKey, lastTurnId, count: turns.length };
+
+    if (!sameThread) {
+      setAnchor({ key: resetKey, turnId: lastTurnRunning ? lastTurnId : null });
+      return;
+    }
+
+    if (appendedTurn && lastTurnAnchorable) {
+      setAnchor({ key: resetKey, turnId: lastTurnId });
+      pinnedRef.current = true;
+      autoScrollingRef.current = true;
+      suppressPinUntilRef.current = 0;
+    }
+  }, [lastTurnAnchorable, lastTurnId, lastTurnRunning, resetKey, turns.length]);
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el || anchoredTurnId === null || !autoScrollingRef.current) return;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollTo({ top: el.scrollHeight, behavior: reduceMotion ? "auto" : "smooth" });
+    prevScrollTopRef.current = el.scrollTop;
+    prevDistanceRef.current = distanceFromBottom(el);
+    setIsAtBottom(true);
+  }, [anchoredTurnId, anchoredTurnMinHeightPx, scrollRef]);
 
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     pinnedRef.current = true;
+    autoScrollingRef.current = false;
     suppressPinUntilRef.current = 0;
     el.scrollTop = el.scrollHeight;
     prevScrollTopRef.current = el.scrollTop;
@@ -72,10 +155,10 @@ export function useStickToBottom(
     if (!target) return;
 
     const observer = new ResizeObserver(() => {
-      if (!pinnedRef.current || resizeRafRef.current !== null) return;
+      if (!pinnedRef.current || autoScrollingRef.current || resizeRafRef.current !== null) return;
       resizeRafRef.current = requestAnimationFrame(() => {
         resizeRafRef.current = null;
-        if (!pinnedRef.current) return;
+        if (!pinnedRef.current || autoScrollingRef.current) return;
         el.scrollTop = el.scrollHeight;
         prevScrollTopRef.current = el.scrollTop;
         prevDistanceRef.current = distanceFromBottom(el);
@@ -106,15 +189,27 @@ export function useStickToBottom(
     const onScroll = () => {
       const scrollTop = el.scrollTop;
       const dist = distanceFromBottom(el);
-      pinnedRef.current = computeNextPinned({
-        currentlyPinned: pinnedRef.current,
-        prevScrollTop: prevScrollTopRef.current,
-        prevDistanceFromBottom: prevDistanceRef.current,
-        scrollTop,
-        distanceFromBottom: dist,
-        nowMs: performance.now(),
-        suppressPinUntilMs: suppressPinUntilRef.current,
-      });
+      if (autoScrollingRef.current) {
+        if (scrollTop < prevScrollTopRef.current && dist > prevDistanceRef.current) {
+          autoScrollingRef.current = false;
+          pinnedRef.current = false;
+        } else if (dist <= AT_BOTTOM_PX) {
+          autoScrollingRef.current = false;
+          pinnedRef.current = true;
+        } else {
+          pinnedRef.current = true;
+        }
+      } else {
+        pinnedRef.current = computeNextPinned({
+          currentlyPinned: pinnedRef.current,
+          prevScrollTop: prevScrollTopRef.current,
+          prevDistanceFromBottom: prevDistanceRef.current,
+          scrollTop,
+          distanceFromBottom: dist,
+          nowMs: performance.now(),
+          suppressPinUntilMs: suppressPinUntilRef.current,
+        });
+      }
       prevScrollTopRef.current = scrollTop;
       prevDistanceRef.current = dist;
       if (rafId !== null) return;
@@ -135,6 +230,7 @@ export function useStickToBottom(
   }, [hasTurns, resetKey, scrollRef]);
 
   const unpin = () => {
+    autoScrollingRef.current = false;
     pinnedRef.current = false;
     suppressPinUntilRef.current = performance.now() + UNPIN_SUPPRESS_MS;
     if (resizeRafRef.current !== null) {
@@ -147,10 +243,11 @@ export function useStickToBottom(
     const el = scrollRef.current;
     if (!el) return;
     pinnedRef.current = true;
+    autoScrollingRef.current = true;
     suppressPinUntilRef.current = 0;
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     el.scrollTo({ top: el.scrollHeight, behavior: reduceMotion ? "auto" : "smooth" });
   };
 
-  return { isAtBottom, scrollToBottom, unpin };
+  return { isAtBottom, scrollToBottom, unpin, anchoredTurnId, anchoredTurnMinHeightPx };
 }

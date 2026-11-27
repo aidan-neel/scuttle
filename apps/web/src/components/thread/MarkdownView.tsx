@@ -19,7 +19,7 @@ const MAX_STREAM_CACHES = 128;
 
 const streamCaches = new Map<string, MarkdownStreamCache>();
 
-export function useSmoothedStream(content: string, streaming: boolean) {
+function useSmoothedStream(content: string, streaming: boolean) {
   const reducedMotion = useReducedMotion() === true;
   const animate = streaming && !reducedMotion && !isSoftwareRenderer();
   const target = content.length;
@@ -73,13 +73,13 @@ function CodeBlock({ code, lang }: { readonly code: string; readonly lang?: stri
         <button
           type="button"
           onClick={copy}
-          className="inline-flex items-center gap-1 rounded-chip px-1.5 py-0.5 text-meta text-fg-muted transition-colors hover:bg-white/6 hover:text-fg"
+          className="inline-flex items-center gap-1 rounded-chip px-1.5 py-0.5 text-meta text-fg-muted transition-colors hover:bg-fg/6 hover:text-fg"
         >
           <Icon icon={copied ? Tick02Icon : Copy01Icon} className="size-3" />
           {copied ? "Copied" : "Copy"}
         </button>
       </div>
-      <pre className="overflow-x-auto p-3.5 font-mono text-[13.5px] leading-[1.6] text-fg-secondary">
+      <pre className="overflow-x-auto p-3.5 font-mono text-[0.84375rem] leading-[1.6] text-fg-secondary">
         <code>{code}</code>
       </pre>
     </div>
@@ -97,7 +97,7 @@ const renderInline = (tokens: ReadonlyArray<Token> | undefined, keyPrefix: strin
       }
       case "strong":
         return (
-          <strong key={key} className="font-semibold text-fg">
+          <strong key={key} className="font-bold text-fg">
             {renderInline((token as Tokens.Strong).tokens, key)}
           </strong>
         );
@@ -117,7 +117,7 @@ const renderInline = (tokens: ReadonlyArray<Token> | undefined, keyPrefix: strin
         return (
           <code
             key={key}
-            className="rounded-[5px] bg-white/7 px-1.5 py-0.5 font-mono text-[13.5px] text-fg"
+            className="rounded-[0.3125rem] bg-fg/7 px-1.5 py-0.5 font-mono text-[0.84375rem] font-normal text-fg"
           >
             {(token as Tokens.Codespan).text}
           </code>
@@ -158,10 +158,10 @@ const renderBlock = (token: Token, key: string): ReactNode => {
       const h = token as Tokens.Heading;
       const sizeClass =
         h.depth === 1
-          ? "mt-5 mb-2 text-[18px] font-semibold tracking-tight text-fg"
+          ? "mt-5 mb-2 text-[1.125rem] font-bold tracking-tight text-fg"
           : h.depth === 2
-            ? "mt-4 mb-2 text-[16px] font-semibold tracking-tight text-fg"
-            : "mt-3.5 mb-1.5 text-[15px] font-semibold text-fg";
+            ? "mt-4 mb-2 text-[1rem] font-bold tracking-tight text-fg"
+            : "mt-3.5 mb-1.5 text-[0.9375rem] font-bold text-fg";
       return (
         <div key={key} className={sizeClass}>
           {renderInline(h.tokens, key)}
@@ -286,7 +286,7 @@ function StreamingMarkdownBody({ content }: { readonly content: string }) {
   const { settled, tail } = lexStreamingMarkdown(shown, cache);
 
   return (
-    <div className="text-[15px] leading-[1.65] text-fg">
+    <div className="text-[0.9375rem] leading-[1.65] font-medium text-fg">
       {settled.map((token, idx) =>
         token.type === "space" ? null : (
           <MarkdownBlock key={`s-${idx}`} token={token} blockKey={`s-${idx}`} />
@@ -308,7 +308,7 @@ const StaticMarkdownBody = memo(function StaticMarkdownBody({
 }) {
   const tokens = marked.lexer(content);
   return (
-    <div className="text-[15px] leading-[1.65] text-fg">
+    <div className="text-[0.9375rem] leading-[1.65] font-medium text-fg">
       {tokens.map((token, idx) =>
         token.type === "space" ? null : (
           <MarkdownBlock key={`m-${idx}`} token={token} blockKey={`m-${idx}`} />

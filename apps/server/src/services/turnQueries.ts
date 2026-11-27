@@ -11,6 +11,8 @@ import {
   type TurnOrigin,
   type TurnStatus,
   TurnUsage,
+  UserInputAnswers,
+  UserInputQuestion,
 } from "@scuttle/contracts";
 import { ActivityId, ApprovalId, ThreadId, TurnId } from "@scuttle/shared/ids";
 import * as Schema from "effect/Schema";
@@ -59,8 +61,11 @@ export interface ApprovalRow {
   readonly description: string | null;
   readonly command: string | null;
   readonly options_json: string;
+  readonly questions_json?: string | null;
   readonly status: string;
   readonly selected_option_id: string | null;
+  readonly answers_json?: string | null;
+  readonly dismissed?: number | null;
   readonly created_at: string;
 }
 
@@ -108,6 +113,8 @@ export const safeJsonParse = (raw: string): unknown => {
 export const decodeTurnUsage = Schema.decodeUnknownOption(TurnUsage);
 const decodeModelSelection = Schema.decodeUnknownOption(ModelSelection);
 const decodeApprovalOptions = Schema.decodeUnknownOption(Schema.Array(ApprovalOption));
+const decodeUserInputQuestions = Schema.decodeUnknownOption(Schema.Array(UserInputQuestion));
+const decodeUserInputAnswers = Schema.decodeUnknownOption(UserInputAnswers);
 
 export const rowToActivity = (row: ActivityRow): ActivityItem => ({
   id: ActivityId.make(row.id),
@@ -125,6 +132,12 @@ export const rowToActivity = (row: ActivityRow): ActivityItem => ({
 
 export const rowToApproval = (row: ApprovalRow): PendingApproval => {
   const optionsOpt = decodeApprovalOptions(safeJsonParse(row.options_json));
+  const questionsOpt = row.questions_json
+    ? decodeUserInputQuestions(safeJsonParse(row.questions_json))
+    : null;
+  const answersOpt = row.answers_json
+    ? decodeUserInputAnswers(safeJsonParse(row.answers_json))
+    : null;
   return {
     id: ApprovalId.make(row.id),
     threadId: ThreadId.make(row.thread_id),
@@ -134,8 +147,11 @@ export const rowToApproval = (row: ApprovalRow): PendingApproval => {
     ...(row.description ? { description: row.description } : {}),
     ...(row.command ? { command: row.command } : {}),
     options: optionsOpt._tag === "Some" ? [...optionsOpt.value] : [],
+    ...(questionsOpt && questionsOpt._tag === "Some" ? { questions: [...questionsOpt.value] } : {}),
     status: row.status === "resolved" ? "resolved" : "pending",
     ...(row.selected_option_id ? { selectedOptionId: row.selected_option_id } : {}),
+    ...(answersOpt && answersOpt._tag === "Some" ? { answers: answersOpt.value } : {}),
+    ...(row.dismissed === 1 ? { dismissed: true } : {}),
     createdAt: row.created_at,
   };
 };

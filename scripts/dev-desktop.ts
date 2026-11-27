@@ -1,13 +1,9 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import { isWslHost, readWindowsHostEnv, toHostFsPath, withWslEnv } from "./desktop-wsl.ts";
 
 const WEB_DEV_URL = process.env.SCUTTLE_WEB_DEV_URL ?? "http://127.0.0.1:5173";
 const REPO_ROOT = NodePath.resolve(import.meta.dirname, "..");
-
-const isWsl = (): boolean =>
-  process.platform === "linux" &&
-  process.env.SCUTTLE_DESKTOP_FORCE_LINUX !== "1" &&
-  (Boolean(process.env.WSL_DISTRO_NAME) || Boolean(process.env.WSL_INTEROP));
 
 const waitForHttp = async (url: string, timeoutMs: number): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
@@ -25,56 +21,13 @@ const waitForHttp = async (url: string, timeoutMs: number): Promise<void> => {
   throw new Error(`Timed out waiting for ${url} to become ready.`);
 };
 
-const readWindowsCommandOutput = async (command: string): Promise<string> => {
-  const proc = Bun.spawn(["cmd.exe", "/c", command], {
-    cwd: "/mnt/c",
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-  if (exitCode !== 0) {
-    throw new Error(`Windows command failed (${exitCode}): ${stderr.trim() || command}`);
-  }
-  return stdout.trim();
-};
-
-const toWslPath = async (windowsPath: string): Promise<string> => {
-  const proc = Bun.spawn(["wslpath", "-u", windowsPath], {
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const stdout = await new Response(proc.stdout).text();
-  const exitCode = await proc.exited;
-  if (exitCode !== 0) {
-    throw new Error(`Failed to convert Windows path: ${windowsPath}`);
-  }
-  return stdout.trim();
-};
-
 const syncWindowsDevStage = async (): Promise<{
   readonly stageLinuxDir: string;
   readonly nodeExeWslPath: string;
 }> => {
-  const localAppData = await readWindowsCommandOutput("echo %LOCALAPPDATA%");
-  const nodeExeWinPath = (await readWindowsCommandOutput("where node"))
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find((line) => line.length > 0);
-  if (nodeExeWinPath === undefined) {
-    throw new Error("Could not locate Windows node.exe via `where node`.");
-  }
-
-  const stageWinDir = `${localAppData}\\Scuttle\\desktop-dev`;
-  const [stageLinuxDir, nodeExeWslPath] = await Promise.all([
-    toWslPath(stageWinDir),
-    toWslPath(nodeExeWinPath),
-  ]);
+  const winEnv = await readWindowsHostEnv();
+  const stageWinDir = `${winEnv.localAppDataWin}\\Scuttle\\desktop-dev`;
+  const stageLinuxDir = await toHostFsPath(stageWinDir);
 
   const desktopDir = NodePath.join(REPO_ROOT, "apps/desktop");
   const bootstrapLink = NodePath.join(desktopDir, "node_modules/electrobun");
@@ -100,10 +53,35 @@ const syncWindowsDevStage = async (): Promise<{
     NodePath.join(stageLinuxDir, "src/bun/bridgePreload.ts"),
   );
   NodeFS.copyFileSync(
+    NodePath.join(desktopDir, "src/bun/windowControls.ts"),
+    NodePath.join(stageLinuxDir, "src/bun/windowControls.ts"),
+  );
+  NodeFS.copyFileSync(
+    NodePath.join(desktopDir, "src/bun/windowIcon.ts"),
+    NodePath.join(stageLinuxDir, "src/bun/windowIcon.ts"),
+  );
+  NodeFS.copyFileSync(
     NodePath.join(desktopDir, "src/bun/dev-shell.ts"),
     NodePath.join(stageLinuxDir, "src/bun/dev-shell.ts"),
   );
 
+  const assetsDir = NodePath.join(desktopDir, "assets");
+  const winIconRelPath = NodeFS.existsSync(NodePath.join(assetsDir, "icon.ico"))
+    ? "assets/icon.ico"
+    : NodeFS.existsSync(NodePath.join(assetsDir, "icon.iconset/icon_256x256.png"))
+      ? "assets/icon.iconset/icon_256x256.png"
+      : null;
+  if (winIconRelPath !== null) {
+    NodeFS.cpSync(assetsDir, NodePath.join(stageLinuxDir, "assets"), {
+      recursive: true,
+      force: true,
+    });
+  }
+
+  const winIconBlock =
+    winIconRelPath !== null
+      ? `,\n    win: {\n      icon: ${JSON.stringify(winIconRelPath)},\n    }`
+      : "";
   const devConfig = `export default {
   app: {
     name: "Scuttle Dev",
@@ -113,28 +91,19 @@ const syncWindowsDevStage = async (): Promise<{
   build: {
     bun: {
       entrypoint: "src/bun/dev-shell.ts",
-    },
+    }${winIconBlock}
   },
 };
 `;
   NodeFS.writeFileSync(NodePath.join(stageLinuxDir, "electrobun.config.ts"), devConfig);
 
-  return { stageLinuxDir, nodeExeWslPath };
-};
-
-const withWslEnv = (keys: readonly string[]): Record<string, string | undefined> => {
-  const existing = process.env.WSLENV?.trim();
-  const merged = existing ? `${existing}:${keys.join(":")}` : keys.join(":");
-  return {
-    ...process.env,
-    WSLENV: merged,
-  };
+  return { stageLinuxDir, nodeExeWslPath: winEnv.nodeExeExecPath };
 };
 
 const buildOnly = process.argv.includes("--build-only");
 
 if (buildOnly) {
-  if (!isWsl()) {
+  if (!isWslHost()) {
     const proc = Bun.spawn(["bun", "--filter", "@scuttle/desktop", "build"], {
       cwd: REPO_ROOT,
       stdin: "inherit",
@@ -187,7 +156,7 @@ process.on("SIGTERM", () => {
 try {
   await waitForHttp(WEB_DEV_URL, 20_000);
 
-  if (isWsl()) {
+  if (isWslHost()) {
     const { stageLinuxDir, nodeExeWslPath } = await syncWindowsDevStage();
     desktop = Bun.spawn([nodeExeWslPath, "bootstrap\\bin\\electrobun.cjs", "dev"], {
       cwd: stageLinuxDir,

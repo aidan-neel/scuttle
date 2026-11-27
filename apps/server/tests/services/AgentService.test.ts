@@ -330,13 +330,19 @@ describe("AgentService", () => {
           expect(checkIn.openIssues).toBe(2);
           expect(checkIn.summary).toContain("PR readiness");
 
-          // Verify Agent turn receives <scuttle_agent_context> + SCUTTLE_API_URL / SCUTTLE_AGENT_ID.
           const agentTurn = yield* agents.sendTurn(primaryAgent.id, {
             prompt: "Summarize open issues",
           });
           expect(agentTurn.userMessage).toBe("Summarize open issues");
-
-          // Clean up worktree created for assigned.delegation.childThreadId.
+          yield* Effect.promise(() =>
+            waitUntil(() =>
+              recordedTurns.some(
+                (t) =>
+                  t.extraEnv?.SCUTTLE_AGENT_ID === primaryAgent.id &&
+                  t.prompt.includes("<scuttle_agent_context>"),
+              ),
+            ),
+          );
           yield* threads.remove(assigned.delegation.childThreadId);
           unsub();
           return { agentId: primaryAgent.id };
@@ -390,17 +396,20 @@ describe("AgentService", () => {
       const createdRes = await req("POST", "/api/agents", {
         path: repoWithCommit,
         name: "Atlas",
+        identiconStyle: "bottts-neutral",
         startOnboarding: true,
       });
       expect(createdRes.status).toBe(201);
       const created = Schema.decodeUnknownSync(Agent)(createdRes.raw);
       expect(created.name).toBe("Atlas");
+      expect(created.identiconStyle).toBe("bottts-neutral");
       expect(created.purpose).toBe("");
 
       const detailRes = await req("GET", `/api/agents/${created.id}`);
       expect(detailRes.status).toBe(200);
       const createdDetail = Schema.decodeUnknownSync(AgentDetail)(detailRes.raw);
       expect(createdDetail.agent.id).toBe(created.id);
+      expect(createdDetail.agent.identiconStyle).toBe("bottts-neutral");
       expect(createdDetail.primaryThread.turns).toHaveLength(1);
       expect(createdDetail.primaryThread.turns[0]?.origin).toBe("system");
 
@@ -412,12 +421,13 @@ describe("AgentService", () => {
       });
 
       const patchedRes = await req("PATCH", `/api/agents/${created.id}`, {
+        identiconStyle: "rings",
         instructionsMd: "# HTTP Skill\nVerify all endpoints.",
       });
       expect(patchedRes.status).toBe(200);
-      expect(Schema.decodeUnknownSync(Agent)(patchedRes.raw).instructionsMd).toContain(
-        "HTTP Skill",
-      );
+      const patched = Schema.decodeUnknownSync(Agent)(patchedRes.raw);
+      expect(patched.identiconStyle).toBe("rings");
+      expect(patched.instructionsMd).toContain("HTTP Skill");
 
       const memRes = await req("POST", `/api/agents/${created.id}/memories`, {
         category: "fact",

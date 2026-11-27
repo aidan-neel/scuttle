@@ -1,30 +1,131 @@
 import type { Database } from "bun:sqlite";
 import {
+  type ActivityItem,
   type EffortLevel,
   type InteractionMode,
+  type ModelSelection,
+  type PendingApproval,
   type ProviderKind,
   type RuntimeMode,
   type Thread,
-  type ThreadAttachment,
+  ThreadAttachment,
   type ThreadRuntime,
   ThreadStatus,
+  type ThreadTurn,
 } from "@scuttle/contracts";
 import { ProjectId, ProviderId, ThreadId } from "@scuttle/shared/ids";
 import * as Schema from "effect/Schema";
-import { decodeTurnUsage, lookupEnum, safeJsonParse } from "./turnQueries.ts";
+import {
+  type ActivityRow,
+  type ApprovalRow,
+  decodeTurnUsage,
+  lookupEnum,
+  readTurnChildren,
+  rowToActivity,
+  rowToApproval,
+  rowToTurn as baseRowToTurn,
+  safeJsonParse,
+  type TurnRow as BaseTurnRow,
+} from "./turnQueries.ts";
 
 export {
   type ActivityRow,
   type ApprovalRow,
   hasCompletedTurnInEpoch,
-  insertTurnRow,
-  readTurnsForThread,
   rowToActivity,
   rowToApproval,
-  rowToTurn,
-  type TurnRow,
   updateTurnOutcomeRow,
 } from "./turnQueries.ts";
+
+export interface TurnRow extends BaseTurnRow {
+  readonly attachments_json?: string | null;
+}
+
+const decodeAttachments = Schema.decodeUnknownOption(Schema.Array(ThreadAttachment));
+
+export const rowToTurn = (
+  row: TurnRow,
+  fallbackModelSelection: ModelSelection,
+  activities: ActivityItem[],
+  approvals: PendingApproval[],
+): ThreadTurn => {
+  const base = baseRowToTurn(row, fallbackModelSelection, activities, approvals);
+  const attOpt = row.attachments_json
+    ? decodeAttachments(safeJsonParse(row.attachments_json))
+    : null;
+  if (attOpt && attOpt._tag === "Some" && attOpt.value.length > 0) {
+    return { ...base, attachments: [...attOpt.value] };
+  }
+  return base;
+};
+
+export const insertTurnRow = (db: Database, seq: number, turn: ThreadTurn): void => {
+  const attachmentsJson =
+    turn.attachments && turn.attachments.length > 0 ? JSON.stringify(turn.attachments) : null;
+  db.query(
+    `INSERT INTO turns
+       (id, thread_id, seq, origin, session_epoch, user_message, assistant_message, thinking_text, status, started_at, model_selection_json, attachments_json)
+     VALUES (?, ?, ?, ?, ?, ?, '', '', 'running', ?, ?, ?)`,
+  ).run(
+    turn.id,
+    turn.threadId,
+    seq,
+    turn.origin ?? "user",
+    turn.sessionEpoch ?? 0,
+    turn.userMessage,
+    turn.startedAt,
+    JSON.stringify(turn.modelSelection),
+    attachmentsJson,
+  );
+};
+
+export const readTurnsForThread = (db: Database, thread: Thread): ReadonlyArray<ThreadTurn> => {
+  const turnRows = db
+    .query<TurnRow, [string]>("SELECT * FROM turns WHERE thread_id = ? ORDER BY seq ASC")
+    .all(thread.id);
+  const activityRows = db
+    .query<ActivityRow, [string]>("SELECT * FROM activities WHERE thread_id = ? ORDER BY seq ASC")
+    .all(thread.id);
+  const approvalRows = db
+    .query<ApprovalRow, [string]>(
+      "SELECT * FROM approvals WHERE thread_id = ? ORDER BY created_at ASC",
+    )
+    .all(thread.id);
+
+  const activitiesByTurn = new Map<string, ActivityItem[]>();
+  for (const row of activityRows) {
+    const list = activitiesByTurn.get(row.turn_id) ?? [];
+    list.push(rowToActivity(row));
+    activitiesByTurn.set(row.turn_id, list);
+  }
+
+  const approvalsByTurn = new Map<string, PendingApproval[]>();
+  for (const row of approvalRows) {
+    const list = approvalsByTurn.get(row.turn_id) ?? [];
+    list.push(rowToApproval(row));
+    approvalsByTurn.set(row.turn_id, list);
+  }
+
+  return turnRows.map((row) =>
+    rowToTurn(
+      row,
+      thread.modelSelection,
+      activitiesByTurn.get(row.id) ?? [],
+      approvalsByTurn.get(row.id) ?? [],
+    ),
+  );
+};
+
+export const readTurnById = (
+  db: Database,
+  turnId: string,
+  fallbackModelSelection: ModelSelection,
+): ThreadTurn | null => {
+  const row = db.query<TurnRow, [string]>("SELECT * FROM turns WHERE id = ?").get(turnId);
+  if (!row) return null;
+  const { activities, approvals } = readTurnChildren(db, turnId);
+  return rowToTurn(row, fallbackModelSelection, activities, approvals);
+};
 
 export interface ThreadRow {
   readonly id: string;
@@ -65,6 +166,7 @@ const PROVIDER_KINDS = {
   antigravity: "antigravity",
   opencode: "opencode",
   copilot: "copilot",
+  "acp-registry": "acp-registry",
 } as const satisfies Record<ProviderKind, ProviderKind>;
 
 const EFFORT_LEVELS = {
@@ -286,6 +388,7 @@ export const updateThreadRow = (
     readonly runtimeMode: Thread["runtimeMode"];
     readonly interactionMode: Thread["interactionMode"];
     readonly providerSessionId: string | null;
+    readonly compactAtTokens: number | null;
     readonly now: string;
   },
 ): Thread | null => {
@@ -293,7 +396,7 @@ export const updateThreadRow = (
     `UPDATE threads
      SET title = ?, runtime = ?, branch = ?, worktree_path = ?, cwd = ?,
          provider_id = ?, provider_kind = ?, model = ?, effort = ?,
-         runtime_mode = ?, interaction_mode = ?, provider_session_id = ?, updated_at = ?
+         runtime_mode = ?, interaction_mode = ?, provider_session_id = ?, compact_at_tokens = ?, updated_at = ?
      WHERE id = ?`,
   ).run(
     input.title,
@@ -308,6 +411,7 @@ export const updateThreadRow = (
     input.runtimeMode,
     input.interactionMode,
     input.providerSessionId,
+    input.compactAtTokens,
     input.now,
     input.id,
   );

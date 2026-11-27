@@ -5,10 +5,12 @@ import type {
   AgentDelegation,
   AgentDetail,
   AgentIssue,
+  AgentIssueActivity,
   AgentMemory,
   AssignAgentIssueInput,
   AssignAgentIssueResult,
   CreateAgentInput,
+  CreateIssueCommentInput,
   CreateIssueInput,
   CreateMemoryInput,
   DelegateAgentTaskInput,
@@ -45,6 +47,15 @@ export interface AgentActions {
     input: UpdateIssueInput,
   ) => Promise<AgentIssue>;
   readonly deleteIssue: (agentId: AgentId, issueId: AgentIssueId) => Promise<void>;
+  readonly loadIssueActivities: (
+    agentId: AgentId,
+    issueId: AgentIssueId,
+  ) => Promise<ReadonlyArray<AgentIssueActivity>>;
+  readonly createIssueComment: (
+    agentId: AgentId,
+    issueId: AgentIssueId,
+    input: CreateIssueCommentInput,
+  ) => Promise<AgentIssueActivity>;
   readonly syncForgeIssues: (agentId: AgentId) => Promise<ReadonlyArray<AgentIssue>>;
   readonly assignIssue: (
     agentId: AgentId,
@@ -65,11 +76,15 @@ export interface AgentActions {
 interface AgentActionSinks {
   readonly onEvent: (event: ServerPushEvent) => void;
   readonly onDetail: (detail: AgentDetail) => void;
+  readonly onIssueActivities: (
+    issueId: AgentIssueId,
+    activities: ReadonlyArray<AgentIssueActivity>,
+  ) => void;
 }
 
 export const createAgentActions = (
   api: () => ScuttleApiClient,
-  { onEvent, onDetail }: AgentActionSinks,
+  { onEvent, onDetail, onIssueActivities }: AgentActionSinks,
 ): AgentActions => {
   const upsertAgent = (agent: Agent) => {
     onEvent({ kind: "agent.upserted", agent });
@@ -127,6 +142,16 @@ export const createAgentActions = (
     deleteIssue: async (agentId, issueId) => {
       await api().deleteAgentIssue(agentId, issueId);
       onEvent({ kind: "agent.issue.deleted", agentId, issueId });
+    },
+    loadIssueActivities: async (agentId, issueId) => {
+      const activities = await api().listIssueActivities(agentId, issueId);
+      onIssueActivities(issueId, activities);
+      return activities;
+    },
+    createIssueComment: async (agentId, issueId, input) => {
+      const activity = await api().createIssueComment(agentId, issueId, input);
+      onEvent({ kind: "agent.issue.activity.created", activity });
+      return activity;
     },
     syncForgeIssues: async (agentId) => {
       const issues = await api().syncAgentIssues(agentId);

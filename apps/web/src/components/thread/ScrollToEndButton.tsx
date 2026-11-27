@@ -1,7 +1,8 @@
 import { ArrowDown02Icon } from "@hugeicons/core-free-icons";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { Button } from "@/components/ui/Button.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
-import { easeOut } from "@/lib/motion.ts";
+import { easeOut, spring } from "@/lib/motion.ts";
 
 interface ScrollToEndButtonProps {
   readonly visible: boolean;
@@ -9,22 +10,27 @@ interface ScrollToEndButtonProps {
 }
 
 export function ScrollToEndButton({ visible, onClick }: ScrollToEndButtonProps) {
+  const still = useReducedMotion() === true;
+
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center">
       <AnimatePresence>
         {visible && (
-          <motion.button
-            type="button"
-            onClick={onClick}
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 6 }}
-            transition={{ duration: 0.18, ease: easeOut }}
-            className="pointer-events-auto flex cursor-pointer items-center gap-1.5 rounded-full border border-edge bg-raised/95 px-3 py-1.5 text-label text-fg-secondary shadow-menu outline-none backdrop-blur-xs transition-colors duration-(--dur-hover) hover:text-fg focus-visible:shadow-focus"
+          <motion.div
+            initial={still ? { opacity: 0 } : { opacity: 0, y: 6, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1, transition: spring.snappy }}
+            exit={
+              still
+                ? { opacity: 0, transition: { duration: 0.12 } }
+                : { opacity: 0, y: 4, scale: 0.98, transition: { duration: 0.14, ease: easeOut } }
+            }
+            className="pointer-events-auto rounded-chip bg-canvas"
           >
-            <Icon icon={ArrowDown02Icon} className="size-3.5" />
-            Scroll to end
-          </motion.button>
+            <Button type="button" variant="secondary" size="sm" onClick={onClick}>
+              <Icon icon={ArrowDown02Icon} />
+              Scroll to end
+            </Button>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>

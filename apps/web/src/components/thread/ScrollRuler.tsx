@@ -163,7 +163,7 @@ export function ScrollRuler({
                     "block h-[1.5px] rounded-full transition-[width,background-color] duration-150 ease-out",
                     active
                       ? "w-4 bg-fg/80"
-                      : "w-2.5 bg-white/22 group-hover/tick:w-3.5 group-hover/tick:bg-white/55",
+                      : "w-2.5 bg-fg/22 group-hover/tick:w-3.5 group-hover/tick:bg-fg/55",
                   )}
                 />
               </button>
@@ -173,7 +173,7 @@ export function ScrollRuler({
                   aria-hidden
                   className={cn(
                     "block h-px w-1.5 rounded-full transition-colors",
-                    active ? "bg-white/24" : "bg-white/10",
+                    active ? "bg-fg/24" : "bg-fg/10",
                   )}
                 />
               ))}
@@ -201,12 +201,10 @@ export function ScrollRuler({
                     onClick={() => jumpTo(turn.id, idx)}
                     className={cn(
                       "flex h-7 w-full cursor-pointer items-center gap-2 rounded-chip px-2 text-left text-label transition-colors duration-100",
-                      active
-                        ? "bg-white/8 text-fg"
-                        : "text-fg-muted hover:bg-(--wash) hover:text-fg",
+                      active ? "bg-fg/8 text-fg" : "text-fg-muted hover:bg-(--wash) hover:text-fg",
                     )}
                   >
-                    <span className="shrink-0 font-mono text-[11px] text-fg-faint tabular-nums">
+                    <span className="shrink-0 font-mono text-[0.6875rem] text-fg-faint tabular-nums">
                       {idx + 1}
                     </span>
                     <span className="min-w-0 flex-1 truncate">{turnLabel(turn)}</span>

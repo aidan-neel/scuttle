@@ -1,11 +1,8 @@
 import { Dialog } from "@base-ui/react/dialog";
-import { Alert02Icon } from "@hugeicons/core-free-icons";
-import { AnimatePresence, motion } from "motion/react";
 import { type ReactNode, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button.tsx";
+import { DialogAlert, DialogShell } from "@/components/ui/DialogShell.tsx";
 import { DotSpinner } from "@/components/ui/DotSpinner.tsx";
-import { Icon } from "@/components/ui/Icon.tsx";
-import { easeOut, spring } from "@/lib/motion.ts";
 
 interface ConfirmDialogProps {
   readonly open: boolean;
@@ -54,71 +51,47 @@ export function ConfirmDialog({
   };
 
   return (
-    <Dialog.Root open={open} onOpenChange={requestOpenChange}>
-      <AnimatePresence onExitComplete={() => setFailed(false)}>
-        {open && (
-          <Dialog.Portal keepMounted>
-            <Dialog.Backdrop
-              render={
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1, transition: { duration: 0.16, ease: easeOut } }}
-                  exit={{ opacity: 0, transition: { duration: 0.12, ease: easeOut } }}
-                />
-              }
-              className="scrim-backdrop fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px]"
-            />
-            <Dialog.Popup
-              initialFocus={confirmRef}
-              render={
-                <motion.div
-                  initial={{ opacity: 0, y: 8, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1, transition: spring.snappy }}
-                  exit={{ opacity: 0, y: 4, scale: 0.985, transition: { duration: 0.12 } }}
-                />
-              }
-              className="fixed inset-x-0 top-[22vh] z-50 mx-auto flex w-[min(400px,calc(100vw-2rem))] flex-col overflow-hidden rounded-canvas bg-menu shadow-menu outline-none"
-            >
-              <div className="flex flex-col gap-1.5 px-4 pt-4 pb-4">
-                <Dialog.Title className="text-body font-medium text-fg">{title}</Dialog.Title>
-                <Dialog.Description className="text-label leading-[1.55] text-fg-muted">
-                  {description}
-                </Dialog.Description>
-              </div>
-              <footer className="flex h-12 shrink-0 items-center gap-2 border-t border-line bg-black/10 px-3">
-                <div className="min-w-0 flex-1">
-                  {failed && (
-                    <p role="alert" className="flex items-center gap-1.5 text-label text-danger">
-                      <Icon icon={Alert02Icon} className="size-3.5 shrink-0" />
-                      <span className="truncate">Something went wrong.</span>
-                    </p>
-                  )}
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="md"
-                  disabled={working}
-                  onClick={() => requestOpenChange(false)}
-                >
-                  {cancelLabel}
-                </Button>
-                <Button
-                  ref={confirmRef}
-                  type="button"
-                  variant={tone === "danger" ? "destructive" : "primary"}
-                  size="md"
-                  disabled={working}
-                  onClick={() => void confirm()}
-                >
-                  {working && <DotSpinner variant="working" label="Working" />}
-                  {confirmLabel}
-                </Button>
-              </footer>
-            </Dialog.Popup>
-          </Dialog.Portal>
-        )}
-      </AnimatePresence>
-    </Dialog.Root>
+    <DialogShell
+      open={open}
+      onOpenChange={requestOpenChange}
+      onExitComplete={() => setFailed(false)}
+      initialFocus={confirmRef}
+      className="top-[22vh] w-[min(25.625rem,calc(100vw-2rem))]"
+    >
+      <div className="flex flex-col gap-2 px-5 pt-5 pb-1">
+        <Dialog.Title className="text-title font-semibold tracking-[-0.01em] text-fg">
+          {title}
+        </Dialog.Title>
+        <Dialog.Description className="text-label leading-5 text-fg-muted">
+          {description}
+        </Dialog.Description>
+      </div>
+      <div className="flex items-center gap-2 py-4 pr-4 pl-5">
+        <div className="min-w-0 flex-1">
+          {failed && <DialogAlert message="Something went wrong." />}
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="dialog"
+          disabled={working}
+          onClick={() => requestOpenChange(false)}
+        >
+          {cancelLabel}
+        </Button>
+        <Button
+          ref={confirmRef}
+          type="button"
+          variant={tone === "danger" ? "destructive" : "primary"}
+          size="dialog"
+          disabled={working}
+          onClick={() => void confirm()}
+          className="font-medium"
+        >
+          {working && <DotSpinner variant="working" label="Working" />}
+          {confirmLabel}
+        </Button>
+      </div>
+    </DialogShell>
   );
 }

@@ -13,6 +13,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as ServerConfig from "../config.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import { expandHome } from "../providers/catalog.ts";
 import * as EventBus from "./EventBus.ts";
@@ -66,12 +67,14 @@ export class ProjectService extends Context.Service<
     readonly touchActivity: (id: ProjectId, lastMessage: string) => Effect.Effect<void>;
     readonly listDirectory: (
       rawPath?: string,
+      options?: { readonly includeFiles?: boolean },
     ) => Effect.Effect<DirectoryListing, ProjectServiceError>;
   }
 >()("scuttle/server/ProjectService") {}
 
 const make = Effect.gen(function* () {
   const { db } = yield* Sqlite.SqliteDatabase;
+  const serverConfig = yield* Effect.serviceOption(ServerConfig.ServerConfig);
   const git = yield* GitService.GitService;
   const eventBus = yield* EventBus.EventBus;
 
@@ -179,7 +182,13 @@ const make = Effect.gen(function* () {
     }
   });
 
-  const listDirectory = Effect.fn("ProjectService.listDirectory")(function* (rawPath?: string) {
+  const IGNORED_DIRS = new Set(["node_modules", "dist", "target", ".git"]);
+
+  const listDirectory = Effect.fn("ProjectService.listDirectory")(function* (
+    rawPath?: string,
+    options?: { readonly includeFiles?: boolean },
+  ) {
+    const includeFiles = options?.includeFiles === true;
     const target =
       rawPath && rawPath.trim().length > 0
         ? NodePath.resolve(expandHome(rawPath))
@@ -195,12 +204,26 @@ const make = Effect.gen(function* () {
 
     const entries: DirectoryEntry[] = [];
     for (const dirent of rawEntries) {
-      if (!dirent.isDirectory() || dirent.name.startsWith(".")) continue;
-      const fullPath = NodePath.join(target, dirent.name);
-      const isGitRepo = NodeFS.existsSync(NodePath.join(fullPath, ".git"));
-      entries.push({ name: dirent.name, path: fullPath, isGitRepo });
+      if (dirent.name.startsWith(".")) continue;
+      if (dirent.isDirectory()) {
+        if (includeFiles && IGNORED_DIRS.has(dirent.name)) continue;
+        const fullPath = NodePath.join(target, dirent.name);
+        const isGitRepo = NodeFS.existsSync(NodePath.join(fullPath, ".git"));
+        entries.push({
+          name: dirent.name,
+          path: fullPath,
+          isGitRepo,
+          ...(includeFiles ? { kind: "directory" as const } : {}),
+        });
+      } else if (includeFiles && dirent.isFile()) {
+        const fullPath = NodePath.join(target, dirent.name);
+        entries.push({ name: dirent.name, path: fullPath, isGitRepo: false, kind: "file" });
+      }
     }
     entries.sort((a, b) => {
+      const aFile = a.kind === "file" ? 1 : 0;
+      const bFile = b.kind === "file" ? 1 : 0;
+      if (aFile !== bFile) return aFile - bFile;
       if (a.isGitRepo !== b.isGitRepo) return a.isGitRepo ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
@@ -209,21 +232,28 @@ const make = Effect.gen(function* () {
     return {
       path: target,
       parentPath: parent !== target ? parent : null,
-      entries: entries.slice(0, 100),
+      entries: entries.slice(0, includeFiles ? 200 : 100),
     };
   });
 
-  // Seed the current workspace directory if no projects exist yet so Scuttle is immediately usable.
+  // Seed the current workspace directory if no projects exist yet so CLI/dev mode is immediately usable.
+  // Skip when running inside a packaged desktop bundle (whose cwd is the app's bin/ folder).
+  const seedEnabled = serverConfig._tag === "Some" ? serverConfig.value.seedCwdProject : true;
   const existingCount = db
     .query<{ count: number }, []>("SELECT COUNT(*) AS count FROM projects")
     .get();
-  if ((existingCount?.count ?? 0) === 0) {
+  if (seedEnabled && (existingCount?.count ?? 0) === 0) {
     const cwd = process.cwd();
-    const initialPath =
-      NodePath.basename(cwd) === "server" && NodePath.basename(NodePath.dirname(cwd)) === "apps"
-        ? NodePath.resolve(cwd, "../..")
-        : cwd;
-    yield* create({ path: initialPath }).pipe(Effect.ignore);
+    const isDesktopBundleBin = NodeFS.existsSync(
+      NodePath.resolve(cwd, "../Resources/version.json"),
+    );
+    if (!isDesktopBundleBin) {
+      const initialPath =
+        NodePath.basename(cwd) === "server" && NodePath.basename(NodePath.dirname(cwd)) === "apps"
+          ? NodePath.resolve(cwd, "../..")
+          : cwd;
+      yield* create({ path: initialPath }).pipe(Effect.ignore);
+    }
   }
 
   return ProjectService.of({

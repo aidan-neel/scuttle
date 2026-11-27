@@ -10,7 +10,24 @@ export const DesktopInfo = Schema.Struct({
 });
 export type DesktopInfo = typeof DesktopInfo.Type;
 
+export interface DesktopWindowInsets {
+  readonly top: number;
+  readonly right: number;
+  readonly bottom: number;
+  readonly left: number;
+}
+
+export interface DesktopWindowState {
+  readonly maximized: boolean;
+  readonly insets: DesktopWindowInsets;
+}
+
 export interface DesktopBridge {
   readonly getDesktopInfo: () => Promise<DesktopInfo>;
   readonly openExternal: (url: string) => Promise<void>;
+  readonly minimizeWindow?: () => Promise<void>;
+  readonly toggleMaximizeWindow?: () => Promise<void>;
+  readonly closeWindow?: () => Promise<void>;
+  readonly getWindowState?: () => Promise<DesktopWindowState>;
+  readonly onWindowStateChange?: (listener: (state: DesktopWindowState) => void) => () => void;
 }

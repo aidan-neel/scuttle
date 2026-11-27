@@ -6,16 +6,26 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as ServerConfig from "./config.ts";
 import { handleApiRequest } from "./httpRoutes.ts";
+import { type McpSessionRegistry, makeMcpSessionRegistry } from "./mcp/McpSessionRegistry.ts";
+import { createScuttleMcpHandler } from "./mcp/ScuttleMcpServer.ts";
+import { buildScuttleMcpDeps } from "./mcp/wireMcpDeps.ts";
 import * as Sqlite from "./persistence/Sqlite.ts";
 import { handleRpcMessage } from "./rpc.ts";
 import * as AgentService from "./services/AgentService.ts";
+import * as AttachmentService from "./services/AttachmentService.ts";
+import * as CheckpointService from "./services/CheckpointService.ts";
 import * as EventBus from "./services/EventBus.ts";
 import * as GitForgeService from "./services/GitForgeService.ts";
 import * as GitService from "./services/GitService.ts";
 import * as HealthService from "./services/HealthService.ts";
+import * as ModelPerformanceService from "./services/ModelPerformanceService.ts";
+import * as ModelTierService from "./services/ModelTierService.ts";
 import * as ProjectService from "./services/ProjectService.ts";
 import * as ProviderService from "./services/ProviderService.ts";
+import * as SkillService from "./services/SkillService.ts";
 import * as ThreadService from "./services/ThreadService.ts";
+import { registerMcpSessionRegistry } from "./services/threadTurnDispatch.ts";
+import * as UsageService from "./services/UsageService.ts";
 
 export interface ScuttleServerHandle {
   readonly host: string;
@@ -31,20 +41,39 @@ export const makeAppLayer = (
     AgentService.AgentServiceOptions,
     "askParentTimeoutMs" | "enableCheckInScheduler"
   >,
+  mcpRegistry?: McpSessionRegistry,
 ) => {
-  const configLayer = ServerConfig.layer(overrides);
+  const resolvedConfig = ServerConfig.defaultServerConfig(overrides);
+  if (mcpRegistry) {
+    registerMcpSessionRegistry(resolvedConfig.apiBaseUrlRef, mcpRegistry);
+  }
+  const configLayer = ServerConfig.layer(resolvedConfig);
   const sqliteLayer = Sqlite.layer.pipe(Layer.provide(configLayer));
   const eventBusLayer = EventBus.layer;
   const gitLayer = GitService.layer;
+  const checkpointLayer = CheckpointService.layer;
+  const modelPerformanceLayer = ModelPerformanceService.layer().pipe(Layer.provide(sqliteLayer));
   const healthLayer = HealthService.layer.pipe(
     Layer.provide(sqliteLayer),
     Layer.provide(configLayer),
   );
+  const attachmentLayer = AttachmentService.layer.pipe(
+    Layer.provide(configLayer),
+    Layer.provide(sqliteLayer),
+  );
+  const skillLayer = SkillService.layer.pipe(Layer.provide(configLayer));
+  const usageLayer = UsageService.layer().pipe(Layer.provide(sqliteLayer));
+  const modelTierLayer = ModelTierService.layer.pipe(
+    Layer.provide(sqliteLayer),
+    Layer.provide(eventBusLayer),
+  );
   const providerLayer = ProviderService.layer.pipe(
+    Layer.provide(configLayer),
     Layer.provide(sqliteLayer),
     Layer.provide(eventBusLayer),
   );
   const projectLayer = ProjectService.layer.pipe(
+    Layer.provide(configLayer),
     Layer.provide(sqliteLayer),
     Layer.provide(gitLayer),
     Layer.provide(eventBusLayer),
@@ -56,6 +85,8 @@ export const makeAppLayer = (
     Layer.provide(gitLayer),
     Layer.provide(projectLayer),
     Layer.provide(providerLayer),
+    Layer.provide(checkpointLayer),
+    Layer.provide(modelPerformanceLayer),
   );
   const gitForgeLayer = GitForgeService.layer(forgeOptions).pipe(
     Layer.provide(sqliteLayer),
@@ -83,7 +114,13 @@ export const makeAppLayer = (
     sqliteLayer,
     eventBusLayer,
     gitLayer,
+    checkpointLayer,
+    modelPerformanceLayer,
     healthLayer,
+    attachmentLayer,
+    skillLayer,
+    usageLayer,
+    modelTierLayer,
     providerLayer,
     projectLayer,
     threadLayer,
@@ -223,15 +260,19 @@ export const startScuttleServer = async (
   overrides?: Partial<ServerConfig.ServerConfigValues>,
 ): Promise<ScuttleServerHandle> => {
   const config = ServerConfig.defaultServerConfig(overrides);
-  const runtime = ManagedRuntime.make(makeAppLayer(config));
+  const mcpRegistry = makeMcpSessionRegistry();
+  const runtime = ManagedRuntime.make(makeAppLayer(config, undefined, undefined, mcpRegistry));
 
-  const eventBus = await runtime.runPromise(
+  const { eventBus, mcpDeps } = await runtime.runPromise(
     Effect.gen(function* () {
       const health = yield* HealthService.HealthService;
       yield* health.check();
-      return yield* EventBus.EventBus;
+      const eventBus = yield* EventBus.EventBus;
+      const mcpDeps = yield* buildScuttleMcpDeps;
+      return { eventBus, mcpDeps };
     }),
   );
+  const mcpHandler = createScuttleMcpHandler({ registry: mcpRegistry, deps: mcpDeps });
 
   const clients = new Set<ServerWebSocket<unknown>>();
   const unsubscribeBus = eventBus.subscribe((event) => {
@@ -253,13 +294,33 @@ export const startScuttleServer = async (
       const url = new URL(request.url);
       const origin = request.headers.get("origin");
 
+      if (url.pathname === "/mcp") {
+        if (request.method === "OPTIONS") {
+          return new Response(null, {
+            status: 204,
+            headers: {
+              ...(isAllowedLocalOrigin(origin) ? { "Access-Control-Allow-Origin": origin } : {}),
+              "Access-Control-Allow-Methods": "POST, DELETE, OPTIONS",
+              "Access-Control-Allow-Headers":
+                "Content-Type, Authorization, Mcp-Session-Id, Mcp-Protocol-Version",
+              "Access-Control-Expose-Headers": "Mcp-Session-Id",
+              Vary: "Origin",
+            },
+          });
+        }
+        if (request.method.toUpperCase() === "POST") {
+          bunServer.timeout(request, 0);
+        }
+        return mcpHandler(request);
+      }
+
       if (request.method === "OPTIONS" && isAllowedLocalOrigin(origin)) {
         return new Response(null, {
           status: 204,
           headers: {
             "Access-Control-Allow-Origin": origin,
             "Access-Control-Allow-Methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Attachment-Name",
             Vary: "Origin",
           },
         });
@@ -273,7 +334,7 @@ export const startScuttleServer = async (
       if (url.pathname.startsWith("/api/")) {
         if (
           request.method.toUpperCase() === "POST" &&
-          /^\/api\/agents\/[^/]+\/delegations\/[^/]+\/ask$/.test(url.pathname)
+          /^\/api\/(?:agents\/[^/]+\/)?delegations\/[^/]+\/ask$/.test(url.pathname)
         ) {
           bunServer.timeout(request, 0);
         }

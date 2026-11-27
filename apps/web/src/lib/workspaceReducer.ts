@@ -1,14 +1,19 @@
-import type {
-  Agent,
-  AgentDetail,
-  GitBranchInfo,
-  ModelSelection,
-  Project,
-  ProviderSnapshot,
-  ServerPushEvent,
-  Thread,
-  ThreadDetail,
-  ThreadTurn,
+import {
+  EMPTY_SCOPED_MODEL_TIERS,
+  type Agent,
+  type AgentDetail,
+  type AgentIssue,
+  type AgentIssueActivity,
+  type GitBranchInfo,
+  type ModelSelection,
+  type Project,
+  type ProviderSnapshot,
+  type ScopedModelTierConfigs,
+  type ScuttleSkill,
+  type ServerPushEvent,
+  type Thread,
+  type ThreadDetail,
+  type ThreadTurn,
 } from "@scuttle/contracts";
 import type { ProjectId } from "@scuttle/shared/ids";
 import { type AgentSlice, agentDetailLoaded, applyAgentEvent } from "./agentState.ts";
@@ -22,9 +27,11 @@ import {
 import {
   applyChannelDelta,
   applyPendingTurnDeltas,
+  applyThreadExtrasEvent,
   mergeThreadDetailSnapshot,
   type PendingTurnDelta,
   queuePendingDelta,
+  threadIdOfExtrasEvent,
   touchThreadDetail,
 } from "./threadDetailReducer.ts";
 
@@ -33,6 +40,8 @@ export interface WorkspaceState extends AgentSlice {
   readonly projects: ReadonlyArray<Project>;
   readonly threads: ReadonlyArray<Thread>;
   readonly providers: ReadonlyArray<ProviderSnapshot>;
+  readonly skills: ReadonlyArray<ScuttleSkill>;
+  readonly modelTiers: ScopedModelTierConfigs;
   readonly threadDetails: Readonly<Record<string, ThreadDetail>>;
   readonly branchesByProject: Readonly<Record<string, ReadonlyArray<GitBranchInfo>>>;
   readonly selectedProjectId: ProjectId | null;
@@ -40,6 +49,7 @@ export interface WorkspaceState extends AgentSlice {
   readonly defaultModelSelection: ModelSelection;
   readonly error: string | null;
   readonly agentThreadIds: ReadonlySet<string>;
+  readonly perfRevision: number;
 }
 
 export type Action =
@@ -49,11 +59,15 @@ export type Action =
       readonly threads: ReadonlyArray<Thread>;
       readonly providers: ReadonlyArray<ProviderSnapshot>;
       readonly agents: ReadonlyArray<Agent>;
+      readonly issues?: ReadonlyArray<AgentIssue> | undefined;
+      readonly skills?: ReadonlyArray<ScuttleSkill> | undefined;
+      readonly modelTiers?: ScopedModelTierConfigs | undefined;
     }
   | { readonly kind: "error"; readonly message: string | null }
   | { readonly kind: "selectProject"; readonly projectId: ProjectId | null }
   | { readonly kind: "setActiveThread"; readonly threadId: string | null }
   | { readonly kind: "setModelSelection"; readonly selection: ModelSelection }
+  | { readonly kind: "reconcileModelSelection" }
   | {
       readonly kind: "branchesLoaded";
       readonly projectId: string;
@@ -61,6 +75,11 @@ export type Action =
     }
   | { readonly kind: "threadDetailLoaded"; readonly detail: ThreadDetail }
   | { readonly kind: "agentDetailLoaded"; readonly detail: AgentDetail }
+  | {
+      readonly kind: "issueActivitiesLoaded";
+      readonly issueId: string;
+      readonly activities: ReadonlyArray<AgentIssueActivity>;
+    }
   | { readonly kind: "push"; readonly event: ServerPushEvent }
   | { readonly kind: "pushBatch"; readonly events: ReadonlyArray<ServerPushEvent> };
 
@@ -69,15 +88,20 @@ export const createInitialWorkspaceState = (): WorkspaceState => ({
   projects: [],
   threads: [],
   providers: [],
+  skills: [],
+  modelTiers: EMPTY_SCOPED_MODEL_TIERS,
   threadDetails: {},
   agents: [],
   agentWork: {},
+  issues: [],
+  issueActivities: {},
   branchesByProject: {},
   selectedProjectId: null,
   activeThreadId: null,
   defaultModelSelection: readStoredSelection() ?? FALLBACK_SELECTION,
   error: null,
   agentThreadIds: new Set<string>(),
+  perfRevision: 0,
 });
 
 const computeAgentThreadIds = (agents: ReadonlyArray<Agent>): ReadonlySet<string> =>
@@ -262,11 +286,27 @@ const applyCoreEvent = (state: WorkspaceState, event: ServerPushEvent): Workspac
     }
     case "provider.updated": {
       const providers = upsertById(state.providers, event.provider, false);
-      const defaultModelSelection = pickBestSelection(providers, state.defaultModelSelection);
+      const defaultModelSelection = pickBestSelection(
+        providers,
+        readStoredSelection() ?? state.defaultModelSelection,
+      );
       return { ...state, providers, defaultModelSelection };
     }
-    default:
-      return state;
+    case "modelTiers.updated":
+      return { ...state, modelTiers: event.modelTiers };
+    case "perf.recorded":
+      return { ...state, perfRevision: state.perfRevision + 1 };
+    default: {
+      const threadId = threadIdOfExtrasEvent(event);
+      const detail = threadId === null ? undefined : state.threadDetails[threadId];
+      if (threadId === null || detail === undefined) return state;
+      const next = applyThreadExtrasEvent(detail, event);
+      if (next === detail) return state;
+      return {
+        ...state,
+        threadDetails: touchThreadDetail(state.threadDetails, threadId, next, state.activeThreadId),
+      };
+    }
   }
 };
 
@@ -344,6 +384,9 @@ export const reduceWorkspaceState = (state: WorkspaceState, action: Action): Wor
         threads: action.threads,
         providers: action.providers,
         agents: action.agents,
+        issues: action.issues ?? state.issues,
+        skills: action.skills ?? state.skills,
+        modelTiers: action.modelTiers ?? state.modelTiers,
         agentThreadIds: computeAgentThreadIds(action.agents),
         selectedProjectId,
         defaultModelSelection,
@@ -361,6 +404,21 @@ export const reduceWorkspaceState = (state: WorkspaceState, action: Action): Wor
     case "setModelSelection":
       writeStoredSelection(action.selection);
       return { ...state, defaultModelSelection: action.selection };
+    case "reconcileModelSelection": {
+      const next = pickBestSelection(
+        state.providers,
+        readStoredSelection() ?? state.defaultModelSelection,
+      );
+      if (
+        next.providerId === state.defaultModelSelection.providerId &&
+        next.model === state.defaultModelSelection.model &&
+        next.effort === state.defaultModelSelection.effort
+      ) {
+        return state;
+      }
+      writeStoredSelection(next);
+      return { ...state, defaultModelSelection: next };
+    }
     case "branchesLoaded":
       return {
         ...state,
@@ -401,6 +459,14 @@ export const reduceWorkspaceState = (state: WorkspaceState, action: Action): Wor
         ),
       };
     }
+    case "issueActivitiesLoaded":
+      return {
+        ...state,
+        issueActivities: {
+          ...state.issueActivities,
+          [action.issueId]: action.activities,
+        },
+      };
     case "push":
       return applyPushEvent(state, action.event);
     case "pushBatch":

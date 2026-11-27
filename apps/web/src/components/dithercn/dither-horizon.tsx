@@ -6,6 +6,7 @@ import {
   rememberDitherPreset,
 } from "@/components/dithercn/dither-presets";
 import type { DitherPreset, DitherPresetId } from "@/components/dithercn/dither-presets";
+import { useTheme } from "@/components/settings/preferences.ts";
 import { cssColor, DitherShader, usePrefersReducedMotion } from "@/lib/dither";
 import type { DitherShaderProps } from "@/lib/dither";
 import { isSoftwareRenderer } from "@/lib/renderMode";
@@ -30,6 +31,7 @@ export function DitherHorizon({
   ...props
 }: DitherHorizonProps) {
   const reducedMotion = usePrefersReducedMotion();
+  const theme = useTheme();
   const software = isSoftwareRenderer();
   const [randomPreset] = useState<DitherPreset | null>(() =>
     preset ? null : pickRandomDitherPreset(),
@@ -42,7 +44,7 @@ export function DitherHorizon({
     }
   }, [activePreset.id, preset]);
 
-  const resolvedPalette = palette ?? activePreset.palette;
+  const resolvedPalette = palette ?? theme.ditherPalette ?? activePreset.palette;
   const resolvedMatrix = matrix ?? activePreset.matrix;
   const resolvedCell = cell ?? activePreset.cell;
   const resolvedSpeed = speed ?? activePreset.speed;

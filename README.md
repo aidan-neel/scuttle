@@ -7,7 +7,7 @@
 
 **Fast, local-first workspace for coding agents across web and desktop.**
 
-[Quick Start](#quick-start) · [Stack](#stack) · [Checks](#checks) · [Brand](#brand)
+[Quick Start](#quick-start) · [Stack](#stack) · [Checks](#checks)
 
 <br />
 
@@ -25,10 +25,19 @@ bun run desktop:prepare
 bun run dev
 ```
 
-Launch the native Electrobun desktop shell.
+Launch the native Electrobun desktop shell in live-reload dev mode.
 
 ```bash
 bun run dev:desktop
+```
+
+Compile and install/update the standalone desktop app in-place (supports WSL -> native Windows WebView2 with Start Menu shortcut; re-run anytime to update):
+
+```bash
+bun run desktop:compile          # compile & install/update Scuttle Dev
+bun run desktop:install          # compile, install/update, and launch
+bun run desktop:compile -- --installer   # also build Windows Setup.exe
+bun run desktop:uninstall        # remove installed dev app & shortcuts
 ```
 
 ## Stack
@@ -45,11 +54,3 @@ bun run dev:desktop
 ```bash
 bun run check
 ```
-
-## Brand
-
-<img src="design/logo/mark.svg" alt="" width="56" align="left" />
-
-The mark is a river crab mid-scuttle: a round shell with speed lines cut through its trailing edge. Masters live in [`design/logo`](design/logo) — `mark.svg`, `app-icon.svg`, `favicon.svg` (tuned for 16–32px) and `lockup.svg`. In the app it renders from `ScuttleLogo.tsx` and follows `--color-primary`.
-
-<br clear="left" />

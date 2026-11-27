@@ -1,20 +1,27 @@
 import { Dialog } from "@base-ui/react/dialog";
-import { Add01Icon, Alert02Icon, Cancel01Icon } from "@hugeicons/core-free-icons";
+import { Add01Icon } from "@hugeicons/core-free-icons";
 import { describeApiError } from "@scuttle/client-runtime";
-import type { ModelSelection, ThreadRuntime } from "@scuttle/contracts";
+import type { IdenticonStyle, ModelSelection, ThreadRuntime } from "@scuttle/contracts";
+import { DEFAULT_IDENTICON_STYLE } from "@scuttle/shared/identicon";
 import type { ProjectId } from "@scuttle/shared/ids";
 import { useNavigate } from "@tanstack/react-router";
-import { AnimatePresence, motion } from "motion/react";
-import { type ReactNode, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { RUNTIMES } from "@/components/home/ComposerContextBar.tsx";
 import { ModelPicker } from "@/components/home/ModelPicker.tsx";
 import { Button } from "@/components/ui/Button.tsx";
+import {
+  DialogAlert,
+  DialogCloseButton,
+  DialogFooter,
+  DialogSettingRow,
+  DialogSettings,
+  DialogShell,
+} from "@/components/ui/DialogShell.tsx";
 import { DotSpinner } from "@/components/ui/DotSpinner.tsx";
 import { Icon } from "@/components/ui/Icon.tsx";
-import { Identicon } from "@/components/ui/Identicon.tsx";
+import { Identicon, identiconStyleOptions } from "@/components/ui/Identicon.tsx";
 import { PillLabel, Picker, pillTriggerClass } from "@/components/ui/Picker.tsx";
 import { formatAgentName } from "@/lib/format.ts";
-import { easeOut, spring } from "@/lib/motion.ts";
 import { useWorkspace } from "@/lib/workspace.tsx";
 import { AddProjectDialog } from "./AddProjectDialog.tsx";
 
@@ -23,35 +30,13 @@ interface CreateAgentDialogProps {
   readonly onOpenChange: (open: boolean) => void;
 }
 
-function SettingRow({
-  label,
-  divider = true,
-  children,
-}: {
-  readonly label: string;
-  readonly divider?: boolean;
-  readonly children: ReactNode;
-}) {
-  return (
-    <div
-      className={
-        divider
-          ? "flex min-h-12 items-center gap-3 border-b border-line px-1"
-          : "flex min-h-12 items-center gap-3 px-1"
-      }
-    >
-      <span className="w-24 shrink-0 text-body font-medium text-fg">{label}</span>
-      <div className="flex min-w-0 flex-1 justify-end">{children}</div>
-    </div>
-  );
-}
-
 export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps) {
   const { projects, providers, selectedProjectId, defaultModelSelection, createAgent } =
     useWorkspace();
   const navigate = useNavigate();
   const nameRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
+  const [identiconStyle, setIdenticonStyle] = useState<IdenticonStyle>(DEFAULT_IDENTICON_STYLE);
   const [projectChoice, setProjectChoice] = useState<ProjectId | null>(null);
   const [runtime, setRuntime] = useState<ThreadRuntime>("local");
   const [modelChoice, setModelChoice] = useState<ModelSelection | null>(null);
@@ -70,6 +55,7 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
 
   const reset = () => {
     setName("");
+    setIdenticonStyle(DEFAULT_IDENTICON_STYLE);
     setProjectChoice(null);
     setRuntime("local");
     setModelChoice(null);
@@ -89,6 +75,7 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
       const agent = await createAgent({
         projectId: project.id,
         name: finalName,
+        identiconStyle,
         runtime,
         modelSelection,
         startOnboarding: true,
@@ -102,133 +89,128 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
   };
 
   return (
-    <Dialog.Root open={open} onOpenChange={requestOpenChange}>
-      <AnimatePresence onExitComplete={reset}>
-        {open && (
-          <Dialog.Portal keepMounted>
-            <Dialog.Backdrop
-              render={
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1, transition: { duration: 0.16, ease: easeOut } }}
-                  exit={{ opacity: 0, transition: { duration: 0.12, ease: easeOut } }}
-                />
-              }
-              className="scrim-backdrop fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px]"
+    <DialogShell
+      open={open}
+      onOpenChange={requestOpenChange}
+      onExitComplete={reset}
+      initialFocus={nameRef}
+      className="top-[15vh] w-[min(28.25rem,calc(100vw-2rem))]"
+    >
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          void create();
+        }}
+      >
+        <Dialog.Title className="sr-only">New agent</Dialog.Title>
+        <DialogCloseButton />
+
+        <div className="flex flex-col items-center px-8 pt-11 pb-7">
+          <Identicon
+            name={finalName}
+            style={identiconStyle}
+            size="xl"
+            className="size-16 rounded-dialog"
+          />
+          <input
+            ref={nameRef}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder={fallbackName}
+            aria-label="Agent name"
+            spellCheck={false}
+            className="mt-3.5 w-full rounded-control bg-transparent px-2 py-0.5 text-center text-[1.375rem] leading-7 font-semibold tracking-[-0.02em] text-fg caret-fg outline-none transition-colors duration-(--dur-hover) placeholder:text-fg-faint hover:bg-fg/3 focus-visible:bg-fg/4"
+          />
+        </div>
+
+        <DialogSettings className="pb-1.5">
+          <DialogSettingRow label="Avatar">
+            <Picker
+              label="Avatar style"
+              value={identiconStyle}
+              options={identiconStyleOptions(finalName)}
+              onValueChange={setIdenticonStyle}
+              variant="field"
             />
-            <Dialog.Popup
-              initialFocus={nameRef}
-              render={
-                <motion.div
-                  initial={{ opacity: 0, y: 8, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1, transition: spring.snappy }}
-                  exit={{ opacity: 0, y: 4, scale: 0.985, transition: { duration: 0.12 } }}
-                />
-              }
-              className="fixed inset-x-0 top-[15vh] z-50 mx-auto flex w-[min(460px,calc(100vw-2rem))] flex-col overflow-hidden rounded-canvas bg-menu shadow-menu outline-none"
-            >
-              <form
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void create();
-                }}
+          </DialogSettingRow>
+          <DialogSettingRow label="Project">
+            {project === null ? (
+              <button
+                type="button"
+                onClick={() => setAddFolderOpen(true)}
+                className={pillTriggerClass(undefined, "field")}
               >
-                <header className="flex h-12 items-center gap-2 pr-3 pl-5">
-                  <Dialog.Title className="flex-1 text-title font-semibold text-fg">
-                    New Agent
-                  </Dialog.Title>
-                  <Dialog.Close
-                    aria-label="Close"
-                    render={<Button type="button" variant="ghost" size="icon-sm" />}
-                  >
-                    <Icon icon={Cancel01Icon} />
-                  </Dialog.Close>
-                </header>
-
-                <div className="flex flex-col items-center gap-3 px-6 pt-3 pb-5">
-                  <Identicon name={finalName} size="xl" className="size-18 rounded-[14px]" />
-                  <input
-                    ref={nameRef}
-                    value={name}
-                    onChange={(event) => setName(event.target.value)}
-                    placeholder="Agent"
-                    aria-label="Agent name"
-                    spellCheck={false}
-                    className="w-full bg-transparent text-center text-[23px] leading-tight font-medium tracking-tight text-fg caret-fg outline-none placeholder:text-fg-faint"
-                  />
-                </div>
-
-                <div className="flex flex-col px-5 pb-3">
-                  <SettingRow label="Project">
-                    {project === null ? (
-                      <button
-                        type="button"
-                        onClick={() => setAddFolderOpen(true)}
-                        className={pillTriggerClass()}
-                      >
-                        <Icon icon={Add01Icon} />
-                        <PillLabel>Add folder…</PillLabel>
-                      </button>
-                    ) : (
-                      <Picker
-                        label="Project"
-                        value={project.id}
-                        options={projects.map((p) => ({
-                          value: p.id,
-                          label: p.name,
-                          icon: <Identicon name={p.name} size="sm" className="size-3.5" />,
-                        }))}
-                        onValueChange={(id) => setProjectChoice(id)}
-                        action={{
-                          label: "Add folder…",
-                          icon: Add01Icon,
-                          onSelect: () => setAddFolderOpen(true),
-                        }}
-                        className="max-w-60"
-                      />
-                    )}
-                  </SettingRow>
-                  <SettingRow label="Runtime">
-                    <Picker
-                      label="Runtime"
-                      value={runtime}
-                      options={RUNTIMES}
-                      onValueChange={setRuntime}
-                    />
-                  </SettingRow>
-                  <SettingRow label="Model" divider={false}>
-                    <ModelPicker
-                      providers={providers}
-                      selection={modelSelection}
-                      onChange={setModelChoice}
-                    />
-                  </SettingRow>
-                </div>
-
-                <footer className="flex h-14 items-center gap-2 border-t border-line bg-black/10 px-5">
-                  <div className="min-w-0 flex-1">
-                    {error !== null && (
-                      <p role="alert" className="flex items-center gap-1.5 text-label text-danger">
-                        <Icon icon={Alert02Icon} className="size-3.5 shrink-0" />
-                        <span className="truncate">{error}</span>
-                      </p>
-                    )}
-                  </div>
-                  <Button type="submit" variant="primary" disabled={project === null || creating}>
-                    {creating && <DotSpinner variant="working" label="Creating" />}
-                    Create Agent
-                  </Button>
-                </footer>
-              </form>
-              <AddProjectDialog
-                open={addFolderOpen}
-                onOpenChange={setAddFolderOpen}
-                onAdded={(added) => setProjectChoice(added.id)}
+                <Icon icon={Add01Icon} />
+                <PillLabel>Add folder…</PillLabel>
+              </button>
+            ) : (
+              <Picker
+                label="Project"
+                value={project.id}
+                options={projects.map((p) => ({
+                  value: p.id,
+                  label: p.name,
+                  icon: <Identicon name={p.name} size="sm" className="size-3.5" />,
+                }))}
+                onValueChange={(id) => setProjectChoice(id)}
+                action={{
+                  label: "Add folder…",
+                  icon: Add01Icon,
+                  onSelect: () => setAddFolderOpen(true),
+                }}
+                variant="field"
+                className="max-w-60"
               />
-            </Dialog.Popup>
-          </Dialog.Portal>
-        )}
-      </AnimatePresence>
-    </Dialog.Root>
+            )}
+          </DialogSettingRow>
+          <DialogSettingRow label="Runtime">
+            <Picker
+              label="Runtime"
+              value={runtime}
+              options={RUNTIMES}
+              onValueChange={setRuntime}
+              variant="field"
+            />
+          </DialogSettingRow>
+          <DialogSettingRow label="Model">
+            <ModelPicker
+              providers={providers}
+              selection={modelSelection}
+              onChange={setModelChoice}
+              align="end"
+              variant="field"
+            />
+          </DialogSettingRow>
+        </DialogSettings>
+
+        <DialogFooter>
+          <div className="min-w-0 flex-1">{error !== null && <DialogAlert message={error} />}</div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="dialog"
+            disabled={creating}
+            onClick={() => requestOpenChange(false)}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            variant="primary"
+            size="dialog"
+            disabled={project === null || creating}
+            className="px-3.5"
+          >
+            {creating && <DotSpinner variant="working" label="Creating" />}
+            Create Agent
+          </Button>
+        </DialogFooter>
+      </form>
+      <AddProjectDialog
+        open={addFolderOpen}
+        onOpenChange={setAddFolderOpen}
+        onAdded={(added) => setProjectChoice(added.id)}
+      />
+    </DialogShell>
   );
 }

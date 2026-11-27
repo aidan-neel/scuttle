@@ -1,3 +1,15 @@
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
+const copy: Record<string, string> = {
+  "../web/dist": "views/mainview",
+};
+
+const vendoredSkillsDir = NodePath.resolve(import.meta.dirname, "../../vendor/astack/skills");
+if (NodeFS.existsSync(vendoredSkillsDir)) {
+  copy["../../vendor/astack/skills"] = "astack/skills";
+}
+
 export default {
   app: {
     name: "Scuttle",
@@ -8,9 +20,7 @@ export default {
     bun: {
       entrypoint: "src/bun/index.ts",
     },
-    copy: {
-      "../web/dist": "views/mainview",
-    },
+    copy,
     mac: {
       icons: "assets/icon.iconset",
     },
@@ -18,7 +28,10 @@ export default {
       icon: "assets/icon.png",
     },
     win: {
-      icon: "assets/icon.png",
+      icon: "assets/icon.ico",
     },
+  },
+  release: {
+    generatePatch: false,
   },
 };

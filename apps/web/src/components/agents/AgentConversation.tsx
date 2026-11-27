@@ -8,9 +8,19 @@ import type {
 } from "@scuttle/contracts";
 import { AnimatePresence, motion } from "motion/react";
 import { useRef, useState } from "react";
-import { Composer, type ComposerSubmitPayload } from "@/components/home/Composer.tsx";
+import {
+  Composer,
+  type ComposerHandle,
+  type ComposerSubmitPayload,
+} from "@/components/home/Composer.tsx";
+import {
+  type ComposerSubmitOutcome,
+  toSubmitOutcome,
+} from "@/components/home/ComposerBottomBar.tsx";
 import { estimateContextUsage } from "@/components/home/contextUsage.ts";
+import { QueuedTurnsTray, useQueuedTurnsTray } from "@/components/home/QueuedTurnsTray.tsx";
 import { useThreadLocationControls } from "@/components/home/useThreadLocationControls.ts";
+import { RewindDialog, useRewindFlow } from "@/components/thread/RewindDialog.tsx";
 import { ScrollRuler } from "@/components/thread/ScrollRuler.tsx";
 import { ScrollToEndButton } from "@/components/thread/ScrollToEndButton.tsx";
 import {
@@ -20,6 +30,8 @@ import {
   LOAD_EARLIER_BATCH,
   ThreadTurnList,
 } from "@/components/thread/ThreadTurnList.tsx";
+import { QuestionPromptPanel } from "@/components/thread/QuestionPromptPanel.tsx";
+import { findPendingQuestion } from "@/components/thread/questionModel.ts";
 import { useStickToBottom } from "@/components/thread/useStickToBottom.ts";
 import { DotSpinner } from "@/components/ui/DotSpinner.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
@@ -36,6 +48,7 @@ interface AgentConversationProps {
 export function AgentConversation({ agent, detail, onViewAgent }: AgentConversationProps) {
   const providers = useWorkspaceSelector((s) => s.providers);
   const {
+    sendTurn,
     sendAgentTurn,
     startAgentSetup,
     updateAgent,
@@ -46,9 +59,9 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
   } = useWorkspaceActions();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const composerRef = useRef<ComposerHandle | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [compacting, setCompacting] = useState(false);
-  const [waitingDismissed, setWaitingDismissed] = useState(false);
   const introTask = useTask();
   const { thread, turns } = detail;
   const [visibleWindow, setVisibleWindow] = useState<{
@@ -91,12 +104,16 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
 
   const isRunning = thread.status.kind === "running" || thread.status.kind === "needs-input";
   const composerId = `composer-agent-${agent.id}`;
-  const { isAtBottom, scrollToBottom, unpin } = useStickToBottom(
-    scrollRef,
-    contentRef,
-    turns,
-    thread.id,
-  );
+  const queue = useQueuedTurnsTray({
+    detail,
+    running: isRunning,
+    composerRef,
+    onError: setSubmitError,
+  });
+  const rewind = useRewindFlow({ detail, composerRef });
+  const pendingQuestion = findPendingQuestion(turns);
+  const { isAtBottom, scrollToBottom, unpin, anchoredTurnId, anchoredTurnMinHeightPx } =
+    useStickToBottom(scrollRef, contentRef, turns, thread.id);
   const contextUsage = estimateContextUsage({
     turns,
     model: thread.modelSelection.model,
@@ -112,22 +129,31 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
     onError: setSubmitError,
   });
 
-  const needsPurpose = !isRunning && agent.purpose.trim().length === 0 && !waitingDismissed;
+  const needsPurpose = !isRunning && agent.purpose.trim().length === 0;
 
   const focusComposer = () => {
     document.getElementById(composerId)?.focus();
   };
 
-  const handleSubmit = async (payload: ComposerSubmitPayload) => {
+  const handleSubmit = async (payload: ComposerSubmitPayload): Promise<ComposerSubmitOutcome> => {
     setSubmitError(null);
+    const input = {
+      prompt: payload.prompt,
+      modelSelection: payload.modelSelection,
+      ...(payload.attachments.length > 0 ? { attachments: [...payload.attachments] } : {}),
+    };
     try {
-      await sendAgentTurn(agent.id, {
-        prompt: payload.prompt,
-        modelSelection: payload.modelSelection,
-        ...(payload.attachments.length > 0 ? { attachments: [...payload.attachments] } : {}),
-      });
+      const edited = await queue.submitEdit(payload);
+      if (edited !== null) return edited;
+      if (payload.mode === undefined) {
+        await sendAgentTurn(agent.id, input);
+        return { kind: "started" };
+      }
+      const result = await sendTurn(thread.id, { ...input, mode: payload.mode });
+      return toSubmitOutcome(result, queue.tray.items);
     } catch (error) {
       setSubmitError(describeApiError(error, "Failed to send message."));
+      return { kind: "failed" };
     }
   };
 
@@ -179,12 +205,17 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
         )}
         <div
           ref={scrollRef}
-          className="flex flex-1 flex-col overflow-y-auto px-4 pt-8 pb-10 sm:px-10"
+          className="flex flex-1 flex-col overflow-y-auto px-4 pt-8 pb-10 [scrollbar-gutter:stable_both-edges]"
         >
           <div className="mx-auto flex w-full max-w-composer flex-col">
             <header className="flex flex-col items-center pt-2 pb-7 text-center">
-              <Identicon name={agent.name} size="xl" className="size-16 rounded-[14px]" />
-              <h2 className="mt-3 text-[23px] leading-tight font-semibold tracking-tight text-fg">
+              <Identicon
+                name={agent.name}
+                style={agent.identiconStyle}
+                size="xl"
+                className="size-16 rounded-dialog"
+              />
+              <h2 className="mt-3 text-[1.4375rem] leading-tight font-semibold tracking-tight text-fg">
                 {agent.name}
               </h2>
               <div className="mt-2 flex items-center justify-center gap-4 text-label">
@@ -228,7 +259,12 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
               scrollRef={scrollRef}
               contentRef={contentRef}
               visibleStart={visibleStart}
+              anchoredTurnId={anchoredTurnId}
+              anchoredTurnMinHeightPx={anchoredTurnMinHeightPx}
               onLoadEarlier={handleLoadEarlier}
+              checkpoints={detail.checkpoints}
+              visualizations={detail.visualizations}
+              onRewind={isRunning ? undefined : rewind.requestRewind}
               onRespondApproval={respondApproval}
             />
 
@@ -252,13 +288,6 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
                     >
                       you to tell {agent.name} its purpose and the first piece of work
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setWaitingDismissed(true)}
-                      className="ml-1.5 cursor-pointer text-fg-faint outline-none transition-colors hover:text-fg-muted focus-visible:shadow-focus"
-                    >
-                      Dismiss
-                    </button>
                   </div>
                 </motion.div>
               )}
@@ -272,35 +301,46 @@ export function AgentConversation({ agent, detail, onViewAgent }: AgentConversat
         <ScrollToEndButton visible={!isAtBottom} onClick={scrollToBottom} />
       </motion.div>
 
-      <div className="shrink-0 px-4 pt-0 pb-4">
+      <div className="shrink-0 px-4 pt-0 pb-6">
         <div className="mx-auto w-full max-w-composer space-y-2">
           {submitError !== null && (
             <div className="rounded-control border border-danger/30 bg-danger/10 px-3 py-1.5 text-label text-danger">
               {submitError}
             </div>
           )}
-          <Composer
-            id={composerId}
-            placeholder={
-              isRunning
-                ? `${agent.name} is working… press Esc to interrupt`
-                : `Message ${agent.name}, / for commands, @ for context`
-            }
-            providers={providers}
-            modelSelection={thread.modelSelection}
-            onModelSelectionChange={handleModelSelectionChange}
-            interactionMode={thread.interactionMode}
-            onInteractionModeChange={handleInteractionModeChange}
-            onCompact={compacting ? undefined : handleCompact}
-            filesRoot={thread.cwd}
-            status={status}
-            contextUsage={contextUsage}
-            running={isRunning}
-            onSubmit={handleSubmit}
-            onStop={handleStop}
-          />
+          <div>
+            <QueuedTurnsTray {...queue.tray} />
+            <QuestionPromptPanel
+              approval={pendingQuestion}
+              returnFocusId={composerId}
+              onRespond={(approvalId, input) => respondApproval(thread.id, approvalId, input)}
+            />
+            <Composer
+              ref={composerRef}
+              id={composerId}
+              compact
+              placeholder={`Message ${agent.name}, / for commands, @ for context`}
+              providers={providers}
+              modelSelection={thread.modelSelection}
+              onModelSelectionChange={handleModelSelectionChange}
+              interactionMode={thread.interactionMode}
+              onInteractionModeChange={handleInteractionModeChange}
+              onCompact={compacting ? undefined : handleCompact}
+              filesRoot={thread.cwd}
+              status={status}
+              contextUsage={contextUsage}
+              threadCompactAtTokens={thread.compactAtTokens}
+              onCompactAtChange={(tokens) =>
+                updateThread(thread.id, { compactAtTokens: tokens }).then(() => undefined)
+              }
+              running={isRunning}
+              onSubmit={handleSubmit}
+              onStop={handleStop}
+            />
+          </div>
         </div>
       </div>
+      <RewindDialog {...rewind.dialog} />
     </>
   );
 }

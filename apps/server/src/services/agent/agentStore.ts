@@ -3,6 +3,7 @@ import {
   type Agent,
   type AgentCheckIn,
   AgentModelStack,
+  IdenticonStyle,
   ModelSelection,
   ThreadRuntime,
   type UpdateAgentInput,
@@ -29,6 +30,7 @@ interface AgentJoinRow {
   readonly project_name: string;
   readonly project_path: string;
   readonly name: string;
+  readonly identicon_style: string | null;
   readonly purpose: string;
   readonly primary_thread_id: string;
   readonly runtime: string;
@@ -40,6 +42,7 @@ interface AgentJoinRow {
   readonly last_summary: string | null;
   readonly pinned: number;
   readonly needs_attention: number;
+  readonly active_delegation_count?: number;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -55,6 +58,7 @@ interface CheckInRow {
 }
 
 const decodeRuntime = Schema.decodeUnknownOption(ThreadRuntime);
+const decodeIdenticonStyle = Schema.decodeUnknownOption(IdenticonStyle);
 const decodeModelSelection = Schema.decodeUnknownOption(ModelSelection);
 const decodeModelStack = Schema.decodeUnknownOption(AgentModelStack);
 
@@ -90,6 +94,7 @@ const normalizeModelStack = (raw: unknown): unknown => {
 
 const rowToAgent = (row: AgentJoinRow): Agent => {
   const runtimeOpt = decodeRuntime(row.runtime);
+  const styleOpt = row.identicon_style !== null ? decodeIdenticonStyle(row.identicon_style) : null;
   const modelOpt = decodeModelSelection(safeJsonParse(row.model_selection_json));
   const stackOpt = decodeModelStack(normalizeModelStack(safeJsonParse(row.model_stack_json)));
   return {
@@ -98,6 +103,7 @@ const rowToAgent = (row: AgentJoinRow): Agent => {
     projectName: row.project_name,
     projectPath: row.project_path,
     name: row.name,
+    ...(styleOpt !== null && styleOpt._tag === "Some" ? { identiconStyle: styleOpt.value } : {}),
     purpose: row.purpose,
     primaryThreadId: ThreadId.make(row.primary_thread_id),
     runtime: runtimeOpt._tag === "Some" ? runtimeOpt.value : "local",
@@ -111,6 +117,9 @@ const rowToAgent = (row: AgentJoinRow): Agent => {
     ...(row.last_summary !== null ? { lastSummary: row.last_summary } : {}),
     pinned: row.pinned === 1,
     needsAttention: row.needs_attention === 1,
+    ...(typeof row.active_delegation_count === "number" && row.active_delegation_count > 0
+      ? { activeDelegationCount: row.active_delegation_count }
+      : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -127,7 +136,9 @@ const rowToCheckIn = (row: CheckInRow): AgentCheckIn => ({
 });
 
 const AGENT_SELECT = `
-  SELECT a.*, p.name AS project_name, p.path AS project_path
+  SELECT a.*, p.name AS project_name, p.path AS project_path,
+         (SELECT COUNT(*) FROM agent_delegations d
+          WHERE d.agent_id = a.id AND d.status IN ('running', 'waiting_parent')) AS active_delegation_count
   FROM agents a
   JOIN projects p ON p.id = a.project_id
 `;
@@ -179,13 +190,14 @@ export const listProjectsMissingAgents = (
 export const insertAgent = (db: Database, agent: Agent): void => {
   db.prepare(
     `INSERT INTO agents
-       (id, project_id, name, purpose, primary_thread_id, runtime, model_selection_json, model_stack_json,
+       (id, project_id, name, identicon_style, purpose, primary_thread_id, runtime, model_selection_json, model_stack_json,
         instructions_md, check_in_interval_minutes, last_check_in_at, last_summary, pinned, needs_attention, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     agent.id,
     agent.projectId,
     agent.name,
+    agent.identiconStyle ?? null,
     agent.purpose,
     agent.primaryThreadId,
     agent.runtime,
@@ -205,12 +217,13 @@ export const insertAgent = (db: Database, agent: Agent): void => {
 export const updateAgentRow = (db: Database, agent: Agent): void => {
   db.prepare(
     `UPDATE agents
-     SET name = ?, purpose = ?, runtime = ?, model_selection_json = ?, model_stack_json = ?,
+     SET name = ?, identicon_style = ?, purpose = ?, runtime = ?, model_selection_json = ?, model_stack_json = ?,
          instructions_md = ?, check_in_interval_minutes = ?, last_check_in_at = ?, last_summary = ?,
          pinned = ?, needs_attention = ?, updated_at = ?
      WHERE id = ?`,
   ).run(
     agent.name,
+    agent.identiconStyle ?? null,
     agent.purpose,
     agent.runtime,
     JSON.stringify(agent.modelSelection),
@@ -285,12 +298,14 @@ export const buildUpdatedAgent = (existing: Agent, input: UpdateAgentInput): Age
         ? undefined
         : input.checkInIntervalMinutes;
   const nextName = input.name?.trim() || existing.name;
+  const nextIdenticonStyle = input.identiconStyle ?? existing.identiconStyle;
   return {
     id: existing.id,
     projectId: existing.projectId,
     projectName: existing.projectName,
     projectPath: existing.projectPath,
     name: nextName,
+    ...(nextIdenticonStyle !== undefined ? { identiconStyle: nextIdenticonStyle } : {}),
     purpose: input.purpose !== undefined ? input.purpose : existing.purpose,
     primaryThreadId: existing.primaryThreadId,
     runtime: input.runtime ?? existing.runtime,
@@ -303,6 +318,9 @@ export const buildUpdatedAgent = (existing: Agent, input: UpdateAgentInput): Age
     ...(existing.lastSummary !== undefined ? { lastSummary: existing.lastSummary } : {}),
     pinned: input.pinned ?? existing.pinned,
     needsAttention: input.needsAttention ?? existing.needsAttention,
+    ...(existing.activeDelegationCount !== undefined
+      ? { activeDelegationCount: existing.activeDelegationCount }
+      : {}),
     createdAt: existing.createdAt,
     updatedAt: new Date().toISOString(),
   };

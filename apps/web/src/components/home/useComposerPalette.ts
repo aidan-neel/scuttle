@@ -1,16 +1,22 @@
-import { type KeyboardEvent, useId, useState } from "react";
+import { useId, useState } from "react";
 import { type MentionView, useMentionContent } from "./ComposerMentionMenu.tsx";
 import { type SlashOptions, type SlashView, useSlashContent } from "./ComposerSlashMenu.tsx";
 import { flattenSections, type PaletteContent } from "./ComposerPalette.tsx";
-import {
-  detectTrigger,
-  insertMentionTrigger,
-  replaceMention,
-  type TextEdit,
-  triggerKey,
-} from "./composerTriggers.ts";
+import type { EditorCaret } from "./ComposerLexicalPlugins.tsx";
+import type { ComposerEmbed } from "./composerEmbeds.ts";
+import { type ComposerTrigger, detectTrigger, type TriggerChar } from "./composerTriggers.ts";
 
 export type MentionCategory = "agents" | "threads" | "files";
+
+export interface PaletteTrigger extends ComposerTrigger {
+  readonly nodeKey: string;
+}
+
+export interface PaletteEditorOps {
+  readonly replaceWithEmbed: (trigger: PaletteTrigger, embed: ComposerEmbed) => void;
+  readonly replaceWithText: (trigger: PaletteTrigger, start: number, text: string) => void;
+  readonly insertTrigger: (char: TriggerChar) => void;
+}
 
 interface NavState {
   readonly key: string;
@@ -19,9 +25,8 @@ interface NavState {
 }
 
 interface UseComposerPaletteOptions {
-  readonly prompt: string;
-  readonly caret: number;
-  readonly applyEdit: (edit: TextEdit) => void;
+  readonly caret: EditorCaret | null;
+  readonly ops: PaletteEditorOps;
   readonly filesRoot: string | undefined;
   readonly focused: boolean;
   readonly slash: SlashOptions;
@@ -32,28 +37,35 @@ export interface ComposerPaletteState {
   readonly content: PaletteContent | null;
   readonly activeIndex: number;
   readonly setActiveIndex: (index: number) => void;
-  readonly handleKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => boolean;
+  readonly handleKeyDown: (event: KeyboardEvent) => boolean;
   readonly openMentionCategory: (category: MentionCategory) => void;
+  readonly openSlashMenu: () => void;
 }
 
 const MENTION_ROOT: MentionView = { kind: "root" };
 const SLASH_ROOT: SlashView = { kind: "root" };
 const INITIAL_NAV: NavState = { key: "", mention: MENTION_ROOT, slash: SLASH_ROOT };
+const PENDING_KEY = "pending";
 
 const viewId = (view: MentionView | SlashView) =>
   view.kind === "files" ? `files:${view.dir}` : view.kind;
 
+const readTrigger = (caret: EditorCaret | null): PaletteTrigger | null => {
+  if (caret === null) return null;
+  const trigger = detectTrigger(caret.text, caret.offset);
+  return trigger ? { ...trigger, nodeKey: caret.nodeKey } : null;
+};
+
 export function useComposerPalette({
-  prompt,
   caret,
-  applyEdit,
+  ops,
   filesRoot,
   focused,
   slash,
 }: UseComposerPaletteOptions): ComposerPaletteState {
   const listboxId = useId();
-  const trigger = detectTrigger(prompt, caret);
-  const key = trigger ? triggerKey(trigger) : "";
+  const trigger = readTrigger(caret);
+  const key = trigger ? `${trigger.nodeKey}:${trigger.kind}:${trigger.start}` : "";
   const [nav, setNav] = useState<NavState>(INITIAL_NAV);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [indexState, setIndexState] = useState({ key: "", index: 0 });
@@ -63,6 +75,8 @@ export function useComposerPalette({
     if (key === "") {
       setNav(INITIAL_NAV);
       setDismissed(null);
+    } else if (nav.key === PENDING_KEY) {
+      setNav({ ...nav, key });
     }
   }
 
@@ -70,13 +84,7 @@ export function useComposerPalette({
   const query = trigger?.query ?? "";
 
   const clearQuery = () => {
-    if (!trigger) return;
-    if (trigger.kind === "slash") applyEdit({ text: "/", caret: 1 });
-    else
-      applyEdit({
-        text: prompt.slice(0, trigger.start + 1) + prompt.slice(trigger.end),
-        caret: trigger.start + 1,
-      });
+    if (trigger) ops.replaceWithText(trigger, trigger.start + 1, "");
   };
 
   const mentionContent = useMentionContent({
@@ -88,8 +96,8 @@ export function useComposerPalette({
       setNav({ ...current, mention });
       clearQuery();
     },
-    insert: (token) => {
-      if (trigger?.kind === "mention") applyEdit(replaceMention(prompt, trigger, token));
+    embed: (embed) => {
+      if (trigger?.kind === "mention") ops.replaceWithEmbed(trigger, embed);
     },
   });
 
@@ -102,8 +110,11 @@ export function useComposerPalette({
       clearQuery();
     },
     run: (action) => {
-      applyEdit({ text: "", caret: 0 });
+      if (trigger) ops.replaceWithText(trigger, trigger.start, "");
       action();
+    },
+    embed: (embed) => {
+      if (trigger?.kind === "slash") ops.replaceWithEmbed(trigger, embed);
     },
   });
 
@@ -120,7 +131,7 @@ export function useComposerPalette({
     indexState.key === indexKey ? Math.min(indexState.index, Math.max(items.length - 1, 0)) : 0;
   const setActiveIndex = (index: number) => setIndexState({ key: indexKey, index });
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): boolean => {
+  const handleKeyDown = (event: KeyboardEvent): boolean => {
     if (!open) return false;
     const consume = (action: () => void) => {
       event.preventDefault();
@@ -150,16 +161,21 @@ export function useComposerPalette({
   };
 
   const openMentionCategory = (category: MentionCategory) => {
-    const edit = insertMentionTrigger(prompt, caret);
     const mention: MentionView =
       category === "files" && filesRoot !== undefined
         ? { kind: "files", dir: filesRoot }
         : category === "files"
           ? MENTION_ROOT
           : { kind: category };
-    setNav({ key: `mention:${edit.caret - 1}`, mention, slash: SLASH_ROOT });
+    setNav({ key: PENDING_KEY, mention, slash: SLASH_ROOT });
     setDismissed(null);
-    applyEdit(edit);
+    ops.insertTrigger("@");
+  };
+
+  const openSlashMenu = () => {
+    setNav(INITIAL_NAV);
+    setDismissed(null);
+    ops.insertTrigger("/");
   };
 
   return {
@@ -169,5 +185,6 @@ export function useComposerPalette({
     setActiveIndex,
     handleKeyDown,
     openMentionCategory,
+    openSlashMenu,
   };
 }

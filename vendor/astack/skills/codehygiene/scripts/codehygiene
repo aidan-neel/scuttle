@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Run codehygiene at a pinned commit through uvx. Arguments pass straight through.
+set -eu
+
+REPO_URL="https://github.com/brianbell-x/codehygiene"
+COMMIT="d56e737afef4f2362c45794e073599de86492a9b"
+
+if ! command -v uvx >/dev/null 2>&1; then
+  echo "codehygiene: uvx not found. Install uv (https://docs.astral.sh/uv/) and rerun." >&2
+  exit 2
+fi
+
+exec uvx --quiet --from "git+${REPO_URL}@${COMMIT}" codehygiene --no-update-check "$@"

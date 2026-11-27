@@ -1,36 +1,20 @@
 import type {
   Agent,
-  AgentCheckIn,
   AgentDelegation,
   AgentDelegationQuestion,
   AgentDetail,
-  AgentIssue,
-  AgentMemory,
   AskDelegationParentInput,
-  AssignAgentIssueInput,
-  AssignAgentIssueResult,
   CreateAgentInput,
-  CreateIssueInput,
-  CreateMemoryInput,
-  DelegateAgentTaskInput,
+  CreateThreadDelegationInput,
+  DelegationLink,
   ModelSelection,
   Project,
   SendTurnInput,
   SetupAgentStartInput,
-  ThreadTurn,
-  TriggerCheckInInput,
   TurnOrigin,
   UpdateAgentInput,
-  UpdateIssueInput,
-  UpdateMemoryInput,
 } from "@scuttle/contracts";
-import {
-  type AgentDelegationId,
-  AgentId,
-  type AgentIssueId,
-  type AgentMemoryId,
-  ProjectId,
-} from "@scuttle/shared/ids";
+import { type AgentDelegationId, AgentId, ProjectId, type ThreadId } from "@scuttle/shared/ids";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -54,6 +38,7 @@ import {
   formatAgentName,
   pickDefaultModelSelection,
 } from "./agent/agentPrompts.ts";
+import type { AgentServiceShape } from "./agent/agentServiceTypes.ts";
 import {
   buildUpdatedAgent,
   deleteAgentRow,
@@ -65,12 +50,45 @@ import {
   readAgentById,
   updateAgentRow,
 } from "./agent/agentStore.ts";
-import { listDelegations, listIssues, recoverStaleDelegations } from "./agent/agentWorkStore.ts";
+import {
+  listActiveDelegationLinks,
+  listDelegations,
+  listDelegationsByParentThread,
+  listIssues,
+  readDelegationByDelegationId,
+  recoverStaleDelegations,
+} from "./agent/agentWorkStore.ts";
+import { readThreadById } from "./threadStore.ts";
 import { AgentServiceError } from "./agent/errors.ts";
 import type { FetchFn } from "./gitForge/forgeHttp.ts";
 import { type CommandRunner, runCommand } from "./gitForge/processRunner.ts";
 
 export { AgentServiceError } from "./agent/errors.ts";
+
+export interface UnifiedAgentServiceShape extends AgentServiceShape {
+  readonly listActiveDelegationLinks: () => Effect.Effect<ReadonlyArray<DelegationLink>>;
+  readonly listThreadDelegations: (
+    parentThreadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<AgentDelegation>, AgentServiceError>;
+  readonly delegateFromThread: (
+    parentThreadId: ThreadId,
+    input: CreateThreadDelegationInput,
+  ) => Effect.Effect<AgentDelegation, AgentServiceError>;
+  readonly getDelegation: (
+    delegationId: AgentDelegationId,
+  ) => Effect.Effect<AgentDelegation, AgentServiceError>;
+  readonly cancelDelegationById: (
+    delegationId: AgentDelegationId,
+  ) => Effect.Effect<AgentDelegation, AgentServiceError>;
+  readonly askParentByDelegation: (
+    delegationId: AgentDelegationId,
+    input: AskDelegationParentInput,
+    options?: { readonly signal?: AbortSignal },
+  ) => Effect.Effect<AgentDelegationQuestion, AgentServiceError>;
+  readonly listDelegationQuestionsById: (
+    delegationId: AgentDelegationId,
+  ) => Effect.Effect<ReadonlyArray<AgentDelegationQuestion>, AgentServiceError>;
+}
 
 export interface AgentServiceOptions {
   readonly runner: CommandRunner;
@@ -91,100 +109,9 @@ const toRejectedError = (err: { readonly message: string }) =>
 const toNotFoundError = (err: { readonly message: string }) =>
   new AgentServiceError({ reason: "not-found", detail: err.message });
 
-export class AgentService extends Context.Service<
-  AgentService,
-  {
-    readonly list: () => Effect.Effect<ReadonlyArray<Agent>>;
-    readonly getDetail: (agentId: AgentId) => Effect.Effect<AgentDetail, AgentServiceError>;
-    readonly create: (input: CreateAgentInput) => Effect.Effect<Agent, AgentServiceError>;
-    readonly update: (
-      agentId: AgentId,
-      input: UpdateAgentInput,
-    ) => Effect.Effect<Agent, AgentServiceError>;
-    readonly remove: (agentId: AgentId) => Effect.Effect<void, AgentServiceError>;
-    readonly sendTurn: (
-      agentId: AgentId,
-      input: SendTurnInput,
-      options?: { readonly origin?: TurnOrigin },
-    ) => Effect.Effect<ThreadTurn, AgentServiceError>;
-    readonly startSetup: (
-      agentId: AgentId,
-      input?: SetupAgentStartInput,
-    ) => Effect.Effect<ThreadTurn, AgentServiceError>;
-    readonly buildAgentContext: (
-      agentId: AgentId,
-      query?: string,
-    ) => Effect.Effect<string, AgentServiceError>;
-    readonly listMemories: (
-      agentId: AgentId,
-      query?: string,
-    ) => Effect.Effect<ReadonlyArray<AgentMemory>, AgentServiceError>;
-    readonly searchMemories: (
-      agentId: AgentId,
-      query: string,
-      limit?: number,
-    ) => Effect.Effect<ReadonlyArray<AgentMemory>, AgentServiceError>;
-    readonly createMemory: (
-      agentId: AgentId,
-      input: CreateMemoryInput,
-    ) => Effect.Effect<AgentMemory, AgentServiceError>;
-    readonly updateMemory: (
-      agentId: AgentId,
-      memoryId: AgentMemoryId,
-      input: UpdateMemoryInput,
-    ) => Effect.Effect<AgentMemory, AgentServiceError>;
-    readonly deleteMemory: (
-      agentId: AgentId,
-      memoryId: AgentMemoryId,
-    ) => Effect.Effect<void, AgentServiceError>;
-    readonly listIssues: (
-      agentId: AgentId,
-    ) => Effect.Effect<ReadonlyArray<AgentIssue>, AgentServiceError>;
-    readonly createIssue: (
-      agentId: AgentId,
-      input: CreateIssueInput,
-    ) => Effect.Effect<AgentIssue, AgentServiceError>;
-    readonly updateIssue: (
-      agentId: AgentId,
-      issueId: AgentIssueId,
-      input: UpdateIssueInput,
-    ) => Effect.Effect<AgentIssue, AgentServiceError>;
-    readonly deleteIssue: (
-      agentId: AgentId,
-      issueId: AgentIssueId,
-    ) => Effect.Effect<void, AgentServiceError>;
-    readonly syncIssues: (
-      agentId: AgentId,
-    ) => Effect.Effect<ReadonlyArray<AgentIssue>, AgentServiceError>;
-    readonly assignIssue: (
-      agentId: AgentId,
-      issueId: AgentIssueId,
-      input?: AssignAgentIssueInput,
-    ) => Effect.Effect<AssignAgentIssueResult, AgentServiceError>;
-    readonly delegateTask: (
-      agentId: AgentId,
-      input: DelegateAgentTaskInput,
-    ) => Effect.Effect<AgentDelegation, AgentServiceError>;
-    readonly cancelDelegation: (
-      agentId: AgentId,
-      delegationId: AgentDelegationId,
-    ) => Effect.Effect<AgentDelegation, AgentServiceError>;
-    readonly askParent: (
-      agentId: AgentId,
-      delegationId: AgentDelegationId,
-      input: AskDelegationParentInput,
-      options?: { readonly signal?: AbortSignal },
-    ) => Effect.Effect<AgentDelegationQuestion, AgentServiceError>;
-    readonly listDelegationQuestions: (
-      agentId: AgentId,
-      delegationId: AgentDelegationId,
-    ) => Effect.Effect<ReadonlyArray<AgentDelegationQuestion>, AgentServiceError>;
-    readonly runCheckIn: (
-      agentId: AgentId,
-      input?: TriggerCheckInInput,
-    ) => Effect.Effect<AgentCheckIn, AgentServiceError>;
-  }
->()("scuttle/server/AgentService") {}
+export class AgentService extends Context.Service<AgentService, UnifiedAgentServiceShape>()(
+  "scuttle/server/AgentService",
+) {}
 
 export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS) =>
   Effect.gen(function* () {
@@ -217,6 +144,7 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
       function* (input: {
         readonly project: Project;
         readonly name: string;
+        readonly identiconStyle?: Agent["identiconStyle"];
         readonly purpose?: string;
         readonly runtime?: Agent["runtime"];
         readonly modelSelection?: ModelSelection;
@@ -244,6 +172,7 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
           projectName: input.project.name,
           projectPath: input.project.path,
           name: input.name,
+          ...(input.identiconStyle !== undefined ? { identiconStyle: input.identiconStyle } : {}),
           purpose: input.purpose?.trim() ?? "",
           primaryThreadId: primaryThread.id,
           runtime,
@@ -279,15 +208,23 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
       }
     });
 
+    const sendThreadTurn = Effect.fn("AgentService.sendThreadTurn")(function* (
+      threadId: ThreadId,
+      input: SendTurnInput,
+      turnOptions?: { readonly origin?: TurnOrigin },
+    ) {
+      return yield* threads
+        .sendTurn(threadId, input, turnOptions)
+        .pipe(Effect.mapError(toRejectedError));
+    });
+
     const sendTurn = Effect.fn("AgentService.sendTurn")(function* (
       agentId: AgentId,
       input: SendTurnInput,
-      options?: { readonly origin?: TurnOrigin },
+      turnOptions?: { readonly origin?: TurnOrigin },
     ) {
       const agent = yield* requireAgent(agentId);
-      return yield* threads
-        .sendTurn(agent.primaryThreadId, input, options)
-        .pipe(Effect.mapError(toRejectedError));
+      return yield* sendThreadTurn(agent.primaryThreadId, input, turnOptions);
     });
 
     const memoryOps = makeAgentMemoryOps({ db, eventBus, requireAgent });
@@ -298,12 +235,13 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
       runner: options.runner,
       fetch: options.fetch,
       requireAgent,
+      sendAgentTurn: sendTurn,
     });
     const bounceOps = makeAgentBounceOps({
       db,
       eventBus,
       requireAgent,
-      sendAgentTurn: sendTurn,
+      sendThreadTurn,
       interruptThreadTurn: threads.interrupt,
       ...(options.askParentTimeoutMs !== undefined
         ? { askParentTimeoutMs: options.askParentTimeoutMs }
@@ -313,6 +251,7 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
       db,
       eventBus,
       projects,
+      providers,
       threads,
       git,
       gitForge,
@@ -383,6 +322,7 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
       const created = yield* createAgentForProject({
         project,
         name: input.name.trim(),
+        ...(input.identiconStyle !== undefined ? { identiconStyle: input.identiconStyle } : {}),
         ...(input.purpose !== undefined ? { purpose: input.purpose } : {}),
         ...(input.runtime !== undefined ? { runtime: input.runtime } : {}),
         ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
@@ -465,9 +405,12 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
       createMemory: memoryOps.create,
       updateMemory: memoryOps.update,
       deleteMemory: memoryOps.remove,
+      listAllIssues: issueOps.listAll,
       listIssues: issueOps.list,
+      listIssueActivities: issueOps.listActivities,
       createIssue: issueOps.create,
       updateIssue: issueOps.update,
+      addIssueComment: issueOps.addComment,
       deleteIssue: issueOps.remove,
       syncIssues: issueOps.sync,
       assignIssue: delegationOps.assignIssue,
@@ -476,6 +419,31 @@ export const makeAgentService = (options: AgentServiceOptions = DEFAULT_OPTIONS)
       askParent: bounceOps.askParent,
       listDelegationQuestions: bounceOps.listQuestions,
       runCheckIn: delegationOps.runCheckIn,
+      listActiveDelegationLinks: () => Effect.sync(() => listActiveDelegationLinks(db)),
+      listThreadDelegations: (parentThreadId) =>
+        readThreadById(db, parentThreadId)
+          ? Effect.sync(() => listDelegationsByParentThread(db, parentThreadId))
+          : Effect.fail(
+              new AgentServiceError({
+                reason: "not-found",
+                detail: `Thread "${parentThreadId}" was not found.`,
+              }),
+            ),
+      delegateFromThread: delegationOps.delegateFromThread,
+      getDelegation: (delegationId) => {
+        const delegation = readDelegationByDelegationId(db, delegationId);
+        return delegation
+          ? Effect.succeed(delegation)
+          : Effect.fail(
+              new AgentServiceError({
+                reason: "not-found",
+                detail: `Delegation "${delegationId}" was not found.`,
+              }),
+            );
+      },
+      cancelDelegationById: delegationOps.cancelDelegationById,
+      askParentByDelegation: bounceOps.askParentByDelegation,
+      listDelegationQuestionsById: bounceOps.listDelegationQuestionsById,
     });
   });
 

@@ -8,475 +8,451 @@ import type {
   TurnUsage,
 } from "@scuttle/contracts";
 import * as Effect from "effect/Effect";
+import { defaultServerConfig } from "../config.ts";
+import {
+  acpInitParams,
+  buildAcpMcpServers,
+  openAcpSession,
+  runAcpProbeCommand,
+  runAcpSessionProbe,
+} from "./acpMcp.ts";
+import {
+  extractQuirkToolTitle,
+  filterPermissionOptions,
+  shouldAlwaysSetModel,
+} from "./acpQuirks.ts";
 import {
   getBuiltInProviderSpec,
   parseVersionNumber,
   resolveExecutable,
-  runCliProbe,
   tokenizeLaunchArgs,
 } from "./catalog.ts";
+import { materializeProviderRuntime, type ResolvedProviderRuntime } from "./shadowHomes.ts";
 import { StdioJsonRpcProcess } from "./stdioJsonRpc.ts";
 import { presentToolActivity } from "./toolLabel.ts";
-import type {
-  ApprovalDecision,
-  HarnessAdapter,
-  HarnessTurnInput,
-  HarnessTurnResult,
+import {
+  type ApprovalDecision,
+  buildAcpPromptBlocks,
+  filterImageAttachments,
+  type HarnessTurnInput,
+  type HarnessTurnResult,
 } from "./types.ts";
 import { parseAcpCostUsd, parseAcpUsage } from "./usageParsing.ts";
 
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+const asString = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
 
-const asString = (value: unknown): string | undefined =>
-  typeof value === "string" && value.length > 0 ? value : undefined;
+const EFFORT_LEVELS: ReadonlyArray<EffortLevel> = ["low", "medium", "high", "xhigh", "max"];
+const toEffort = (v: unknown) =>
+  typeof v === "string" ? EFFORT_LEVELS.find((e) => e === v.toLowerCase()) : undefined;
 
-const VALID_EFFORTS = new Set<EffortLevel>(["low", "medium", "high", "xhigh", "max"]);
-
-const toEffort = (value: unknown): EffortLevel | undefined => {
-  if (typeof value !== "string") return undefined;
-  const lower = value.toLowerCase();
-  return VALID_EFFORTS.has(lower as EffortLevel) ? (lower as EffortLevel) : undefined;
-};
-
-type AcpProviderKind = Extract<ProviderKind, "antigravity" | "opencode" | "copilot">;
-
+type AcpProviderKind = Extract<
+  ProviderKind,
+  "antigravity" | "opencode" | "copilot" | "acp-registry"
+>;
 const ACP_BASE_ARGS: Record<AcpProviderKind, ReadonlyArray<string>> = {
   antigravity: ["acp"],
   opencode: ["acp"],
   copilot: ["--acp"],
+  "acp-registry": [],
+};
+
+const resolveAcpSpec = (kind: AcpProviderKind, c: ProviderConfig) =>
+  kind === "acp-registry"
+    ? {
+        name: c.name,
+        defaultBinary: c.binaryPath,
+        setupHint: `Install ${c.name} from the ACP Registry.`,
+        fallbackModels: [
+          { slug: "default", name: `${c.name} Default`, isDefault: true, efforts: [] },
+        ] satisfies ReadonlyArray<ProviderModel>,
+      }
+    : getBuiltInProviderSpec(kind);
+
+const buildAcpRuntime = (kind: AcpProviderKind, c: ProviderConfig, dataDir?: string) =>
+  materializeProviderRuntime({
+    instanceId: c.id,
+    kind,
+    dataDir: dataDir ?? process.env.SCUTTLE_DATA_DIR ?? defaultServerConfig().dataDir,
+    ...(c.homePath ? { homePath: c.homePath } : {}),
+    ...(c.shadowHomePath ? { shadowHomePath: c.shadowHomePath } : {}),
+    ...(c.env ? { env: c.env } : {}),
+  });
+
+const THINKING_IDS = new Set(["thought_level", "thinking", "reasoning_effort", "effort"]);
+const findCfg = (sr: unknown, match: (o: Record<string, unknown>) => boolean) =>
+  isObject(sr) && Array.isArray(sr.configOptions)
+    ? sr.configOptions.find((o): o is Record<string, unknown> => isObject(o) && match(o))
+    : undefined;
+const findThinkingCfg = (sr: unknown) =>
+  findCfg(sr, (o) => THINKING_IDS.has(asString(o.id) ?? "") || o.category === "thought_level");
+const currentAcpModel = (sr: unknown) =>
+  asString(findCfg(sr, (o) => o.id === "model" || o.category === "model")?.currentValue) ??
+  (isObject(sr) && isObject(sr.models) ? asString(sr.models.currentModelId) : undefined);
+
+const pushModels = (
+  items: ReadonlyArray<unknown>,
+  cur: string | undefined,
+  efforts: ReadonlyArray<EffortLevel>,
+  defaultEffort: EffortLevel | undefined,
+  flat = false,
+): ProviderModel[] => {
+  const models: ProviderModel[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    if (!isObject(item)) continue;
+    for (const e of !flat && Array.isArray(item.options) ? item.options : [item]) {
+      if (!isObject(e)) continue;
+      const slug = asString(flat ? e.modelId : e.value) ?? asString(e.id);
+      if (!slug || seen.has(slug)) continue;
+      seen.add(slug);
+      models.push({
+        slug,
+        name: asString(e.name) ?? slug,
+        ...(slug === cur ? { isDefault: true } : {}),
+        efforts: [...efforts],
+        ...(defaultEffort ? { defaultEffort } : {}),
+      });
+    }
+  }
+  return models;
 };
 
 const extractAcpModels = (
-  sessionResult: unknown,
+  sr: unknown,
   fallback: ReadonlyArray<ProviderModel>,
 ): ReadonlyArray<ProviderModel> => {
-  if (!isObject(sessionResult)) return fallback;
-
-  const configOptions = Array.isArray(sessionResult.configOptions)
-    ? sessionResult.configOptions
-    : [];
-  const effortConfig = configOptions.find(
-    (opt) =>
-      isObject(opt) &&
-      (opt.id === "thought_level" ||
-        opt.id === "thinking" ||
-        opt.id === "reasoning_effort" ||
-        opt.id === "effort" ||
-        opt.category === "thought_level"),
-  );
-  const discoveredEfforts: EffortLevel[] = [];
-  if (isObject(effortConfig) && Array.isArray(effortConfig.options)) {
-    for (const entry of effortConfig.options) {
-      if (!isObject(entry)) continue;
-      const eff = toEffort(entry.value ?? entry.id);
-      if (eff && !discoveredEfforts.includes(eff)) discoveredEfforts.push(eff);
+  if (!isObject(sr)) return fallback;
+  const effortCfg = findThinkingCfg(sr);
+  const effortSet = new Set<EffortLevel>();
+  if (Array.isArray(effortCfg?.options)) {
+    for (const e of effortCfg.options) {
+      const f = isObject(e) ? toEffort(e.value ?? e.id) : undefined;
+      if (f) effortSet.add(f);
     }
   }
-  const defaultEffort = isObject(effortConfig) ? toEffort(effortConfig.currentValue) : undefined;
-
-  const modelConfig = configOptions.find(
-    (opt) => isObject(opt) && (opt.id === "model" || opt.category === "model"),
-  );
-
-  const models: ProviderModel[] = [];
-  const seen = new Set<string>();
-
-  if (isObject(modelConfig) && Array.isArray(modelConfig.options)) {
-    const currentValue = asString(modelConfig.currentValue);
-    const flatOptions: Record<string, unknown>[] = [];
-    for (const opt of modelConfig.options) {
-      if (!isObject(opt)) continue;
-      if (Array.isArray(opt.options)) {
-        for (const sub of opt.options) {
-          if (isObject(sub)) flatOptions.push(sub);
-        }
-      } else {
-        flatOptions.push(opt);
-      }
-    }
-    for (const entry of flatOptions) {
-      const slug = asString(entry.value) ?? asString(entry.id);
-      if (!slug || seen.has(slug)) continue;
-      seen.add(slug);
-      const name = asString(entry.name) ?? slug;
-      models.push({
-        slug,
-        name,
-        ...(slug === currentValue ? { isDefault: true } : {}),
-        efforts: [...discoveredEfforts],
-        ...(defaultEffort ? { defaultEffort } : {}),
-      });
-    }
-  } else if (
-    isObject(sessionResult.models) &&
-    Array.isArray(sessionResult.models.availableModels)
-  ) {
-    const currentModelId = asString(sessionResult.models.currentModelId);
-    for (const entry of sessionResult.models.availableModels) {
-      if (!isObject(entry)) continue;
-      const slug = asString(entry.modelId) ?? asString(entry.id);
-      if (!slug || seen.has(slug)) continue;
-      seen.add(slug);
-      const name = asString(entry.name) ?? slug;
-      models.push({
-        slug,
-        name,
-        ...(slug === currentModelId ? { isDefault: true } : {}),
-        efforts: [...discoveredEfforts],
-        ...(defaultEffort ? { defaultEffort } : {}),
-      });
-    }
-  }
-
+  const efforts = Array.from(effortSet);
+  const defEffort = effortCfg ? toEffort(effortCfg.currentValue) : undefined;
+  const modelCfg = findCfg(sr, (o) => o.id === "model" || o.category === "model");
+  const models =
+    modelCfg && Array.isArray(modelCfg.options)
+      ? pushModels(modelCfg.options, asString(modelCfg.currentValue), efforts, defEffort)
+      : isObject(sr.models) && Array.isArray(sr.models.availableModels)
+        ? pushModels(
+            sr.models.availableModels,
+            asString(sr.models.currentModelId),
+            efforts,
+            defEffort,
+            true,
+          )
+        : [];
   return models.length > 0 ? models : fallback;
 };
 
-const extractContentText = (content: unknown): string => {
-  if (!isObject(content)) return "";
-  if (content.type === "text" && typeof content.text === "string") {
-    return content.text;
-  }
-  return "";
-};
+const resolveAcpBinary = (kind: AcpProviderKind, c: ProviderConfig, defBin: string) =>
+  kind === "acp-registry" && !c.binaryPath.trim()
+    ? undefined
+    : resolveExecutable(c.binaryPath, defBin);
 
-const findThinkingConfigId = (sessionResult: unknown): string | undefined => {
-  if (!isObject(sessionResult) || !Array.isArray(sessionResult.configOptions)) return undefined;
-  for (const opt of sessionResult.configOptions) {
-    if (!isObject(opt)) continue;
-    const id = asString(opt.id);
-    if (
-      id === "thought_level" ||
-      id === "thinking" ||
-      id === "reasoning_effort" ||
-      id === "effort" ||
-      opt.category === "thought_level"
-    ) {
-      return id;
+const buildAcpArgs = (kind: AcpProviderKind, rt: ResolvedProviderRuntime, launchArgs: string) => [
+  ...ACP_BASE_ARGS[kind],
+  ...rt.extraLaunchArgs,
+  ...tokenizeLaunchArgs(launchArgs),
+];
+
+const DEFAULT_PERM_OPTIONS = [
+  { id: "allow_once", label: "Allow once" },
+  { id: "reject_once", label: "Reject" },
+];
+
+const handleAcpNotification = (
+  agentId: string,
+  seenToolIds: Set<string>,
+  input: HarnessTurnInput,
+  method: string,
+  params: unknown,
+  onUsage: (u: TurnUsage) => void,
+  onFirstToken: () => void,
+) => {
+  if (method !== "session/update" || !isObject(params) || !isObject(params.update)) return;
+  const u = params.update;
+  const tag = asString(u.sessionUpdate);
+  if (tag === "agent_message_chunk" || tag === "agent_thought_chunk") {
+    const c = u.content;
+    const text = isObject(c) && c.type === "text" && typeof c.text === "string" ? c.text : "";
+    if (text) {
+      onFirstToken();
+      input.emit({
+        kind: tag === "agent_message_chunk" ? "assistant.delta" : "thinking.delta",
+        text,
+      });
     }
+    return;
   }
-  return undefined;
+  if (tag === "usage_update") {
+    const usage = parseAcpUsage(u);
+    if (usage) {
+      onUsage(usage);
+      input.emit({ kind: "usage", usage });
+    }
+    return;
+  }
+  if (tag !== "tool_call" && tag !== "tool_call_update") return;
+  const key = asString(u.toolCallId);
+  if (!key) return;
+  const qt = extractQuirkToolTitle(agentId, u);
+  const pres = presentToolActivity(
+    qt ?? asString(u.kind) ?? "tool",
+    u.rawInput,
+    asString(u.title) ?? qt,
+  );
+  const detail = pres.detail ? { detail: pres.detail } : {};
+  const labels = { label: pres.label, activeLabel: pres.activeLabel };
+  if (!seenToolIds.has(key)) {
+    seenToolIds.add(key);
+    input.emit({
+      kind: "activity.started",
+      key,
+      activityKind: pres.activityKind,
+      ...labels,
+      ...detail,
+    });
+  } else {
+    const raw = asString(u.status);
+    const status =
+      raw === "completed"
+        ? "completed"
+        : raw === "failed" || raw === "cancelled"
+          ? "failed"
+          : "running";
+    input.emit({
+      kind: "activity.updated",
+      key,
+      status,
+      ...(asString(u.title) || qt ? labels : {}),
+      ...detail,
+    });
+  }
 };
 
-export const createAcpAdapter = (kind: AcpProviderKind): HarnessAdapter => ({
+const selectedOutcome = (optionId: string) => ({ outcome: { outcome: "selected", optionId } });
+
+const handleAcpPermission = async (
+  agentId: string,
+  input: HarnessTurnInput,
+  id: string | number,
+  params: unknown,
+): Promise<unknown> => {
+  if (!isObject(params)) return {};
+  const raw = Array.isArray(params.options) ? params.options : [];
+  const parsed = raw.flatMap((o) => {
+    if (!isObject(o)) return [];
+    const optionId = asString(o.optionId) ?? asString(o.id);
+    const label = asString(o.name) ?? asString(o.label) ?? optionId;
+    return optionId && label ? [{ id: optionId, optionId, label, kind: asString(o.kind) }] : [];
+  });
+  const options = filterPermissionOptions(agentId, parsed);
+  if (input.runtimeMode === "full-access" || input.runtimeMode === "auto") {
+    const allow =
+      options.find((o) => o.kind === "allow_once" || o.kind === "allow_always") ?? options[0];
+    if (allow) return selectedOutcome(allow.id);
+  }
+  const title =
+    (isObject(params.toolCall) ? asString(params.toolCall.title) : undefined) ??
+    "Approve tool action";
+  const promptOpts =
+    options.length > 0 ? options.map((o) => ({ id: o.id, label: o.label })) : DEFAULT_PERM_OPTIONS;
+  const decision = await new Promise<ApprovalDecision>((resolve) => {
+    input.emit({
+      kind: "approval.requested",
+      requestId: String(id),
+      approvalKind: "permission",
+      title,
+      options: promptOpts,
+      resolve,
+    });
+  });
+  return selectedOutcome(decision.optionId);
+};
+
+const setOption = (rpc: StdioJsonRpcProcess, sessionId: string, configId: string, value: string) =>
+  rpc.request("session/set_config_option", { sessionId, configId, value });
+
+export const createAcpAdapter = (kind: AcpProviderKind) => ({
   kind,
 
-  probe: (config: ProviderConfig) =>
+  probe: (config: ProviderConfig, options?: { readonly dataDir?: string }) =>
     Effect.promise(async (): Promise<ProviderSnapshot> => {
-      const spec = getBuiltInProviderSpec(kind);
-      const checkedAt = new Date().toISOString();
-      if (!config.enabled) {
-        return {
-          ...config,
-          status: "disabled",
-          models: [...spec.fallbackModels],
-          setupHint: spec.setupHint,
-          checkedAt,
-        };
-      }
-
-      const resolvedPath = resolveExecutable(config.binaryPath, spec.defaultBinary);
-      if (!resolvedPath) {
-        return {
-          ...config,
-          status: "unavailable",
-          message: `${spec.name} CLI (${spec.defaultBinary}) not found on PATH.`,
-          setupHint: spec.setupHint,
-          models: [...spec.fallbackModels],
-          checkedAt,
-        };
-      }
-
-      const versionProbe = await runCliProbe(resolvedPath, ["--version"]);
-      if (!versionProbe.ok) {
-        return {
-          ...config,
-          resolvedPath,
-          status: "unavailable",
-          message: versionProbe.stderr || `Failed to execute ${spec.name} CLI.`,
-          setupHint: spec.setupHint,
-          models: [...spec.fallbackModels],
-          checkedAt,
-        };
-      }
-
-      const version = parseVersionNumber(versionProbe.stdout || versionProbe.stderr);
-      let models: ReadonlyArray<ProviderModel> = spec.fallbackModels;
-      let status: ProviderSnapshot["status"] = "ready";
-      let message: string | undefined;
-
-      const rpc = new StdioJsonRpcProcess({
-        command: resolvedPath,
-        args: [...ACP_BASE_ARGS[kind], ...tokenizeLaunchArgs(config.launchArgs)],
-        cwd: NodeOS.homedir(),
-      });
-
-      try {
-        await rpc.request(
-          "initialize",
-          {
-            protocolVersion: 1,
-            clientInfo: { name: "scuttle", title: "Scuttle", version: "0.1.0" },
-            clientCapabilities: {},
-          },
-          7_000,
-        );
-        const sessionRes = await rpc
-          .request("session/new", { cwd: NodeOS.homedir(), mcpServers: [] }, 7_000)
-          .catch((err: unknown) => {
-            const errMsg = err instanceof Error ? err.message : String(err);
-            if (/auth|sign\s*in|login|unauthenticated/i.test(errMsg)) {
-              status = "unauthenticated";
-              message = errMsg;
-            }
-            return null;
-          });
-        if (sessionRes !== null) {
-          models = extractAcpModels(sessionRes, spec.fallbackModels);
-        }
-      } catch {
-        // Keep version-confirmed ready state with fallback catalog if ACP handshake timed out.
-      } finally {
-        rpc.kill();
-      }
-
-      return {
+      const spec = resolveAcpSpec(kind, config);
+      const base = {
         ...config,
-        resolvedPath,
-        ...(version ? { version } : {}),
-        status,
-        ...(message ? { message } : {}),
         setupHint: spec.setupHint,
-        models: [...models],
-        checkedAt,
+        models: [...spec.fallbackModels],
+        checkedAt: new Date().toISOString(),
+      };
+      const fail = (message: string, resolvedPath?: string): ProviderSnapshot => ({
+        ...base,
+        ...(resolvedPath ? { resolvedPath } : {}),
+        status: "unavailable",
+        message,
+      });
+      if (!config.enabled) return { ...base, status: "disabled" };
+
+      const bin = resolveAcpBinary(kind, config, spec.defaultBinary);
+      if (!bin) {
+        return fail(
+          kind === "acp-registry"
+            ? `${spec.name} binary path is not configured or missing.`
+            : `${spec.name} CLI (${spec.defaultBinary}) not found on PATH.`,
+        );
+      }
+      let runtime: ResolvedProviderRuntime;
+      try {
+        runtime = buildAcpRuntime(kind, config, options?.dataDir);
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err), bin);
+      }
+      const vp = await runAcpProbeCommand(bin, ["--version"], runtime.env);
+      if (!vp.ok && kind !== "acp-registry")
+        return fail(vp.stderr || `Failed to execute ${spec.name} CLI.`, bin);
+      const version = vp.ok ? parseVersionNumber(vp.stdout || vp.stderr) : config.acpVersion;
+      const rpc = new StdioJsonRpcProcess({
+        command: bin,
+        args: buildAcpArgs(kind, runtime, config.launchArgs),
+        cwd: NodeOS.homedir(),
+        env: runtime.env,
+        replaceEnv: true,
+      });
+      return {
+        ...base,
+        resolvedPath: bin,
+        ...(version ? { version } : {}),
+        ...(await runAcpSessionProbe(
+          rpc,
+          config.acpAgentId ?? kind,
+          spec,
+          vp.ok,
+          extractAcpModels,
+          NodeOS.homedir(),
+        )),
       };
     }),
 
   runTurn: async (input: HarnessTurnInput): Promise<HarnessTurnResult> => {
-    const spec = getBuiltInProviderSpec(kind);
-    const executable = resolveExecutable(input.config.binaryPath, spec.defaultBinary);
-    if (!executable) {
+    const spec = resolveAcpSpec(kind, input.config);
+    const executable = resolveAcpBinary(kind, input.config, spec.defaultBinary);
+    if (!executable)
       throw new Error(`${spec.name} CLI binary not found. Configure it in Settings.`);
-    }
-
-    let sessionId = input.providerSessionId;
+    const runtime = buildAcpRuntime(kind, input.config);
+    const agentId = input.config.acpAgentId ?? kind;
+    const turnStartMs = Date.now();
+    let activeSessionId = input.providerSessionId;
     let latestUsage: TurnUsage | undefined;
+    let firstTokenMs: number | undefined;
+    let turnEnded = false;
     const seenToolIds = new Set<string>();
 
     const rpc = new StdioJsonRpcProcess({
       command: executable,
-      args: [...ACP_BASE_ARGS[kind], ...tokenizeLaunchArgs(input.config.launchArgs)],
+      args: buildAcpArgs(kind, runtime, input.config.launchArgs),
       cwd: input.cwd,
-      ...(input.extraEnv ? { env: input.extraEnv } : {}),
-      onNotification: ({ method, params }) => {
-        if (method !== "session/update" || !isObject(params) || !isObject(params.update)) return;
-        const update = params.update;
-        const kindTag = asString(update.sessionUpdate);
-
-        if (kindTag === "agent_message_chunk") {
-          const text = extractContentText(update.content);
-          if (text.length > 0) input.emit({ kind: "assistant.delta", text });
-          return;
-        }
-
-        if (kindTag === "agent_thought_chunk") {
-          const text = extractContentText(update.content);
-          if (text.length > 0) input.emit({ kind: "thinking.delta", text });
-          return;
-        }
-
-        if (kindTag === "usage_update") {
-          const updateUsage = parseAcpUsage(update);
-          if (updateUsage) {
-            latestUsage = updateUsage;
-            input.emit({ kind: "usage", usage: updateUsage });
-          }
-          return;
-        }
-
-        if (kindTag === "tool_call" || kindTag === "tool_call_update") {
-          const toolCallId = asString(update.toolCallId);
-          if (!toolCallId) return;
-          const toolKind = asString(update.kind) ?? "tool";
-          const title = asString(update.title);
-          const pres = presentToolActivity(toolKind, update.rawInput, title);
-          const rawStatus = asString(update.status);
-          const status =
-            rawStatus === "completed"
-              ? "completed"
-              : rawStatus === "failed" || rawStatus === "cancelled"
-                ? "failed"
-                : "running";
-
-          if (!seenToolIds.has(toolCallId)) {
-            seenToolIds.add(toolCallId);
-            input.emit({
-              kind: "activity.started",
-              key: toolCallId,
-              activityKind: pres.activityKind,
-              label: pres.label,
-              activeLabel: pres.activeLabel,
-              ...(pres.detail ? { detail: pres.detail } : {}),
-            });
-          } else {
-            input.emit({
-              kind: "activity.updated",
-              key: toolCallId,
-              status,
-              ...(title ? { label: pres.label, activeLabel: pres.activeLabel } : {}),
-              ...(pres.detail ? { detail: pres.detail } : {}),
-            });
-          }
-        }
-      },
-      onRequest: async ({ id, method, params }) => {
-        if (method === "session/request_permission" && isObject(params)) {
-          const rawOptions = Array.isArray(params.options) ? params.options : [];
-          const options = rawOptions.flatMap((opt) => {
-            if (!isObject(opt)) return [];
-            const optionId = asString(opt.optionId) ?? asString(opt.id);
-            const label = asString(opt.name) ?? asString(opt.label) ?? optionId;
-            if (!optionId || !label) return [];
-            return [{ id: optionId, label, kind: asString(opt.kind) }];
-          });
-
-          if (input.runtimeMode === "full-access" || input.runtimeMode === "auto") {
-            const allow =
-              options.find((opt) => opt.kind === "allow_once" || opt.kind === "allow_always") ??
-              options[0];
-            if (allow) {
-              return { outcome: { outcome: "selected", optionId: allow.id } };
-            }
-          }
-
-          const toolCall = isObject(params.toolCall) ? params.toolCall : undefined;
-          const title = asString(toolCall?.title) ?? "Approve tool action";
-          const decision = await new Promise<ApprovalDecision>((resolve) => {
-            input.emit({
-              kind: "approval.requested",
-              requestId: String(id),
-              approvalKind: "permission",
-              title,
-              options:
-                options.length > 0
-                  ? options.map(({ id: optId, label }) => ({ id: optId, label }))
-                  : [
-                      { id: "allow_once", label: "Allow once" },
-                      { id: "reject_once", label: "Reject" },
-                    ],
-              resolve,
-            });
-          });
-          return { outcome: { outcome: "selected", optionId: decision.optionId } };
-        }
-        return {};
-      },
+      env: { ...runtime.env, ...input.extraEnv },
+      replaceEnv: true,
+      onNotification: ({ method, params }) =>
+        handleAcpNotification(
+          agentId,
+          seenToolIds,
+          input,
+          method,
+          params,
+          (u) => {
+            latestUsage = u;
+          },
+          () => {
+            if (firstTokenMs === undefined) firstTokenMs = Math.max(0, Date.now() - turnStartMs);
+          },
+        ),
+      onRequest: ({ id, method, params }) =>
+        method === "session/request_permission"
+          ? handleAcpPermission(agentId, input, id, params)
+          : Promise.resolve({}),
     });
 
     const onAbort = () => {
-      if (sessionId) {
-        rpc.notify("session/cancel", { sessionId });
-      }
+      turnEnded = true;
+      if (activeSessionId) rpc.notify("session/cancel", { sessionId: activeSessionId });
       rpc.kill();
     };
-    if (input.signal.aborted) {
-      onAbort();
-    } else {
-      input.signal.addEventListener("abort", onAbort, { once: true });
-    }
+    if (input.signal.aborted) onAbort();
+    else input.signal.addEventListener("abort", onAbort, { once: true });
 
     try {
-      await rpc.request("initialize", {
-        protocolVersion: 1,
-        clientInfo: { name: "scuttle", title: "Scuttle", version: "0.1.0" },
-        clientCapabilities: {},
+      const initRes = await rpc.request("initialize", acpInitParams(agentId));
+      const ac = isObject(initRes) ? initRes.agentCapabilities : null;
+      const supportsImages =
+        isObject(ac) && isObject(ac.promptCapabilities) && ac.promptCapabilities.image === true;
+      const mcpServers = buildAcpMcpServers(ac, input.mcpServer);
+      const { sessionId, sessionResult, turnPrompt } = await openAcpSession(rpc, input, mcpServers);
+      activeSessionId = sessionId;
+
+      if (
+        input.model.trim() &&
+        input.model !== "default" &&
+        (shouldAlwaysSetModel(agentId) || currentAcpModel(sessionResult) !== input.model)
+      ) {
+        await setOption(rpc, sessionId, "model", input.model).catch(() =>
+          rpc.request("session/set_model", { sessionId, modelId: input.model }).catch(() => null),
+        );
+      }
+      const thinkId = input.effort ? asString(findThinkingCfg(sessionResult)?.id) : undefined;
+      if (input.effort && thinkId) {
+        await setOption(rpc, sessionId, thinkId, input.effort).catch(() => null);
+      }
+
+      input.registerSteer?.(async (payload) => {
+        if (turnEnded || input.signal.aborted || !activeSessionId) return false;
+        const steerAttachments = filterImageAttachments(payload.attachments);
+        try {
+          await rpc.request(
+            "session/prompt",
+            {
+              sessionId: activeSessionId,
+              prompt: buildAcpPromptBlocks(payload.prompt, steerAttachments, supportsImages),
+            },
+            30 * 60 * 1000,
+          );
+          return true;
+        } catch {
+          return false;
+        }
       });
 
-      let turnPrompt = input.prompt;
-      let sessionResult: unknown = null;
-      if (sessionId) {
-        sessionResult = await rpc
-          .request("session/resume", { sessionId, cwd: input.cwd, mcpServers: [] }, 20_000)
-          .catch(() =>
-            rpc
-              .request("session/load", { sessionId, cwd: input.cwd, mcpServers: [] }, 20_000)
-              .catch(() => null),
-          );
-        if (sessionResult === null) {
-          sessionId = undefined;
-          turnPrompt = input.freshSessionPrompt ?? input.prompt;
-        }
-      }
-
-      if (!sessionId) {
-        sessionResult = await rpc.request(
-          "session/new",
-          { cwd: input.cwd, mcpServers: [] },
-          30_000,
-        );
-        if (isObject(sessionResult)) {
-          sessionId = asString(sessionResult.sessionId);
-        }
-        if (sessionId) {
-          input.emit({ kind: "session", providerSessionId: sessionId });
-        }
-      }
-
-      if (!sessionId) {
-        throw new Error(`${spec.name} ACP did not return a session ID.`);
-      }
-
-      if (input.model.trim().length > 0 && input.model !== "default") {
-        await rpc
-          .request("session/set_config_option", {
-            sessionId,
-            configId: "model",
-            value: input.model,
-          })
-          .catch(() =>
-            rpc.request("session/set_model", { sessionId, modelId: input.model }).catch(() => null),
-          );
-      }
-
-      const thinkingConfigId = findThinkingConfigId(sessionResult);
-      if (input.effort && thinkingConfigId) {
-        await rpc
-          .request("session/set_config_option", {
-            sessionId,
-            configId: thinkingConfigId,
-            value: input.effort,
-          })
-          .catch(() => null);
-      }
-
+      const attachments = filterImageAttachments(input.resolvedAttachments);
       const promptRes = await rpc.request(
         "session/prompt",
-        {
-          sessionId,
-          prompt: [{ type: "text", text: turnPrompt }],
-        },
+        { sessionId, prompt: buildAcpPromptBlocks(turnPrompt, attachments, supportsImages) },
         30 * 60 * 1000,
       );
+      turnEnded = true;
       const costUsd = parseAcpCostUsd(promptRes);
-      const promptUsage = isObject(promptRes) ? parseAcpUsage(promptRes) : undefined;
-      let usage = promptUsage ?? latestUsage;
-      if (
-        promptUsage &&
-        promptUsage.contextWindowTokens === undefined &&
+      const pu = isObject(promptRes) ? parseAcpUsage(promptRes) : undefined;
+      const usage =
+        pu?.contextWindowTokens === undefined &&
+        pu &&
         latestUsage?.contextWindowTokens !== undefined
-      ) {
-        usage = { ...promptUsage, contextWindowTokens: latestUsage.contextWindowTokens };
-      }
-      if (promptUsage && usage) {
-        input.emit({ kind: "usage", usage });
-      }
+          ? { ...pu, contextWindowTokens: latestUsage.contextWindowTokens }
+          : (pu ?? latestUsage);
+      if (pu && usage) input.emit({ kind: "usage", usage });
       return {
         ...(sessionId ? { providerSessionId: sessionId } : {}),
         ...(input.signal.aborted ? { interrupted: true } : {}),
         ...(costUsd !== undefined ? { costUsd } : {}),
         ...(usage ? { usage } : {}),
+        ...(firstTokenMs !== undefined ? { firstTokenMs } : {}),
       };
     } finally {
+      turnEnded = true;
       input.signal.removeEventListener("abort", onAbort);
       rpc.kill();
     }

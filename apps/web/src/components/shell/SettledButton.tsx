@@ -15,10 +15,11 @@ import { Icon } from "@/components/ui/Icon.tsx";
 import { Identicon } from "@/components/ui/Identicon.tsx";
 import { ContextMenuItem, ContextMenuPopup, ContextMenuSeparator } from "@/components/ui/Menu.tsx";
 import { SwapText } from "@/components/ui/SwapText.tsx";
+import { remToPx } from "@/lib/uiScale.ts";
 import { useWorkspaceActions, useWorkspaceSelector } from "@/lib/workspace.tsx";
 import { useListWindow } from "./useListWindow.ts";
 
-const SETTLED_ROW_STRIDE = 33;
+const SETTLED_ROW_HEIGHT_REM = 2;
 
 const resolveThreadId = (target: EventTarget | null) =>
   target instanceof Element
@@ -45,7 +46,7 @@ export function SettledSection({ projectId }: { readonly projectId: ProjectId | 
   );
   const { startIndex, endIndex, paddingTop, paddingBottom } = useListWindow({
     count: done.length,
-    rowStride: SETTLED_ROW_STRIDE,
+    rowStride: remToPx(SETTLED_ROW_HEIGHT_REM) + 1,
     scrollRef,
     listRef,
     overscan: 6,
@@ -118,7 +119,7 @@ export function SettledSection({ projectId }: { readonly projectId: ProjectId | 
                       <li
                         key={thread.id}
                         data-thread-id={thread.id}
-                        className="group/settled flex h-8 shrink-0 items-center gap-1 rounded-chip pr-1 pl-2 transition-colors duration-100 hover:bg-white/4"
+                        className="group/settled flex h-8 shrink-0 items-center gap-1 rounded-chip pr-1 pl-2 transition-colors duration-100 hover:bg-fg/4"
                       >
                         <button
                           type="button"

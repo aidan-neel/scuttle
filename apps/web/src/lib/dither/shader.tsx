@@ -682,6 +682,7 @@ export const DitherShader = ({
       depth: false,
       powerPreference: "low-power",
       premultipliedAlpha: true,
+      preserveDrawingBuffer: true,
       stencil: false,
     });
     if (!gl) {
@@ -715,11 +716,25 @@ export const DitherShader = ({
       const height = Number.parseFloat(style.height) || root.offsetHeight;
       const columns = Math.max(1, Math.ceil(width / snapped));
       const rows = Math.max(1, Math.ceil(height / snapped));
+      const cssWidth = `${columns * snapped}px`;
+      const cssHeight = `${rows * snapped}px`;
+      const bufferChanged = canvas.width !== columns || canvas.height !== rows;
+      if (
+        !bufferChanged &&
+        canvas.style.width === cssWidth &&
+        canvas.style.height === cssHeight &&
+        sizeRef.current.columns === columns &&
+        sizeRef.current.rows === rows
+      ) {
+        return;
+      }
       sizeRef.current = { columns, rows };
-      canvas.width = columns;
-      canvas.height = rows;
-      canvas.style.width = `${columns * snapped}px`;
-      canvas.style.height = `${rows * snapped}px`;
+      if (bufferChanged) {
+        canvas.width = columns;
+        canvas.height = rows;
+      }
+      canvas.style.width = cssWidth;
+      canvas.style.height = cssHeight;
       drawRef.current?.();
     };
 

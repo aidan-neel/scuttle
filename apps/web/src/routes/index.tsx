@@ -3,7 +3,6 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { DitherHorizon } from "@/components/dithercn/dither-horizon.tsx";
 import { Composer, type ComposerSubmitPayload } from "@/components/home/Composer.tsx";
-import { ComposerContextBar } from "@/components/home/ComposerContextBar.tsx";
 import { useDitherBackground } from "@/components/settings/preferences.ts";
 import { AddProjectDialog } from "@/components/shell/AddProjectDialog.tsx";
 import { useWorkspaceActions, useWorkspaceSelector } from "@/lib/workspace.tsx";
@@ -92,25 +91,17 @@ function HomePage() {
   };
 
   return (
-    <section className="group/home flex flex-1 flex-col items-center justify-center px-4 pb-24">
+    <section className="group/home flex flex-1 flex-col items-center justify-center px-4 pb-32">
       {ditherBackground && (
-        <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden rounded-canvas opacity-55 transition-opacity duration-300 ease-out group-has-[textarea:focus]/home:opacity-70">
-          <DitherHorizon intensity={0.48} className="absolute inset-0 rounded-[inherit]" />
+        <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden opacity-55 transition-opacity duration-300 ease-out group-has-[form:focus-within]/home:opacity-70">
+          <DitherHorizon
+            intensity={0.48}
+            className="absolute inset-y-0 left-1/2 w-screen -translate-x-1/2"
+          />
         </div>
       )}
       <h1 className="sr-only">New thread</h1>
       <div className="w-full max-w-composer">
-        <ComposerContextBar
-          projects={projects}
-          activeProject={activeProject}
-          onSelectProject={(project) => selectProject(project.id)}
-          onAddProject={() => setAddProjectOpen(true)}
-          runtime={runtime}
-          onRuntimeChange={setRuntime}
-          branches={branches}
-          branch={effectiveBranch}
-          onBranchChange={setBranch}
-        />
         {submitError && (
           <div className="mb-2 rounded-control border border-danger/30 bg-danger/10 px-3 py-2 text-label text-danger">
             {submitError}
@@ -124,7 +115,19 @@ function HomePage() {
           onSubmit={handleSubmit}
           interactionMode={interactionMode}
           onInteractionModeChange={setInteractionMode}
-          {...(activeProject ? { filesRoot: activeProject.path } : {})}
+          project={{
+            projects,
+            activeProject,
+            onSelectProject: (project) => selectProject(project.id),
+            onAddProject: () => setAddProjectOpen(true),
+          }}
+          status={{
+            runtime,
+            branches,
+            onRuntimeChange: setRuntime,
+            ...(activeProject ? { branch: effectiveBranch, onBranchChange: setBranch } : {}),
+          }}
+          filesRoot={activeProject?.path}
         />
       </div>
       <AddProjectDialog open={addProjectOpen} onOpenChange={setAddProjectOpen} />

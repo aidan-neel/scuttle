@@ -5,6 +5,7 @@ import type {
   AgentDelegationQuestion,
   AgentDetail,
   AgentIssue,
+  AgentIssueActivity,
   AgentMemory,
   ServerPushEvent,
 } from "@scuttle/contracts";
@@ -21,6 +22,8 @@ export interface AgentWork {
 export interface AgentSlice {
   readonly agents: ReadonlyArray<Agent>;
   readonly agentWork: Readonly<Record<string, AgentWork>>;
+  readonly issues: ReadonlyArray<AgentIssue>;
+  readonly issueActivities: Readonly<Record<string, ReadonlyArray<AgentIssueActivity>>>;
 }
 
 export const isAgentThread = (agents: ReadonlyArray<Agent>, threadId: string): boolean =>
@@ -48,28 +51,41 @@ export const removeAgents = (
 ): AgentSlice => {
   const removed = slice.agents.filter(predicate).map((agent) => agent.id);
   if (removed.length === 0) return slice;
+  const removedIssueIds = slice.issues
+    .filter((issue) => removed.includes(issue.agentId))
+    .map((issue) => issue.id);
   return {
     agents: slice.agents.filter((agent) => !removed.includes(agent.id)),
     agentWork: withoutKeys(slice.agentWork, removed),
+    issues: slice.issues.filter((issue) => !removed.includes(issue.agentId)),
+    issueActivities:
+      removedIssueIds.length > 0
+        ? withoutKeys(slice.issueActivities, removedIssueIds)
+        : slice.issueActivities,
   };
 };
 
 export const agentDetailLoaded = (
   slice: AgentSlice,
   detail: Omit<AgentDetail, "primaryThread">,
-): AgentSlice => ({
-  agents: upsertById(slice.agents, detail.agent),
-  agentWork: {
-    ...slice.agentWork,
-    [detail.agent.id]: {
-      memories: detail.memories,
-      issues: detail.issues,
-      delegations: detail.delegations,
-      questions: slice.agentWork[detail.agent.id]?.questions ?? [],
-      checkIns: detail.checkIns,
+): AgentSlice => {
+  const otherIssues = slice.issues.filter((issue) => issue.agentId !== detail.agent.id);
+  return {
+    ...slice,
+    agents: upsertById(slice.agents, detail.agent),
+    issues: [...detail.issues, ...otherIssues],
+    agentWork: {
+      ...slice.agentWork,
+      [detail.agent.id]: {
+        memories: detail.memories,
+        issues: detail.issues,
+        delegations: detail.delegations,
+        questions: slice.agentWork[detail.agent.id]?.questions ?? [],
+        checkIns: detail.checkIns,
+      },
     },
-  },
-});
+  };
+};
 
 export const applyAgentEvent = (slice: AgentSlice, event: ServerPushEvent): AgentSlice => {
   switch (event.kind) {
@@ -87,22 +103,48 @@ export const applyAgentEvent = (slice: AgentSlice, event: ServerPushEvent): Agen
         ...work,
         memories: work.memories.filter((memory) => memory.id !== event.memoryId),
       }));
-    case "agent.issue.upserted":
-      return withWork(slice, event.issue.agentId, (work) => ({
+    case "agent.issue.upserted": {
+      const nextSlice: AgentSlice = {
+        ...slice,
+        issues: upsertById(slice.issues, event.issue),
+      };
+      return withWork(nextSlice, event.issue.agentId, (work) => ({
         ...work,
         issues: upsertById(work.issues, event.issue),
       }));
-    case "agent.issue.deleted":
-      return withWork(slice, event.agentId, (work) => ({
+    }
+    case "agent.issue.deleted": {
+      const { [event.issueId]: _removed, ...restActivities } = slice.issueActivities;
+      const nextSlice: AgentSlice = {
+        ...slice,
+        issues: slice.issues.filter((issue) => issue.id !== event.issueId),
+        issueActivities: restActivities,
+      };
+      return withWork(nextSlice, event.agentId, (work) => ({
         ...work,
         issues: work.issues.filter((issue) => issue.id !== event.issueId),
       }));
+    }
+    case "agent.issue.activity.created": {
+      const existing = slice.issueActivities[event.activity.issueId];
+      if (existing === undefined) return slice;
+      if (existing.some((item) => item.id === event.activity.id)) return slice;
+      return {
+        ...slice,
+        issueActivities: {
+          ...slice.issueActivities,
+          [event.activity.issueId]: [...existing, event.activity],
+        },
+      };
+    }
     case "agent.delegation.upserted":
+      if (!event.delegation.agentId) return slice;
       return withWork(slice, event.delegation.agentId, (work) => ({
         ...work,
         delegations: upsertById(work.delegations, event.delegation),
       }));
     case "agent.delegation.question.upserted":
+      if (!event.question.agentId) return slice;
       return withWork(slice, event.question.agentId, (work) => ({
         ...work,
         questions: upsertById(work.questions, event.question, false),

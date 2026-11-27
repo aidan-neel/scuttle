@@ -1,0 +1,201 @@
+html[data-appearance="light"] {
+  color-scheme: light;
+  --color-edge: rgb(15 23 42 / 10%);
+  --color-edge-strong: rgb(15 23 42 / 18%);
+  --color-edge-highlight: rgb(255 255 255 / 75%);
+  --color-edge-outline: rgb(15 23 42 / 8%);
+  --color-dialog-line: rgb(15 23 42 / 8%);
+  --color-switch-thumb: #ffffff;
+  --skullet-base: rgb(15 23 42 / 6%);
+  --skullet-highlight: rgb(15 23 42 / 12%);
+  --wash: rgb(15 23 42 / 5%);
+  --wash-strong: rgb(15 23 42 / 9%);
+  --fill-raised-top: rgb(255 255 255 / 96%);
+  --fill-raised-bottom: rgb(247 247 249 / 92%);
+  --fill-raised-hover-top: rgb(255 255 255 / 100%);
+  --fill-raised-hover-bottom: rgb(241 242 246 / 100%);
+  --fill-raised-press-top: rgb(238 239 243 / 100%);
+  --fill-raised-press-bottom: rgb(233 234 239 / 100%);
+  --scrollbar-thumb: rgb(15 23 42 / 16%);
+  --scrollbar-thumb-hover: rgb(15 23 42 / 30%);
+  --scrollbar-thumb-active: rgb(15 23 42 / 44%);
+  --shadow-raised:
+    inset 0 0 0 1px var(--color-edge), inset 0 1px 0 var(--color-edge-highlight),
+    0 1px 2px rgb(15 23 42 / 6%);
+  --shadow-primary: inset 0 1px 0 rgb(255 255 255 / 32%), 0 1px 2px rgb(15 23 42 / 18%);
+  --shadow-composer:
+    inset 0 0 0 1px var(--color-edge), 0 2px 8px rgb(15 23 42 / 6%), 0 1px 2px rgb(15 23 42 / 4%);
+  --shadow-composer-focus: inset 0 0 0 1px var(--color-edge-strong), 0 4px 14px rgb(15 23 42 / 9%);
+  --shadow-sidebar: inset -1px 0 0 var(--color-line);
+  --shadow-focus: 0 0 0 2px color-mix(in oklab, var(--color-primary) 42%, transparent);
+  --shadow-dialog:
+    inset 0 0 0 1px var(--color-edge), 0 24px 56px -16px rgb(15 23 42 / 22%),
+    0 6px 14px rgb(15 23 42 / 10%);
+  --shadow-menu:
+    inset 0 0 0 1px var(--color-edge), 0 12px 32px -8px rgb(15 23 42 / 16%),
+    0 4px 10px rgb(15 23 42 / 8%);
+  --scrim-bg: rgb(15 23 42 / 32%);
+}
+
+html[data-theme="midnight"] {
+  --color-chrome: #070a10;
+  --color-sidebar: #0c111b;
+  --color-canvas: #101622;
+  --color-panel: #151d2c;
+  --color-raised: #1a2436;
+  --color-hover: #202c40;
+  --color-menu: #1c2638;
+  --color-selected: #243147;
+  --color-line: #1d2739;
+  --color-fg: #e8edf5;
+  --color-fg-secondary: #c5cfdf;
+  --color-fg-muted: #8d9bb2;
+  --color-fg-faint: #556279;
+  --color-primary: #4c8bf5;
+  --color-primary-top: #5a95f7;
+  --color-on-primary: #ffffff;
+  --color-input: #8ab4ff;
+  --color-avatar: #233354;
+  --color-on-avatar: #bfd4ff;
+  --color-dialog: #141c2b;
+  --fill-primary-hover-top: #4683eb;
+  --fill-primary-hover-bottom: #3c79e2;
+  --fill-primary-press-top: #3772d9;
+  --fill-primary-press-bottom: #3068cc;
+  --dither-ink: #273754;
+}
+
+html[data-theme="nord"] {
+  --color-chrome: #21252e;
+  --color-sidebar: #272c36;
+  --color-canvas: #2e3440;
+  --color-panel: #353c4a;
+  --color-raised: #3b4252;
+  --color-hover: #434c5e;
+  --color-menu: #3b4252;
+  --color-selected: #434c5e;
+  --color-line: #3e4656;
+  --color-fg: #eceff4;
+  --color-fg-secondary: #d8dee9;
+  --color-fg-muted: #9aa5b8;
+  --color-fg-faint: #677287;
+  --color-primary: #88c0d0;
+  --color-primary-top: #96cad8;
+  --color-on-primary: #1a2029;
+  --color-success: #a3be8c;
+  --color-warning: #ebcb8b;
+  --color-danger: #bf616a;
+  --color-input: #88c0d0;
+  --color-avatar: #434c5e;
+  --color-on-avatar: #d8dee9;
+  --color-dialog: #323846;
+  --fill-primary-hover-top: #8ec5d4;
+  --fill-primary-hover-bottom: #7eb8c9;
+  --fill-primary-press-top: #79b3c4;
+  --fill-primary-press-bottom: #6ea8b9;
+  --dither-ink: #434c5e;
+}
+
+html[data-theme="espresso"] {
+  --color-chrome: #0d0b0a;
+  --color-sidebar: #14110f;
+  --color-canvas: #181512;
+  --color-panel: #1f1b17;
+  --color-raised: #26211c;
+  --color-hover: #2d2721;
+  --color-menu: #25201b;
+  --color-selected: #302922;
+  --color-line: #2a241f;
+  --color-fg: #eee9e2;
+  --color-fg-secondary: #d3cbc1;
+  --color-fg-muted: #9d9489;
+  --color-fg-faint: #60584f;
+  --color-primary: #d97757;
+  --color-primary-top: #e08364;
+  --color-on-primary: #ffffff;
+  --color-success: #6bbf85;
+  --color-warning: #e8b45a;
+  --color-danger: #ea6c63;
+  --color-input: #f0a489;
+  --color-avatar: #473026;
+  --color-on-avatar: #f2d0c2;
+  --color-dialog: #1d1915;
+  --fill-primary-hover-top: #d67454;
+  --fill-primary-hover-bottom: #cb6949;
+  --fill-primary-press-top: #c46445;
+  --fill-primary-press-bottom: #b95b3d;
+  --dither-ink: #382e26;
+}
+
+html[data-theme="daylight"] {
+  --color-chrome: #ececef;
+  --color-sidebar: #f3f3f6;
+  --color-canvas: #ffffff;
+  --color-panel: #f7f7f9;
+  --color-raised: #ffffff;
+  --color-hover: #ededf1;
+  --color-menu: #ffffff;
+  --color-selected: #e6e7ec;
+  --color-line: #e5e5ea;
+  --color-fg: #141416;
+  --color-fg-secondary: #3c3c43;
+  --color-fg-muted: #65656d;
+  --color-fg-faint: #9a9aa3;
+  --color-primary: #2563eb;
+  --color-primary-top: #326ef0;
+  --color-on-primary: #ffffff;
+  --color-success: #16a34a;
+  --color-warning: #ca8a04;
+  --color-danger: #dc2626;
+  --color-input: #2563eb;
+  --color-avatar: #e0e7ff;
+  --color-on-avatar: #3730a3;
+  --color-dialog: #ffffff;
+  --fill-primary-hover-top: #2661e4;
+  --fill-primary-hover-bottom: #1d57d8;
+  --fill-primary-press-top: #1d54d0;
+  --fill-primary-press-bottom: #184bc0;
+  --dither-ink: #d9dfeb;
+}
+
+html[data-theme="paper"] {
+  --color-chrome: #e8e3da;
+  --color-sidebar: #f0ece3;
+  --color-canvas: #f8f5ef;
+  --color-panel: #fdfbf7;
+  --color-raised: #ffffff;
+  --color-hover: #ede7dc;
+  --color-menu: #fdfbf7;
+  --color-selected: #e6dfd2;
+  --color-line: #e4ddd2;
+  --color-edge: rgb(42 33 22 / 11%);
+  --color-edge-strong: rgb(42 33 22 / 20%);
+  --color-dialog-line: rgb(42 33 22 / 9%);
+  --color-fg: #1f1b16;
+  --color-fg-secondary: #433c34;
+  --color-fg-muted: #6f665b;
+  --color-fg-faint: #9f968a;
+  --color-primary: #c25934;
+  --color-primary-top: #cc6541;
+  --color-on-primary: #ffffff;
+  --color-success: #2f855a;
+  --color-warning: #b7791f;
+  --color-danger: #c53030;
+  --color-input: #b84f2b;
+  --color-avatar: #efe1d1;
+  --color-on-avatar: #7a3e20;
+  --color-dialog: #fdfbf7;
+  --wash: rgb(42 33 22 / 5%);
+  --wash-strong: rgb(42 33 22 / 9%);
+  --fill-raised-top: rgb(255 253 250 / 98%);
+  --fill-raised-bottom: rgb(247 242 234 / 95%);
+  --fill-raised-hover-top: rgb(255 255 255 / 100%);
+  --fill-raised-hover-bottom: rgb(242 236 226 / 100%);
+  --fill-raised-press-top: rgb(238 231 220 / 100%);
+  --fill-raised-press-bottom: rgb(233 225 213 / 100%);
+  --fill-primary-hover-top: #be5834;
+  --fill-primary-hover-bottom: #b34f2c;
+  --fill-primary-press-top: #aa4a28;
+  --fill-primary-press-bottom: #9d4323;
+  --dither-ink: #e2d7c7;
+}

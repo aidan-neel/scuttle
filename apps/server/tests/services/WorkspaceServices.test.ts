@@ -101,4 +101,24 @@ describe("Workspace server services", () => {
       await server.stop();
     }
   });
+
+  it("skips seeding the cwd project when seedCwdProject is false", async () => {
+    const server = await startScuttleServer({
+      port: 0,
+      dbPath: ":memory:",
+      seedCwdProject: false,
+    });
+    try {
+      const wsRes = await fetch(`${server.url}/api/workspace`);
+      expect(wsRes.status).toBe(200);
+      const workspace = (await wsRes.json()) as {
+        projects: unknown[];
+        agents: unknown[];
+      };
+      expect(workspace.projects).toEqual([]);
+      expect(workspace.agents).toEqual([]);
+    } finally {
+      await server.stop();
+    }
+  });
 });
